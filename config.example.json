@@ -1,0 +1,13 @@
+{
+  "Polling": {
+    "IntervalMinutes": 60,
+    "BackfillEpisodes": 10,
+    "MaxAttempts": 5
+  },
+  "Feeds": [
+    { "Url": "https://feeds.example.com/your-podcast.rss" }
+  ],
+  "OpenLibrary": {
+    "ContactEmail": "you@example.com"
+  }
+}
