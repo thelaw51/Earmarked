@@ -143,12 +143,23 @@ public static partial class TranscriptParser
         return segments.Count > 0 ? segments : ParsePlainText(AnyTag().Replace(content, "\n"));
     }
 
-    private static List<TranscriptSegment> ParsePlainText(string content) =>
-        SplitBlocks(WebUtility.HtmlDecode(content))
-            .Select(Normalise)
-            .Where(t => t.Length > 0)
-            .Select(t => new TranscriptSegment(null, null, null, t))
+    /// <summary>
+    /// One segment per paragraph. Many plain-text transcripts start each paragraph with <c>Name:</c>; when at least half
+    /// the paragraphs do, that name becomes the segment's speaker. The threshold keeps a stray "Note:" in ordinary prose
+    /// from being read as a speaker. Paragraphs without a prefix (e.g. "INTRO") keep no speaker rather than a guessed one.
+    /// </summary>
+    private static List<TranscriptSegment> ParsePlainText(string content)
+    {
+        var paragraphs = SplitBlocks(WebUtility.HtmlDecode(content)).Select(Normalise).Where(t => t.Length > 0).ToList();
+        var labelled = paragraphs.Count(p => SpeakerPrefix().IsMatch(p));
+        var hasSpeakers = labelled > 0 && labelled * 2 >= paragraphs.Count;
+
+        return paragraphs
+            .Select(p => hasSpeakers && SpeakerPrefix().Match(p) is { Success: true } m
+                ? new TranscriptSegment(null, null, m.Groups["name"].Value, m.Groups["text"].Value)
+                : new TranscriptSegment(null, null, null, p))
             .ToList();
+    }
 
     /// <summary>Parses <c>hh:mm:ss.fff</c>, <c>mm:ss.fff</c> or SRT's <c>hh:mm:ss,fff</c>.</summary>
     internal static TimeSpan? ParseTimestamp(string value)
@@ -193,6 +204,10 @@ public static partial class TranscriptParser
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex Whitespace();
+
+    /// <summary>A leading speaker label: one to four capitalised words, a colon, then the spoken text.</summary>
+    [GeneratedRegex(@"^(?<name>\p{Lu}[\w.'’-]*(?: \p{Lu}[\w.'’-]*){0,3}):\s+(?<text>\S.*)$")]
+    private static partial Regex SpeakerPrefix();
 }
 
 /// <summary>Thrown when a transcript can't be parsed. The episode then falls back to the transcription service.</summary>

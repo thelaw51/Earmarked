@@ -66,6 +66,43 @@ public class TranscriptParserTests
         Assert.Equal([new(null, null, null, "First paragraph still first."), new(null, null, null, "Second.")], segments);
     }
 
+    [Fact]
+    public void Pulls_speaker_labels_out_of_plain_text()
+    {
+        var segments = TranscriptParser.Parse(Fixtures.Read("transcript.txt"), TranscriptFormat.PlainText);
+
+        Assert.Equal(
+            [
+                new TranscriptSegment(null, null, "Ben", "Welcome back to the show."),
+                new TranscriptSegment(null, null, "David", "Thanks, Ben. Today we are talking about The Lantern Index."),
+                new TranscriptSegment(null, null, null, "INTRO"),
+                new TranscriptSegment(null, null, "Dr. Jane Smith", "I read it twice: once for the plot, once for the footnotes."),
+                new TranscriptSegment(null, null, "Ben", "That is all for today."),
+            ],
+            segments);
+    }
+
+    [Fact]
+    public void Leaves_prose_alone_when_only_a_few_paragraphs_look_labelled()
+    {
+        const string prose = "We talked about the book.\n\nNote: the author was not on the show.\n\nThen we moved on to the news.";
+
+        var segments = TranscriptParser.Parse(prose, TranscriptFormat.PlainText);
+
+        Assert.All(segments, s => Assert.Null(s.Speaker));
+        Assert.Equal("Note: the author was not on the show.", segments[1].Text);
+    }
+
+    [Fact]
+    public void Does_not_treat_times_or_lowercase_words_as_speakers()
+    {
+        const string text = "10:30 we started recording.\n\nsoftware: it is everywhere.\n\nBen: Hello.";
+
+        var segments = TranscriptParser.Parse(text, TranscriptFormat.PlainText);
+
+        Assert.Equal([null, null, null], segments.Select(s => s.Speaker));
+    }
+
     [Theory]
     [InlineData("WEBVTT\n\n", TranscriptFormat.Vtt)]
     [InlineData("{\"version\":\"1.0.0\",\"segments\":[]}", TranscriptFormat.Json)]
