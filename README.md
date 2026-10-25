@@ -82,7 +82,7 @@ Five wrong passwords in a row lock the account for 15 minutes. To unlock it earl
 docker exec -it <web-container> entrypoint.sh users reset-password you@example.com
 ```
 
-That also clears the failed-attempt count. Sessions signed in with the old password stop working within 30 minutes, when Identity next checks the cookie's security stamp. An open browser tab keeps its live connection until you reload it.
+That also clears the failed-attempt count. Every existing sign-in, open tabs included, is sent back to the sign-in page within 5 minutes.
 
 "Keep me signed in" keeps the cookie for 14 days, renewed as you use the app. Without it the cookie ends when the browser closes.
 

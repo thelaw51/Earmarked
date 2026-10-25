@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using PodcastBookRecs.Core.Accounts;
 using PodcastBookRecs.Core.Configuration;
 using PodcastBookRecs.Core.Data;
+using PodcastBookRecs.Web.Services;
 
 namespace PodcastBookRecs.Tests;
 
@@ -106,6 +108,28 @@ public sealed class AccountTests : IAsyncLifetime
         }
 
         Assert.True((await CheckPasswordAsync(Password)).Succeeded);
+    }
+
+    [Fact]
+    public async Task A_password_reset_invalidates_existing_sign_ins()
+    {
+        await CreateUserAsync();
+
+        await using var scope = _services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var options = scope.ServiceProvider.GetRequiredService<IOptions<IdentityOptions>>().Value;
+        var user = await users.FindByEmailAsync(Email);
+        var principal = await scope.ServiceProvider.GetRequiredService<SignInManager<AppUser>>().CreateUserPrincipalAsync(user!);
+        Assert.True(await IdentityRevalidatingAuthenticationStateProvider.IsCurrentAsync(users, principal, options));
+
+        await using (var resetScope = _services.CreateAsyncScope())
+        {
+            await resetScope.ServiceProvider.GetRequiredService<UserAdmin>().ResetPasswordAsync(Email, "another long test password");
+        }
+
+        await using var checkScope = _services.CreateAsyncScope();
+        Assert.False(await IdentityRevalidatingAuthenticationStateProvider.IsCurrentAsync(
+            checkScope.ServiceProvider.GetRequiredService<UserManager<AppUser>>(), principal, options));
     }
 
     [Theory]

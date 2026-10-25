@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Options;
@@ -35,6 +36,8 @@ builder.Services.ConfigureApplicationCookie(options =>
 });
 builder.Services.AddAuthorizationBuilder().SetFallbackPolicy(new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
 builder.Services.AddCascadingAuthenticationState();
+builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
+builder.Services.Configure<SecurityStampValidatorOptions>(o => o.ValidationInterval = IdentityRevalidatingAuthenticationStateProvider.Interval);
 
 // Keys live on the /data volume so a re-pulled container can still read circuits and antiforgery tokens.
 var keysDirectory = new DirectoryInfo(
