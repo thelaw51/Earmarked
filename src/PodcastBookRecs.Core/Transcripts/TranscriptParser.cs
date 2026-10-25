@@ -195,5 +195,5 @@ public static partial class TranscriptParser
     private static partial Regex Whitespace();
 }
 
-/// <summary>Thrown when a transcript can't be parsed. The episode then falls back to Whisper.</summary>
+/// <summary>Thrown when a transcript can't be parsed. The episode then falls back to the transcription service.</summary>
 public sealed class TranscriptFormatException(string message) : Exception(message);

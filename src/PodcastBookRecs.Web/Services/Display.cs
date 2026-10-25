@@ -19,7 +19,7 @@ public static class Display
     public static string StateLabel(EpisodeState state) => state switch
     {
         EpisodeState.New => "Transcript queued",
-        EpisodeState.AwaitingTranscription => "Awaiting Whisper",
+        EpisodeState.AwaitingTranscription => "Awaiting transcription",
         EpisodeState.TranscriptFetched => "Transcript fetched",
         EpisodeState.Transcribed => "Transcribed",
         EpisodeState.Skipped => "Skipped (backfill)",

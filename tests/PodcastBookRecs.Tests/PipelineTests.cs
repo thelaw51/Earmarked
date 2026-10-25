@@ -98,7 +98,7 @@ public sealed class PipelineTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Falls_back_to_the_next_link_then_to_whisper_when_links_are_gone()
+    public async Task Falls_back_to_the_next_link_then_to_transcription_when_links_are_gone()
     {
         _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
         _http.Respond("https://example.com/ep3.vtt", "", HttpStatusCode.NotFound);
@@ -110,7 +110,7 @@ public sealed class PipelineTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Transient_errors_back_off_then_hand_over_to_whisper()
+    public async Task Transient_errors_back_off_then_hand_over_to_transcription()
     {
         _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
         _http.Respond("https://example.com/ep3.vtt", "", HttpStatusCode.ServiceUnavailable);

@@ -46,7 +46,7 @@ else
     {
         <MudAlert Severity="Severity.Info">
             @(_episode.State == EpisodeState.AwaitingTranscription
-                ? "No published transcript. Whisper transcription arrives in a later phase."
+                ? "No published transcript. It will be transcribed once transcription is added in Phase 2."
                 : "No transcript yet.")
         </MudAlert>
     }

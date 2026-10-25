@@ -11,7 +11,7 @@ namespace PodcastBookRecs.Core.Pipeline;
 /// <summary>
 /// Downloads and parses the published transcript for the next <see cref="EpisodeState.New"/> episode.
 /// Links are tried best-format first. A link that is gone or unparseable moves on to the next one; when none
-/// work the episode drops to AwaitingTranscription so Whisper can handle it. Transient errors retry with backoff.
+/// work the episode drops to AwaitingTranscription for the transcription service. Transient errors retry with backoff.
 /// </summary>
 public sealed partial class TranscriptFetcher(
     IDbContextFactory<AppDbContext> dbFactory,
@@ -140,6 +140,6 @@ public sealed partial class TranscriptFetcher(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Transcript download for {Episode} failed (attempt {Attempt}): {Error}")]
     private partial void LogTransient(string episode, int attempt, string error);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "No usable published transcript for {Episode}, waiting for Whisper: {Reason}")]
+    [LoggerMessage(Level = LogLevel.Information, Message = "No usable published transcript for {Episode}, waiting for transcription: {Reason}")]
     private partial void LogFallback(string episode, string reason);
 }

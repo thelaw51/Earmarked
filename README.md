@@ -11,11 +11,11 @@ It runs as two containers from one image: a **Worker** that polls feeds and proc
 | Phase | What it adds | State |
 |---|---|---|
 | 1 | Feed polling, published `<podcast:transcript>` fetching and parsing, podcast and episode pages, CI/CD | **Done** |
-| 2 | Whisper transcription on a Mac for episodes without a published transcript | Next |
+| 2 | Speech-to-text transcription (Whisper to start) for episodes without a published transcript | Next |
 | 3 | Book extraction with a local LLM, Open Library matching, ranked book list | Planned |
 | 4 | Review queue, filters, export | Planned |
 
-Most podcasts don't publish transcripts, so until Phase 2 lands those episodes sit in the *Awaiting Whisper* state.
+Most podcasts don't publish transcripts, so until Phase 2 lands those episodes sit in the *Awaiting transcription* state.
 
 ## How an episode moves through the pipeline
 
@@ -23,7 +23,7 @@ Most podcasts don't publish transcripts, so until Phase 2 lands those episodes s
 2. New items are deduplicated on their GUID, falling back to the enclosure URL.
 3. The first time a feed is polled, only the newest `Polling:BackfillEpisodes` (10 by default) are queued. Older ones are stored as *Skipped* so later polls don't mistake them for new episodes.
 4. An episode with a `<podcast:transcript>` link is fetched in the best available format: VTT, then SRT, then JSON, then HTML, then plain text. A dead or unparseable link moves on to the next one. Network errors retry with exponential backoff, up to `Polling:MaxAttempts`.
-5. Episodes with no usable transcript wait for Whisper.
+5. Episodes with no usable transcript wait for the transcription service.
 
 ## Deploying with Portainer
 

@@ -37,7 +37,7 @@ public enum EpisodeState
     /// <summary>Has a published transcript link waiting to be fetched.</summary>
     New = 0,
 
-    /// <summary>No usable published transcript; waits for Whisper.</summary>
+    /// <summary>No usable published transcript; waits for the transcription service.</summary>
     AwaitingTranscription = 1,
 
     TranscriptFetched = 2,

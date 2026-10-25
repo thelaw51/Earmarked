@@ -17,8 +17,15 @@ public class Transcript
     public List<TranscriptSegment> Segments { get; set; } = [];
 }
 
+/// <summary>
+/// Where a transcript came from. Deliberately provider-neutral: which transcription service and model produced
+/// a transcript is recorded separately, so switching provider doesn't change stored values.
+/// </summary>
 public enum TranscriptSource
 {
+    /// <summary>Published by the podcast in a <c>&lt;podcast:transcript&gt;</c> tag.</summary>
     Feed = 0,
-    Whisper = 1,
+
+    /// <summary>Produced by our own speech-to-text service.</summary>
+    Transcribed = 1,
 }
