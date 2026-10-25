@@ -11,7 +11,7 @@ It runs as two containers from one image: a **Worker** that polls feeds and proc
 | Phase | What it adds | State |
 |---|---|---|
 | 1 | Feed polling, published `<podcast:transcript>` fetching and parsing, podcast and episode pages, CI/CD | **Done** |
-| 2 | Speech-to-text transcription (Whisper to start) for episodes without a published transcript | Next |
+| 2 | Speech-to-text transcription (Whisper to start) for episodes without a published transcript | In progress: the [Mac transcription server](#transcription-server-on-a-mac) is ready; the Worker doesn't use it yet |
 | 3 | Book extraction with a local LLM, Open Library matching, ranked book list | Planned |
 | 4 | Review queue, filters, export | Planned |
 
@@ -72,6 +72,45 @@ The app has no login of its own. It also fetches any feed URL you add, so anyone
 2. Under **Access**, then **Applications**, add a self-hosted application for that hostname, with a policy that allows only your email address.
 
 Blazor Server keeps a WebSocket open to the server. cloudflared passes WebSockets through without any extra setting.
+
+## Transcription server on a Mac
+
+Episodes without a published transcript are transcribed by [whisper.cpp](https://github.com/ggml-org/whisper.cpp)'s server, running natively on an Apple Silicon Mac on your LAN. It has to run natively: Docker on macOS can't use the Apple GPU, so a containerised Whisper would fall back to the much slower CPU.
+
+### Why whisper.cpp
+
+- It runs on the Apple GPU through Metal, and Homebrew ships a prebuilt version.
+- Its server can answer on the OpenAI path `/v1/audio/transcriptions`. The Worker talks to that standard API, so any OpenAI-compatible transcription server can replace it.
+- Its `verbose_json` response includes timed segments, which book mentions need in order to link to a point in the episode. Some alternatives (for example vllm-metal) return only the text.
+
+The default model is `large-v3-turbo`: close to `large-v3` accuracy at several times the speed, and about 1.8 GB of memory, which leaves room for LM Studio's model on a 16 GB Mac. On an M4 it transcribed clear speech at about 15× real time. Real podcasts, with music and crosstalk, run slower.
+
+### Setup
+
+On the Mac, with [Homebrew](https://brew.sh) installed:
+
+```bash
+mac/setup.sh --host <the Mac's LAN IP>
+```
+
+The script:
+
+1. installs `whisper-cpp` and `ffmpeg` with Homebrew, if they aren't already installed
+2. downloads the model to `~/Library/Application Support/whisper-server/models/` and checks its SHA-256 against the published hash
+3. installs a launchd agent, `com.podcastbookrecs.whisper-server`, that starts the server at login and restarts it if it stops
+4. waits until the server answers, then prints its address
+
+It's safe to run again: it skips a model that's already verified and reinstalls the agent with the current settings. Options: `--port` (default `8178`) and `--model` (`large-v3-turbo`, or the smaller `large-v3-turbo-q8_0` and `large-v3-turbo-q5_0`).
+
+Give the Mac a reserved IP address on your router, since the Worker's config points at it. The server listens on that address only. It has no authentication, so don't forward its port beyond your LAN.
+
+### Living with it
+
+- **Logs:** `~/Library/Logs/whisper-server.log`
+- **Restart:** `launchctl kickstart -k gui/$(id -u)/com.podcastbookrecs.whisper-server`. Do this after `brew upgrade whisper-cpp` too.
+- **Stop and remove:** `launchctl bootout gui/$(id -u)/com.podcastbookrecs.whisper-server`, then delete `~/Library/LaunchAgents/com.podcastbookrecs.whisper-server.plist`
+- **After a reboot:** a launchd agent only runs once you're logged in. If FileVault keeps the Mac at the login screen, transcription waits until someone logs in. Once the Worker transcribes (the next part of Phase 2), it treats an unreachable server as "try again later", not as a failed episode.
+- **Test it:** `curl http://<mac-ip>:8178/v1/audio/transcriptions -F file=@some.mp3 -F response_format=verbose_json`
 
 ## Configuration
 
