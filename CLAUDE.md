@@ -25,3 +25,9 @@ That covers today's and planned services: Whisper (transcription), LM Studio (bo
 - **Document the switch.** The README says how to point each service at a different provider.
 
 When a change touches a third-party service, check it against these rules before calling it done.
+
+## Branch protection and CI job names
+
+`main` is protected by the "Protect main" ruleset: no direct pushes, force pushes or deletion, and every change goes through a pull request. A PR can only merge when the required checks named "Build and test" and "Docker image" pass.
+
+Those names are the `name:` of the two jobs in `.github/workflows/ci.yml`, and the ruleset matches them exactly. If you rename either job, or split or replace it, update the ruleset's required checks in the same change (Settings → Rules → Rulesets → Protect main). Otherwise every PR waits forever for a check that never reports.
