@@ -106,6 +106,31 @@ public class OpenAiCompatibleTranscriptionServiceTests
     }
 
     [Fact]
+    public async Task A_backend_that_hangs_up_mid_request_and_stays_down_is_unavailable()
+    {
+        // What happens when whisper-server is stopped, or the Mac sleeps, while it works on a chunk.
+        using var server = new DroppingServer(answerAfterDrop: false);
+        using var provider = RealServices(server.BaseUrl);
+        var service = (OpenAiCompatibleTranscriptionService)provider.GetRequiredService<ITranscriptionService>();
+        service.RecoveryWindow = TimeSpan.FromSeconds(1);
+
+        var ex = await Assert.ThrowsAsync<BackendUnavailableException>(() => service.TranscribeAsync(new MemoryStream([1]), "a.wav", Ct));
+        Assert.Contains("went away mid-request", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_backend_that_hangs_up_mid_request_but_still_answers_counts_as_a_failure()
+    {
+        // What a crash on this audio looks like: launchd restarts the server, so it answers again. Counting it means
+        // audio that always crashes the server ends up Failed instead of pausing transcription forever.
+        using var server = new DroppingServer(answerAfterDrop: true);
+        using var provider = RealServices(server.BaseUrl);
+
+        await Assert.ThrowsAsync<TranscriptionFailedException>(() =>
+            provider.GetRequiredService<ITranscriptionService>().TranscribeAsync(new MemoryStream([1]), "a.wav", Ct));
+    }
+
+    [Fact]
     public async Task Health_check_reports_unreachable_without_throwing()
     {
         using var provider = RealServices("http://127.0.0.1:9");
@@ -149,6 +174,93 @@ public class OpenAiCompatibleTranscriptionServiceTests
             LastUri = request.RequestUri;
             LastBody = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
             return new HttpResponseMessage(status) { Content = new StringContent(body) };
+        }
+    }
+
+    /// <summary>
+    /// Reads the first request in full, then closes the connection without answering. Afterwards it either stops
+    /// listening (the backend is gone) or answers every request with 200 (it was restarted).
+    /// </summary>
+    private sealed class DroppingServer : IDisposable
+    {
+        private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+        private readonly CancellationTokenSource _stop = new();
+
+        public DroppingServer(bool answerAfterDrop)
+        {
+            _listener.Start();
+            BaseUrl = $"http://127.0.0.1:{((IPEndPoint)_listener.LocalEndpoint).Port}";
+            _ = RunAsync(answerAfterDrop);
+        }
+
+        public string BaseUrl { get; }
+
+        public void Dispose()
+        {
+            _stop.Cancel();
+            _listener.Stop();
+            _stop.Dispose();
+        }
+
+        private async Task RunAsync(bool answerAfterDrop)
+        {
+            try
+            {
+                using (var first = await _listener.AcceptTcpClientAsync(_stop.Token))
+                {
+                    await ReadRequestAsync(first.GetStream());
+                }
+
+                if (!answerAfterDrop)
+                {
+                    _listener.Stop();
+                    return;
+                }
+
+                while (true)
+                {
+                    using var client = await _listener.AcceptTcpClientAsync(_stop.Token);
+                    var stream = client.GetStream();
+                    await ReadRequestAsync(stream);
+                    await stream.WriteAsync("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8.ToArray(), _stop.Token);
+                }
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException or IOException)
+            {
+            }
+        }
+
+        /// <summary>Reads the headers and the Content-Length body, so closing afterwards ends the response cleanly instead of resetting.</summary>
+        private async Task ReadRequestAsync(NetworkStream stream)
+        {
+            var received = new List<byte>();
+            var buffer = new byte[8192];
+            int headerEnd;
+            while ((headerEnd = System.Text.Encoding.ASCII.GetString([.. received]).IndexOf("\r\n\r\n", StringComparison.Ordinal)) < 0)
+            {
+                var read = await stream.ReadAsync(buffer, _stop.Token);
+                if (read == 0)
+                {
+                    return;
+                }
+
+                received.AddRange(buffer.AsSpan(0, read));
+            }
+
+            var headers = System.Text.Encoding.ASCII.GetString([.. received], 0, headerEnd);
+            var lengthLine = headers.Split("\r\n").FirstOrDefault(l => l.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase));
+            var remaining = (lengthLine is null ? 0 : int.Parse(lengthLine["Content-Length:".Length..].Trim(), System.Globalization.CultureInfo.InvariantCulture))
+                - (received.Count - headerEnd - 4);
+            while (remaining > 0)
+            {
+                var read = await stream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, remaining)), _stop.Token);
+                if (read == 0)
+                {
+                    return;
+                }
+
+                remaining -= read;
+            }
         }
     }
 

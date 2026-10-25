@@ -23,6 +23,12 @@ public sealed class OpenAiCompatibleTranscriptionService(IHttpClientFactory http
 
     public string Model => options.Value.Model;
 
+    /// <summary>
+    /// How long a backend that dropped a request has to answer again before it counts as gone. launchd waits 10
+    /// seconds before restarting a crashed whisper-server, and loading the model takes a few more.
+    /// </summary>
+    internal TimeSpan RecoveryWindow { get; set; } = TimeSpan.FromSeconds(30);
+
     public async Task<TranscriptionResult> TranscribeAsync(Stream audio, string fileName, CancellationToken cancellationToken)
     {
         using var content = new MultipartFormDataContent();
@@ -52,6 +58,13 @@ public sealed class OpenAiCompatibleTranscriptionService(IHttpClientFactory http
         }
         catch (HttpRequestException ex)
         {
+            // The connection broke mid-request. Either the backend went away (stopped, or the Mac slept), which isn't
+            // this episode's fault, or it crashed on this audio and its supervisor restarted it, which is.
+            if (!await AnswersWithinAsync(RecoveryWindow, cancellationToken))
+            {
+                throw new BackendUnavailableException($"The transcription backend went away mid-request: {ex.Message}", ex);
+            }
+
             throw new TranscriptionFailedException($"Transcription request failed: {ex.Message}", ex);
         }
 
@@ -69,6 +82,46 @@ public sealed class OpenAiCompatibleTranscriptionService(IHttpClientFactory http
             }
 
             return Parse(body);
+        }
+    }
+
+    /// <summary>Asks the backend again every 2 seconds until it answers or <paramref name="window"/> runs out.</summary>
+    private async Task<bool> AnswersWithinAsync(TimeSpan window, CancellationToken cancellationToken)
+    {
+        var client = httpFactory.CreateClient(HttpClientName);
+        var deadline = DateTime.UtcNow + window;
+        while (true)
+        {
+            if (await ProbeAsync(client, cancellationToken) is null)
+            {
+                return true;
+            }
+
+            if (DateTime.UtcNow >= deadline)
+            {
+                return false;
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Sends a GET to the base URL. Returns null if anything answers, or why it didn't. The OpenAI API has no standard
+    /// health endpoint, so any HTTP response counts as reachable.
+    /// </summary>
+    internal static async Task<string?> ProbeAsync(HttpClient client, CancellationToken cancellationToken)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(BackendHealth.Timeout);
+        try
+        {
+            using var response = await client.GetAsync("", HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            return null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            return ex is OperationCanceledException ? "no answer within 5 seconds." : ex.Message;
         }
     }
 
@@ -111,25 +164,15 @@ public sealed class OpenAiCompatibleTranscriptionService(IHttpClientFactory http
     }
 }
 
-/// <summary>
-/// Reports whether the backend answers at all. The OpenAI API has no standard health endpoint, so any HTTP response
-/// from the base URL counts as reachable.
-/// </summary>
+/// <summary>Reports whether the backend answers at all.</summary>
 public sealed class OpenAiCompatibleHealthCheck(IHttpClientFactory httpFactory, IOptions<TranscriptionOptions> options) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
     {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(BackendHealth.Timeout);
-        try
-        {
-            using var response = await httpFactory.CreateClient(OpenAiCompatibleTranscriptionService.HttpClientName)
-                .GetAsync("", HttpCompletionOption.ResponseHeadersRead, cts.Token);
-            return HealthCheckResult.Healthy($"{TranscriptionProviders.OpenAiCompatible} · {options.Value.Model}");
-        }
-        catch (Exception ex) when (ex is HttpRequestException || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
-        {
-            return HealthCheckResult.Unhealthy(ex is OperationCanceledException ? "Unreachable: no answer within 5 seconds." : $"Unreachable: {ex.Message}");
-        }
+        var problem = await OpenAiCompatibleTranscriptionService.ProbeAsync(
+            httpFactory.CreateClient(OpenAiCompatibleTranscriptionService.HttpClientName), cancellationToken);
+        return problem is null
+            ? HealthCheckResult.Healthy($"{TranscriptionProviders.OpenAiCompatible} · {options.Value.Model}")
+            : HealthCheckResult.Unhealthy($"Unreachable: {problem}");
     }
 }
