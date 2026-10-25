@@ -1,0 +1,92 @@
+@page "/account/login"
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+@layout AccountLayout
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using PodcastBookRecs.Core.Configuration
+@inject SignInManager<AppUser> SignInManager
+@inject SchemaStatus Schema
+@inject NavigationManager Navigation
+
+@* Static SSR: signing in sets a cookie, which needs the HTTP response that an interactive circuit doesn't have.
+   MudBlazor inputs need a circuit, so the fields are plain inputs styled in app.css. *@
+<PageTitle>Sign in</PageTitle>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+
+<EditForm Model="Input" method="post" OnValidSubmit="SignInAsync" FormName="login" class="account-form">
+    <DataAnnotationsValidator />
+    <label for="email">Email</label>
+    <InputText id="email" type="email" @bind-Value="Input.Email" autocomplete="username" autofocus />
+    <ValidationMessage For="() => Input.Email" />
+
+    <label for="password">Password</label>
+    <InputText id="password" type="password" @bind-Value="Input.Password" autocomplete="current-password" />
+    <ValidationMessage For="() => Input.Password" />
+
+    <label class="account-check">
+        <InputCheckbox @bind-Value="Input.RememberMe" /> Keep me signed in
+    </label>
+
+    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-2">Sign in</MudButton>
+</EditForm>
+
+@code {
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = null!;
+
+    [SupplyParameterFromForm]
+    private LoginInput Input { get; set; } = null!;
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    private string? _error;
+
+    protected override void OnInitialized() => Input ??= new();
+
+    private async Task SignInAsync()
+    {
+        // Querying a missing database file would create it, and only the Worker may do that.
+        if (!await Schema.IsReadyAsync(HttpContext.RequestAborted))
+        {
+            _error = "The Worker hasn't created the database yet. Try again in a minute.";
+            return;
+        }
+
+        var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: true);
+        if (result.Succeeded)
+        {
+            Navigation.NavigateTo(LocalOrHome(ReturnUrl));
+            return;
+        }
+
+        // Otherwise the re-rendered form sends the password back to the browser in its value attribute.
+        Input.Password = "";
+        _error = result.IsLockedOut
+            ? $"Too many failed attempts. Try again in {IdentityExtensions.LockoutDuration.TotalMinutes:0} minutes."
+            : "Email or password is incorrect.";
+    }
+
+    /// <summary>
+    /// Only follows return URLs on this site, so a crafted link can't send someone elsewhere after sign-in. Control
+    /// characters are refused too: browsers strip tabs and newlines, which turns <c>/\t/evil.com</c> into <c>//evil.com</c>.
+    /// </summary>
+    private static string LocalOrHome(string? url) =>
+        url is ['/'] or ['/', not ('/' or '\\'), ..] && !url.Any(char.IsControl) ? url : "/";
+
+    private sealed class LoginInput
+    {
+        [Required, EmailAddress]
+        public string Email { get; set; } = "";
+
+        [Required]
+        public string Password { get; set; } = "";
+
+        public bool RememberMe { get; set; }
+    }
+}

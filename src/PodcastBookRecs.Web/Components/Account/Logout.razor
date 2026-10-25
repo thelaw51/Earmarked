@@ -1,0 +1,27 @@
+@page "/account/logout"
+@attribute [ExcludeFromInteractiveRouting]
+@layout AccountLayout
+@using Microsoft.AspNetCore.Identity
+@inject SignInManager<AppUser> SignInManager
+@inject NavigationManager Navigation
+
+@* Static SSR, like sign-in: clearing the cookie needs the HTTP response. Signing out is a POST with an antiforgery
+   token so another site can't sign you out with a link. *@
+<PageTitle>Sign out</PageTitle>
+
+<MudText Typo="Typo.body1" Class="mb-4">Sign out of this browser?</MudText>
+<form method="post" @onsubmit="SignOutAsync" @formname="logout">
+    <AntiforgeryToken />
+    <MudStack Row="true">
+        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary">Sign out</MudButton>
+        <MudButton Href="/" Variant="Variant.Text">Cancel</MudButton>
+    </MudStack>
+</form>
+
+@code {
+    private async Task SignOutAsync()
+    {
+        await SignInManager.SignOutAsync();
+        Navigation.NavigateTo("/account/login");
+    }
+}
