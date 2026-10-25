@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <title>The Imaginary Bookshelf</title>
+    <itunes:author>Example Productions</itunes:author>
+    <itunes:image href="https://example.com/cover.jpg"/>
+    <item>
+      <title>Episode 3: Rivers of Paper</title>
+      <guid isPermaLink="false">ep-003</guid>
+      <pubDate>Thu, 22 Oct 2026 05:00:00 GMT</pubDate>
+      <itunes:duration>34:02</itunes:duration>
+      <enclosure url="https://cdn.example.com/ep3.mp3" length="32679392" type="audio/mpeg"/>
+      <podcast:transcript url="https://example.com/ep3.html" type="text/html"/>
+      <podcast:transcript url="https://example.com/ep3.vtt" type="text/vtt" language="en"/>
+    </item>
+    <item>
+      <title>Episode 2: The Lantern Index</title>
+      <guid isPermaLink="false">ep-002</guid>
+      <pubDate>Mon, 19 Oct 2026 05:00:00 -0400</pubDate>
+      <itunes:duration>2535</itunes:duration>
+      <enclosure url="https://cdn.example.com/ep2.mp3" length="40567118" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>Episode 1: No GUID Here</title>
+      <pubDate>Thu, 15 Oct 2026 05:00:00 EDT</pubDate>
+      <itunes:duration>1:02:03</itunes:duration>
+      <enclosure url="https://cdn.example.com/ep1.mp3" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>Duplicate of episode 2</title>
+      <guid isPermaLink="false">ep-002</guid>
+      <enclosure url="https://cdn.example.com/ep2-again.mp3" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>Nothing identifies this one</title>
+    </item>
+  </channel>
+</rss>

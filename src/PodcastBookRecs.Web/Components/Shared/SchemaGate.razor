@@ -1,0 +1,53 @@
+@implements IDisposable
+@inject SchemaStatus Schema
+
+@if (_ready)
+{
+    @ChildContent
+}
+else if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error">Can't read the database: @_error</MudAlert>
+}
+else
+{
+    <MudAlert Severity="Severity.Info" Icon="@Icons.Material.Filled.HourglassTop">
+        Waiting for the Worker to create or upgrade the database. This page will continue on its own.
+    </MudAlert>
+    <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="mt-2" />
+}
+
+@code {
+    /// <summary>Content shown once the database schema is current.</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    private readonly CancellationTokenSource _cts = new();
+    private bool _ready;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+            while (!(_ready = await Schema.IsReadyAsync(_cts.Token)))
+            {
+                await timer.WaitForNextTickAsync(_cts.Token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

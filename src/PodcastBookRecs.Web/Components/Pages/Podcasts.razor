@@ -1,0 +1,204 @@
+@page "/"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject TimeProvider Time
+@inject ISnackbar Snackbar
+
+<PageTitle>Podcasts</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+    <MudText Typo="Typo.h4">Podcasts</MudText>
+    <MudSpacer />
+    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Sync" OnClick="PollAllAsync">Poll all now</MudButton>
+    <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
+</MudStack>
+
+<MudPaper Class="pa-4 mb-4" Elevation="1">
+    <MudStack Row="true" AlignItems="AlignItems.Center">
+        <MudTextField T="string" @bind-Value="_newFeedUrl" Label="RSS feed URL" Variant="Variant.Outlined" Margin="Margin.Dense"
+                      InputType="InputType.Url" Immediate="true" OnKeyDown="OnFeedKeyDown"
+                      HelperText="Private feed URLs are stored as entered but only the host is ever shown." />
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AddFeedAsync" Disabled="@(_adding || string.IsNullOrWhiteSpace(_newFeedUrl))">Add feed</MudButton>
+    </MudStack>
+</MudPaper>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error">Couldn't load podcasts: @_error</MudAlert>
+}
+else if (_rows is null)
+{
+    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+}
+else if (_rows.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">No feeds yet. Add one above, or list them under <code>Feeds</code> in config.json.</MudAlert>
+}
+else
+{
+    <MudTable Items="_rows" Hover="true" Dense="true" Elevation="1">
+        <HeaderContent>
+            <MudTh></MudTh>
+            <MudTh>Podcast</MudTh>
+            <MudTh>Episodes</MudTh>
+            <MudTh>Last polled</MudTh>
+            <MudTh>Enabled</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>
+                @if (context.ImageUrl is not null)
+                {
+                    <MudAvatar Rounded="true"><MudImage Src="@context.ImageUrl" Alt="" /></MudAvatar>
+                }
+            </MudTd>
+            <MudTd>
+                <MudLink Href="@($"podcasts/{context.Id}")" Typo="Typo.body1">@(context.Title ?? FeedUrlRedactor.Redact(context.FeedUrl))</MudLink>
+                @if (context.Author is not null)
+                {
+                    <MudText Typo="Typo.caption" Class="d-block">@context.Author</MudText>
+                }
+            </MudTd>
+            <MudTd>
+                <MudText Typo="Typo.body2">@context.Active active, @context.Fetched with transcript, @context.Awaiting awaiting transcription</MudText>
+                @if (context.Skipped > 0)
+                {
+                    <MudText Typo="Typo.caption">@context.Skipped older skipped</MudText>
+                }
+            </MudTd>
+            <MudTd>
+                @Display.LocalTime(context.LastPolledAt)
+                @if (context.LastPollError is not null)
+                {
+                    <MudTooltip Text="@context.LastPollError">
+                        <MudIcon Icon="@Icons.Material.Filled.ErrorOutline" Color="Color.Error" Size="Size.Small" Class="ml-1" />
+                    </MudTooltip>
+                }
+            </MudTd>
+            <MudTd>
+                <MudSwitch T="bool" Value="context.Enabled" ValueChanged="@(v => SetEnabledAsync(context, v))" Color="Color.Primary" />
+            </MudTd>
+            <MudTd>
+                <MudTooltip Text="Poll now">
+                    <MudIconButton Icon="@Icons.Material.Filled.Sync" Size="Size.Small" OnClick="@(() => PollAsync(context))" />
+                </MudTooltip>
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+}
+
+@code {
+    private sealed record Row(Guid Id, string FeedUrl, string? Title, string? Author, string? ImageUrl, bool Enabled,
+        DateTime? LastPolledAt, string? LastPollError, int Active, int Fetched, int Awaiting, int Skipped)
+    {
+        public bool Enabled { get; set; } = Enabled;
+    }
+
+    private List<Row>? _rows;
+    private string? _error;
+    private string? _newFeedUrl;
+    private bool _adding;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _rows = await db.PodcastFeeds
+                .OrderBy(p => p.Title)
+                .Select(p => new Row(p.Id, p.FeedUrl, p.Title, p.Author, p.ImageUrl, p.Enabled, p.LastPolledAt, p.LastPollError,
+                    p.Episodes.Count(e => e.State != EpisodeState.Skipped),
+                    p.Episodes.Count(e => e.State == EpisodeState.TranscriptFetched || e.State == EpisodeState.Transcribed),
+                    p.Episodes.Count(e => e.State == EpisodeState.AwaitingTranscription),
+                    p.Episodes.Count(e => e.State == EpisodeState.Skipped)))
+                .ToListAsync();
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task OnFeedKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await AddFeedAsync();
+        }
+    }
+
+    private async Task AddFeedAsync()
+    {
+        var url = _newFeedUrl?.Trim();
+        if (!FeedUrl.IsValid(url))
+        {
+            Snackbar.Add("Enter a full http:// or https:// feed URL.", Severity.Warning);
+            return;
+        }
+
+        _adding = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            if (await db.PodcastFeeds.AnyAsync(p => p.FeedUrl == url))
+            {
+                Snackbar.Add("That feed is already in the list.", Severity.Info);
+                return;
+            }
+
+            var now = Time.GetUtcNow().UtcDateTime;
+            var podcast = new PodcastFeed { FeedUrl = url!, AddedAt = now };
+            db.PodcastFeeds.Add(podcast);
+            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastFeedId = podcast.Id, CreatedAt = now });
+            await db.SaveChangesAsync();
+
+            _newFeedUrl = null;
+            Snackbar.Add("Feed added. The Worker will poll it within a few seconds.", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Couldn't add the feed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _adding = false;
+        }
+    }
+
+    private Task PollAsync(Row row) => QueueAsync(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastFeedId = row.Id }, "Poll queued.");
+
+    private Task PollAllAsync() => QueueAsync(new WorkerCommand { Type = WorkerCommandType.PollAllFeeds }, "Poll of all feeds queued.");
+
+    private async Task QueueAsync(WorkerCommand command, string message)
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            command.CreatedAt = Time.GetUtcNow().UtcDateTime;
+            db.WorkerCommands.Add(command);
+            await db.SaveChangesAsync();
+            Snackbar.Add(message, Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Couldn't queue the command: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task SetEnabledAsync(Row row, bool enabled)
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            await db.PodcastFeeds.Where(p => p.Id == row.Id).ExecuteUpdateAsync(s => s.SetProperty(p => p.Enabled, enabled));
+            row.Enabled = enabled;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Couldn't update the feed: {ex.Message}", Severity.Error);
+        }
+    }
+}

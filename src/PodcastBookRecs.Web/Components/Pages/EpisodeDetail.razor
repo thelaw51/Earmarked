@@ -1,0 +1,127 @@
+@page "/episodes/{Id:guid}"
+@using PodcastBookRecs.Core.Transcripts
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject TimeProvider Time
+@inject ISnackbar Snackbar
+
+<PageTitle>@(_episode?.Title ?? "Episode")</PageTitle>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error">Couldn't load this episode: @_error</MudAlert>
+}
+else if (_loading)
+{
+    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+}
+else if (_episode is null)
+{
+    <MudAlert Severity="Severity.Warning">Episode @Id doesn't exist.</MudAlert>
+}
+else
+{
+    <MudBreadcrumbs Items="_breadcrumbs" Class="px-0" />
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+        <MudText Typo="Typo.h4">@_episode.Title</MudText>
+        <MudSpacer />
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Replay" OnClick="RetryAsync">Reset and retry</MudButton>
+    </MudStack>
+
+    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-4">
+        <EpisodeStateChip State="_episode.State" />
+        <MudText Typo="Typo.body2">Published @Display.LocalTime(_episode.PublishedAt)</MudText>
+        @if (_episode.Duration is not null)
+        {
+            <MudText Typo="Typo.body2">· @Display.Timestamp(_episode.Duration)</MudText>
+        }
+        <MudText Typo="Typo.body2">· @_episode.TranscriptLinks.Count published transcript link(s)</MudText>
+    </MudStack>
+
+    @if (_episode.LastError is not null)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mb-4">@_episode.LastError</MudAlert>
+    }
+
+    @if (_episode.Transcript is null)
+    {
+        <MudAlert Severity="Severity.Info">
+            @(_episode.State == EpisodeState.AwaitingTranscription
+                ? "No published transcript. It will be transcribed once transcription is added in Phase 2."
+                : "No transcript yet.")
+        </MudAlert>
+    }
+    else
+    {
+        <MudText Typo="Typo.h6" Class="mb-2">
+            Transcript · @_episode.Transcript.Format from the @_episode.Transcript.Source.ToString().ToLowerInvariant(), @_episode.Transcript.Segments.Count segments
+        </MudText>
+        <MudSimpleTable Dense="true" Hover="true" Elevation="1">
+            <tbody>
+                @foreach (var segment in _episode.Transcript.Segments)
+                {
+                    <tr>
+                        <td style="white-space: nowrap; width: 1%;"><MudText Typo="Typo.caption">@Display.Timestamp(segment.Start)</MudText></td>
+                        <td style="white-space: nowrap; width: 1%;"><MudText Typo="Typo.caption">@segment.Speaker</MudText></td>
+                        <td><MudText Typo="Typo.body2">@segment.Text</MudText></td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    }
+}
+
+@code {
+    [Parameter]
+    public Guid Id { get; set; }
+
+    private Episode? _episode;
+    private List<BreadcrumbItem> _breadcrumbs = [];
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _episode = await db.Episodes.AsNoTracking()
+                .Include(e => e.PodcastFeed)
+                .Include(e => e.Transcript)
+                .SingleOrDefaultAsync(e => e.Id == Id);
+            if (_episode is not null)
+            {
+                _breadcrumbs =
+                [
+                    new("Podcasts", ""),
+                    new(_episode.PodcastFeed.Title ?? "Podcast", $"podcasts/{_episode.PodcastFeedId}"),
+                    new("Episode", null, disabled: true),
+                ];
+            }
+
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task RetryAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.RetryEpisode, EpisodeId = Id, CreatedAt = Time.GetUtcNow().UtcDateTime });
+            await db.SaveChangesAsync();
+            Snackbar.Add("Retry queued. Any stored transcript will be fetched again.", Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Couldn't queue the retry: {ex.Message}", Severity.Error);
+        }
+    }
+}

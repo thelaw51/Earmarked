@@ -1,0 +1,6 @@
+<MudChip T="string" Size="Size.Small" Color="@Display.StateColor(State)" Variant="Variant.Outlined">@Display.StateLabel(State)</MudChip>
+
+@code {
+    [Parameter, EditorRequired]
+    public EpisodeState State { get; set; }
+}

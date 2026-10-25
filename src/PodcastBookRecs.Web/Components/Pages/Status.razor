@@ -1,0 +1,95 @@
+@page "/status"
+@using PodcastBookRecs.Core.Configuration
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject TimeProvider Time
+
+<PageTitle>Status</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+    <MudText Typo="Typo.h4">Status</MudText>
+    <MudSpacer />
+    <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
+</MudStack>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error">Couldn't load status: @_error</MudAlert>
+}
+else if (_loading)
+{
+    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+}
+else
+{
+    <MudGrid>
+        <MudItem xs="12" md="6">
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudText Typo="Typo.h6" Class="mb-2">Worker</MudText>
+                @if (_worker is null)
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true">No heartbeat yet. Is the Worker container running?</MudAlert>
+                }
+                else
+                {
+                    var stale = Time.GetUtcNow().UtcDateTime - _worker.UpdatedAt > WorkerStatusNames.StaleAfter;
+                    <MudAlert Severity="@(stale ? Severity.Error : Severity.Success)" Dense="true" Class="mb-2">
+                        @(stale ? "Not responding" : "Running") · last heartbeat @Display.LocalTime(_worker.UpdatedAt)
+                    </MudAlert>
+                    <MudText Typo="Typo.body2">Worker version @_worker.Version</MudText>
+                }
+                <MudText Typo="Typo.body2">UI version @AppVersion.Display</MudText>
+                <MudText Typo="Typo.body2">@_pendingCommands command(s) waiting for the Worker</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudText Typo="Typo.h6" Class="mb-2">Episodes by state</MudText>
+                @if (_counts.Count == 0)
+                {
+                    <MudText Typo="Typo.body2">No episodes yet.</MudText>
+                }
+                @foreach (var (state, count) in _counts)
+                {
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-1">
+                        <EpisodeStateChip State="state" />
+                        <MudText Typo="Typo.body2">@count</MudText>
+                    </MudStack>
+                }
+                <MudText Typo="Typo.caption" Class="mt-2 d-block">Transcription and extraction backends will appear here from Phase 2.</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private WorkerStatus? _worker;
+    private List<(EpisodeState State, int Count)> _counts = [];
+    private int _pendingCommands;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _worker = await db.WorkerStatuses.AsNoTracking().SingleOrDefaultAsync(s => s.Name == WorkerStatusNames.Worker);
+            _counts = (await db.Episodes.GroupBy(e => e.State).Select(g => new { g.Key, Count = g.Count() }).ToListAsync())
+                .OrderBy(x => x.Key)
+                .Select(x => (x.Key, x.Count))
+                .ToList();
+            _pendingCommands = await db.WorkerCommands.CountAsync(c => c.CompletedAt == null);
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

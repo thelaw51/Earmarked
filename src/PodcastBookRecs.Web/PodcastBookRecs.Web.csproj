@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MudBlazor" />
+    <ProjectReference Include="..\PodcastBookRecs.Core\PodcastBookRecs.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,37 @@
+# Portainer stack for PodcastBookRecs. Replace the /path/to/... host paths with your own.
+#
+# Keep /data on local disk (e.g. the LXC's own storage), never on an SMB/NFS share: SQLite's locking
+# doesn't work reliably over network filesystems. The podcasts folder can be on the NAS; it's read-only.
+#
+# Stack environment variables (optional):
+#   PBR_TAG   image tag to run. Default "latest". Set to a build tag such as "sha-1a2b3c4" to roll back.
+#   PBR_PORT  host port for the UI. Default 8742.
+
+services:
+  worker:
+    image: ghcr.io/thelaw51/podcastbookrecs:${PBR_TAG:-latest}
+    command: ["worker"]
+    restart: unless-stopped
+    environment:
+      TZ: Europe/London
+    volumes:
+      - /path/to/podcastbookrecs/config:/config:ro
+      - /path/to/podcastbookrecs/data:/data
+      # Audiobookshelf's podcast library, read-only. Used from Phase 2 to skip re-downloading audio.
+      - /path/to/nas/Podcasts:/podcasts:ro
+
+  web:
+    image: ghcr.io/thelaw51/podcastbookrecs:${PBR_TAG:-latest}
+    # To pin one build instead of using PBR_TAG, hard-code the tag on both services, e.g.:
+    # image: ghcr.io/thelaw51/podcastbookrecs:sha-1a2b3c4
+    command: ["web"]
+    restart: unless-stopped
+    depends_on:
+      - worker
+    environment:
+      TZ: Europe/London
+    ports:
+      - "${PBR_PORT:-8742}:8080"
+    volumes:
+      - /path/to/podcastbookrecs/config:/config:ro
+      - /path/to/podcastbookrecs/data:/data
