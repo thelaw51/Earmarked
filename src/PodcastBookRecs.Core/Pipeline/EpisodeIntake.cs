@@ -25,6 +25,41 @@ public static class EpisodeIntake
             .ToList();
     }
 
+    /// <summary>States whose transcript links are still worth refreshing: nothing has been fetched or transcribed yet.</summary>
+    public static readonly EpisodeState[] RefreshableStates = [EpisodeState.New, EpisodeState.AwaitingTranscription];
+
+    /// <summary>
+    /// Updates a stored episode's transcript links from the latest feed, for shows that add transcripts after release.
+    /// An AwaitingTranscription episode goes back to New only when its set of link URLs has changed and now includes a
+    /// usable format, so links that already failed aren't retried on every poll. Returns true if the episode was requeued.
+    /// </summary>
+    public static bool RefreshTranscriptLinks(Episode episode, ParsedEpisode latest, DateTime now)
+    {
+        if (!RefreshableStates.Contains(episode.State))
+        {
+            return false;
+        }
+
+        var stored = episode.TranscriptLinks.Select(l => l.Url).ToHashSet(StringComparer.Ordinal);
+        if (stored.SetEquals(latest.TranscriptLinks.Select(l => l.Url)))
+        {
+            return false;
+        }
+
+        episode.TranscriptLinks = [.. latest.TranscriptLinks];
+        episode.UpdatedAt = now;
+        if (episode.State != EpisodeState.AwaitingTranscription || InitialState(latest) != EpisodeState.New)
+        {
+            return false;
+        }
+
+        episode.State = EpisodeState.New;
+        episode.Attempts = 0;
+        episode.NextAttemptAt = null;
+        episode.LastError = null;
+        return true;
+    }
+
     /// <summary>New if the item links a transcript in a format we can parse, otherwise AwaitingTranscription.</summary>
     public static EpisodeState InitialState(ParsedEpisode episode) =>
         TranscriptLinkSelector.SelectBest(episode.TranscriptLinks) is null ? EpisodeState.AwaitingTranscription : EpisodeState.New;

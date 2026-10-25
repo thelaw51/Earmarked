@@ -134,6 +134,42 @@ public sealed class PipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_transcript_published_after_release_is_picked_up_on_a_later_poll()
+    {
+        _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
+        await _poller.PollAsync(1, Ct);
+        Assert.Equal(EpisodeState.AwaitingTranscription, (await EpisodeStatesAsync())["ep-002"]);
+
+        _http.Respond(FeedUrl, Fixtures.Read("feed.xml").Replace(
+            "<guid isPermaLink=\"false\">ep-002</guid>",
+            "<guid isPermaLink=\"false\">ep-002</guid><podcast:transcript url=\"https://example.com/ep2.srt\" type=\"application/x-subrip\"/>",
+            StringComparison.Ordinal));
+        _http.Respond("https://example.com/ep2.srt", Fixtures.Read("transcript.srt"));
+        await _poller.PollAsync(1, Ct);
+        Assert.Equal(EpisodeState.New, (await EpisodeStatesAsync())["ep-002"]);
+
+        while (await _fetcher.ProcessNextAsync(Ct))
+        {
+        }
+
+        Assert.Equal(EpisodeState.TranscriptFetched, (await EpisodeStatesAsync())["ep-002"]);
+    }
+
+    [Fact]
+    public async Task Links_that_already_failed_are_not_retried_on_every_poll()
+    {
+        _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
+        await _poller.PollAsync(1, Ct);
+        await _fetcher.ProcessNextAsync(Ct);
+        Assert.Equal(EpisodeState.AwaitingTranscription, (await EpisodeStatesAsync())["ep-003"]);
+
+        await _poller.PollAsync(1, Ct);
+
+        Assert.Equal(EpisodeState.AwaitingTranscription, (await EpisodeStatesAsync())["ep-003"]);
+        Assert.False(await _fetcher.ProcessNextAsync(Ct));
+    }
+
+    [Fact]
     public async Task Records_feed_errors_on_the_podcast()
     {
         _http.Respond(FeedUrl, "", HttpStatusCode.InternalServerError);

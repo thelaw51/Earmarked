@@ -78,6 +78,12 @@ public sealed partial class FeedPoller(
                 .ToHashSet(StringComparer.Ordinal);
             var plan = EpisodeIntake.Plan(feed.Episodes, existing, podcast.FirstPolledAt is null, polling.Value.BackfillEpisodes);
 
+            var latestByKey = feed.Episodes.ToDictionary(e => e.IdentityKey, StringComparer.Ordinal);
+            var waiting = await db.Episodes
+                .Where(e => e.PodcastId == podcast.Id && EpisodeIntake.RefreshableStates.Contains(e.State))
+                .ToListAsync(cancellationToken);
+            var requeued = waiting.Count(e => latestByKey.TryGetValue(e.IdentityKey, out var latest) && EpisodeIntake.RefreshTranscriptLinks(e, latest, now));
+
             foreach (var (item, state) in plan)
             {
                 db.Episodes.Add(new Episode
@@ -111,6 +117,10 @@ public sealed partial class FeedPoller(
 
             var skipped = plan.Count(p => p.State == EpisodeState.Skipped);
             LogPolled(podcast.Title ?? feedName, plan.Count - skipped, skipped);
+            if (requeued > 0)
+            {
+                LogRequeued(podcast.Title ?? feedName, requeued);
+            }
         }
         catch (Exception ex) when (ex is HttpRequestException or FeedFormatException or System.Xml.XmlException
                                        || (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested))
@@ -124,6 +134,9 @@ public sealed partial class FeedPoller(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Polled {Feed}: {Queued} new episodes queued, {Skipped} skipped by the backfill window")]
     private partial void LogPolled(string feed, int queued, int skipped);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Polled {Feed}: {Count} waiting episodes gained a transcript link and were requeued")]
+    private partial void LogRequeued(string feed, int count);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "Feed {Feed} not modified")]
     private partial void LogNotModified(string feed);
