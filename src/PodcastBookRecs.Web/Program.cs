@@ -38,6 +38,7 @@ builder.Services.AddAuthorizationBuilder().SetFallbackPolicy(new AuthorizationPo
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
 builder.Services.Configure<SecurityStampValidatorOptions>(o => o.ValidationInterval = IdentityRevalidatingAuthenticationStateProvider.Interval);
+builder.Services.AddPbrForwardedHeaders(builder.Configuration);
 
 // Keys live on the /data volume so a re-pulled container can still read circuits and antiforgery tokens.
 var keysDirectory = new DirectoryInfo(
@@ -50,6 +51,9 @@ if (isUserCommand)
 {
     return await UserCommands.RunAsync(app.Services, args);
 }
+
+// First, so the scheme is https before anything builds a redirect or issues the cookie.
+app.UseForwardedHeaders();
 
 if (!app.Environment.IsDevelopment())
 {

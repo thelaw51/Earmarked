@@ -88,12 +88,14 @@ That also clears the failed-attempt count. Every existing sign-in, open tabs inc
 
 ## Remote access through Cloudflare Tunnel
 
-The app fetches any feed URL you add, so anyone who signs in can make the Worker send requests from inside your network, and can see which private feeds you follow. The login keeps strangers out. Cloudflare Access in front of it is still worth adding, since it stops password guessing before a request reaches your network.
+The app fetches any feed URL you add, so anyone who signs in can make the Worker send requests from inside your network, and can see which private feeds you follow. The login has no second factor, so I'd still put Cloudflare Access in front of it. Access stops password guessing before a request reaches your network.
 
 1. In Cloudflare Zero Trust, add a public hostname to your tunnel that points at `http://<docker-host>:8742`.
-2. Under **SSL/TLS**, then **Edge Certificates**, turn on **Always Use HTTPS**. The app sees plain HTTP from cloudflared, so it can't mark the sign-in cookie Secure itself. This setting keeps the cookie off unencrypted connections.
+2. Under **SSL/TLS**, then **Edge Certificates**, turn on **Always Use HTTPS** and **HSTS**. Always Use HTTPS redirects only after the browser has sent its first plain-HTTP request, cookie and all. HSTS makes the browser use HTTPS from the start.
 3. Add a rate-limiting rule for `POST /account/login`, for example 10 requests a minute per IP. Lockout is per account, so without this anyone who knows your email can keep you locked out.
-4. Optionally, under **Access**, then **Applications**, add a self-hosted application for that hostname, with a policy that allows only your email address.
+4. Under **Access**, then **Applications**, add a self-hosted application for that hostname, with a policy that allows only your email address.
+
+cloudflared talks plain HTTP to the app and sends `X-Forwarded-Proto: https`. The app trusts that header from private addresses (`ForwardedHeaders:KnownNetworks`), which is how it knows to mark the sign-in cookie Secure and to redirect to `https://`. If cloudflared reaches the app from a public address, add that address to the list. To check, sign in through the tunnel and look at the `pbr.auth` cookie in the browser's developer tools: it should say Secure.
 
 Blazor Server keeps a WebSocket open to the server. cloudflared passes WebSockets through without any extra setting.
 
@@ -108,6 +110,7 @@ Settings come from `/config/config.json`, then environment variables prefixed `P
 | `Polling:MaxAttempts` | `5` | Transient failures before an episode stops retrying a published transcript |
 | `Feeds` | `[]` | Feeds imported on Worker startup if missing. Feeds added in the UI live in the database. |
 | `OpenLibrary:ContactEmail` | | Sent to Open Library from Phase 3, which gives higher rate limits to identified clients |
+| `ForwardedHeaders:KnownNetworks` | private ranges | CIDR blocks allowed to send `X-Forwarded-Proto` and `X-Forwarded-For`, e.g. `["172.18.0.0/16"]`. Loopback is always trusted. |
 | `Paths:Data` | `/data` | Database and key storage. Set by the image; you shouldn't need to change it. |
 
 Private feed URLs (for example a Supporting Cast subscriber feed) contain an access token. The app stores them as entered, but logs and the UI only ever show the host.
