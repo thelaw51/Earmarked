@@ -64,12 +64,36 @@ If the version you're leaving had added a migration, an older build won't unders
 
 Version tags (`v1.2.0`) also publish `1.2.0` and `1.2`.
 
+## Signing in
+
+Every page needs a signed-in user. There is no sign-up page and no "forgot password" email. You create accounts from a shell inside the web container, after the Worker has created the database:
+
+```bash
+docker exec -it <web-container> entrypoint.sh users add you@example.com
+```
+
+If you're upgrading from a build without login, nobody can sign in until you run this. Update the stack, wait for the Worker to log that it applied its migrations, then add yourself.
+
+The command prompts twice for the password, without echoing it. Passwords need at least 12 characters and nothing else.
+
+Five wrong passwords in a row lock the account for 15 minutes. To unlock it early, or if you forget the password, set a new one:
+
+```bash
+docker exec -it <web-container> entrypoint.sh users reset-password you@example.com
+```
+
+That also clears the failed-attempt count. Sessions signed in with the old password stop working within 30 minutes, when Identity next checks the cookie's security stamp. An open browser tab keeps its live connection until you reload it.
+
+"Keep me signed in" keeps the cookie for 14 days, renewed as you use the app. Without it the cookie ends when the browser closes.
+
 ## Remote access through Cloudflare Tunnel
 
-The app has no login of its own. It also fetches any feed URL you add, so anyone who can reach the UI can make the Worker send requests from inside your network, and can see which private feeds you follow. **Only expose it behind Cloudflare Access.**
+The app fetches any feed URL you add, so anyone who signs in can make the Worker send requests from inside your network, and can see which private feeds you follow. The login keeps strangers out. Cloudflare Access in front of it is still worth adding, since it stops password guessing before a request reaches your network.
 
 1. In Cloudflare Zero Trust, add a public hostname to your tunnel that points at `http://<docker-host>:8742`.
-2. Under **Access**, then **Applications**, add a self-hosted application for that hostname, with a policy that allows only your email address.
+2. Under **SSL/TLS**, then **Edge Certificates**, turn on **Always Use HTTPS**. The app sees plain HTTP from cloudflared, so it can't mark the sign-in cookie Secure itself. This setting keeps the cookie off unencrypted connections.
+3. Add a rate-limiting rule for `POST /account/login`, for example 10 requests a minute per IP. Lockout is per account, so without this anyone who knows your email can keep you locked out.
+4. Optionally, under **Access**, then **Applications**, add a self-hosted application for that hostname, with a policy that allows only your email address.
 
 Blazor Server keeps a WebSocket open to the server. cloudflared passes WebSockets through without any extra setting.
 
@@ -108,7 +132,11 @@ dotnet run --project src/PodcastBookRecs.Worker
 dotnet run --project src/PodcastBookRecs.Web
 ```
 
-The UI is at http://localhost:5237. The database is created at `.local/data/podcastbookrecs.db`.
+The UI is at http://localhost:5237. The Worker creates the database at `.local/data/podcastbookrecs.db`. Once it exists, add a user:
+
+```bash
+dotnet run --project src/PodcastBookRecs.Web -- users add you@example.com
+```
 
 To add a migration after changing the model:
 
