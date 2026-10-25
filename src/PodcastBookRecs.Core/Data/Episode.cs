@@ -43,6 +43,9 @@ public enum EpisodeState
     TranscriptFetched = 2,
     Transcribed = 3,
 
+    /// <summary>Claimed by the transcriber; audio is being downloaded, split or transcribed. Never refreshed by the poller.</summary>
+    Transcribing = 4,
+
     /// <summary>Older than the backfill window when the feed was first added. Stored so later polls don't treat it as new.</summary>
     Skipped = 10,
 

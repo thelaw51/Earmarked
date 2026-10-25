@@ -12,6 +12,12 @@ public class Transcript
     public TranscriptSource Source { get; set; }
     public TranscriptFormat Format { get; set; }
     public string? SourceUrl { get; set; }
+
+    /// <summary>Which speech-to-text provider produced this transcript. Null for transcripts published in the feed.</summary>
+    public string? Provider { get; set; }
+
+    /// <summary>The model the provider used. Null for transcripts published in the feed.</summary>
+    public string? Model { get; set; }
     public DateTime CreatedAt { get; set; }
 
     public List<TranscriptSegment> Segments { get; set; } = [];

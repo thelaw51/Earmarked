@@ -11,5 +11,8 @@ public enum TranscriptFormat
     Json = 2,
     Html = 3,
     PlainText = 4,
+
+    /// <summary>Produced by our own speech-to-text service rather than published by the podcast.</summary>
+    SpeechToText = 5,
     Unknown = 99,
 }

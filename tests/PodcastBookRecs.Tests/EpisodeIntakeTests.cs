@@ -72,6 +72,7 @@ public class EpisodeIntakeTests
     [InlineData(EpisodeState.TranscriptFetched)]
     [InlineData(EpisodeState.Transcribed)]
     [InlineData(EpisodeState.Skipped)]
+    [InlineData(EpisodeState.Transcribing)]
     public void Never_touches_episodes_past_the_waiting_states(EpisodeState state)
     {
         var episode = Stored(state);
@@ -89,6 +90,34 @@ public class EpisodeIntakeTests
         Assert.False(EpisodeIntake.RefreshTranscriptLinks(episode, Ep("a", 1, withTranscript: true), DateTime.UtcNow));
         Assert.Equal(EpisodeState.New, episode.State);
         Assert.Equal("https://x/t.vtt", Assert.Single(episode.TranscriptLinks).Url);
+    }
+
+    [Theory]
+    [InlineData(EpisodeState.AwaitingTranscription)]
+    [InlineData(EpisodeState.Transcribing)]
+    public void Refreshes_the_audio_url_without_changing_state(EpisodeState state)
+    {
+        var episode = Stored(state);
+        episode.EnclosureUrl = "https://cdn.test/old.mp3?token=expired";
+        var latest = Ep("a", 1) with { EnclosureUrl = "https://cdn.test/new.mp3?token=fresh", EnclosureLength = 42 };
+
+        Assert.True(EpisodeIntake.RefreshEnclosure(episode, latest, DateTime.UtcNow));
+        Assert.Equal("https://cdn.test/new.mp3?token=fresh", episode.EnclosureUrl);
+        Assert.Equal(42, episode.EnclosureLength);
+        Assert.Equal(state, episode.State);
+    }
+
+    [Theory]
+    [InlineData(EpisodeState.New)]
+    [InlineData(EpisodeState.Transcribed)]
+    [InlineData(EpisodeState.Skipped)]
+    public void Leaves_the_audio_url_alone_outside_transcription(EpisodeState state)
+    {
+        var episode = Stored(state);
+        episode.EnclosureUrl = "https://cdn.test/old.mp3";
+
+        Assert.False(EpisodeIntake.RefreshEnclosure(episode, Ep("a", 1) with { EnclosureUrl = "https://cdn.test/new.mp3" }, DateTime.UtcNow));
+        Assert.Equal("https://cdn.test/old.mp3", episode.EnclosureUrl);
     }
 
     [Fact]

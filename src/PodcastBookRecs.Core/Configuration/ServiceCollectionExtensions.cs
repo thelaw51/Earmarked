@@ -5,8 +5,13 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
+using PodcastBookRecs.Core.Audio;
+using PodcastBookRecs.Core.Backends;
 using PodcastBookRecs.Core.Data;
 using PodcastBookRecs.Core.Net;
+using PodcastBookRecs.Core.Pipeline;
+using PodcastBookRecs.Core.Providers.Transcription.OpenAiCompatible;
+using PodcastBookRecs.Core.Transcription;
 
 namespace PodcastBookRecs.Core.Configuration;
 
@@ -37,6 +42,8 @@ public static class ServiceCollectionExtensions
         services.AddOptions<PathsOptions>().Bind(configuration.GetSection(PathsOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
         services.AddOptions<PollingOptions>().Bind(configuration.GetSection(PollingOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
         services.AddOptions<HttpOptions>().Bind(configuration.GetSection(HttpOptions.Section));
+        services.AddSingleton<EpisodeStateLock>();
+        services.AddSingleton<TranscriptionWorkspace>();
 
         services.AddDbContextFactory<AppDbContext>((sp, options) =>
         {
@@ -61,6 +68,44 @@ public static class ServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(sp => CreateFeedHandler(sp.GetRequiredService<IOptions<HttpOptions>>().Value));
 
         services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("database");
+        return services;
+    }
+
+    /// <summary>
+    /// Registers speech-to-text for the Worker: the configured provider's adapter and health check, the ffmpeg
+    /// chunker and the transcriber. Does nothing beyond binding options when no provider is configured.
+    /// </summary>
+    public static IServiceCollection AddPbrTranscription(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddOptions<TranscriptionOptions>().Bind(configuration.GetSection(TranscriptionOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+        var transcription = configuration.GetSection(TranscriptionOptions.Section).Get<TranscriptionOptions>() ?? new TranscriptionOptions();
+        if (!transcription.Enabled)
+        {
+            return services;
+        }
+
+        services.AddHttpClient(OpenAiCompatibleTranscriptionService.HttpClientName, client =>
+            {
+                client.BaseAddress = new Uri(transcription.BaseUrl!.TrimEnd('/') + "/");
+                client.Timeout = TimeSpan.FromMinutes(transcription.RequestTimeoutMinutes);
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                UseProxy = false,
+                ConnectCallback = OutboundConnections.ConnectWithTimeout(TimeSpan.FromSeconds(10)),
+            });
+
+        switch (transcription.Provider)
+        {
+            case var p when string.Equals(p, TranscriptionProviders.OpenAiCompatible, StringComparison.OrdinalIgnoreCase):
+                services.AddSingleton<ITranscriptionService, OpenAiCompatibleTranscriptionService>();
+                services.AddHealthChecks().AddCheck<OpenAiCompatibleHealthCheck>("transcription", tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
+                break;
+        }
+
+        services.AddSingleton<IAudioChunker, FfmpegAudioChunker>();
+        services.AddSingleton<EpisodeTranscriber>();
         return services;
     }
 

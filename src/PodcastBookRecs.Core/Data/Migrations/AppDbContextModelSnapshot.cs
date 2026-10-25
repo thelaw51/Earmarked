@@ -15,7 +15,7 @@ namespace PodcastBookRecs.Core.Data.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.13");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
 
             modelBuilder.Entity("PodcastBookRecs.Core.Data.Episode", b =>
                 {
@@ -124,6 +124,9 @@ namespace PodcastBookRecs.Core.Data.Migrations
                     b.Property<DateTime?>("LastPolledAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("PublishesTranscripts")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Title")
                         .HasColumnType("TEXT");
 
@@ -149,6 +152,12 @@ namespace PodcastBookRecs.Core.Data.Migrations
 
                     b.Property<int>("Format")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("Model")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Provider")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Segments")
                         .IsRequired()

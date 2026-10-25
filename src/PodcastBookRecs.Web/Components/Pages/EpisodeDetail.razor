@@ -45,15 +45,19 @@ else
     @if (_episode.Transcript is null)
     {
         <MudAlert Severity="Severity.Info">
-            @(_episode.State == EpisodeState.AwaitingTranscription
-                ? "No published transcript. It will be transcribed once transcription is added in Phase 2."
-                : "No transcript yet.")
+            @(_episode.State switch
+            {
+                EpisodeState.AwaitingTranscription => "No published transcript. It's queued for transcription.",
+                EpisodeState.Transcribing => "Transcribing now. Finished parts are kept, so it resumes after a restart.",
+                EpisodeState.Failed => "Transcription gave up. Use Reset and retry to start again.",
+                _ => "No transcript yet.",
+            })
         </MudAlert>
     }
     else
     {
         <MudText Typo="Typo.h6" Class="mb-2">
-            Transcript · @_episode.Transcript.Format from the @_episode.Transcript.Source.ToString().ToLowerInvariant(), @_episode.Transcript.Segments.Count segments
+            Transcript · @Display.TranscriptOrigin(_episode.Transcript), @_episode.Transcript.Segments.Count segments
         </MudText>
         <MudSimpleTable Dense="true" Hover="true" Elevation="1">
             <tbody>

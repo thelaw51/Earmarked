@@ -21,15 +21,22 @@ public static class Display
         EpisodeState.New => "Transcript queued",
         EpisodeState.AwaitingTranscription => "Awaiting transcription",
         EpisodeState.TranscriptFetched => "Transcript fetched",
+        EpisodeState.Transcribing => "Transcribing",
         EpisodeState.Transcribed => "Transcribed",
         EpisodeState.Skipped => "Skipped (backfill)",
         EpisodeState.Failed => "Failed",
         _ => state.ToString(),
     };
 
+    /// <summary>Where a transcript came from, e.g. "Vtt from the feed" or "speech-to-text (OpenAiCompatible · whisper)".</summary>
+    public static string TranscriptOrigin(Transcript transcript) =>
+        transcript.Source == TranscriptSource.Transcribed
+            ? $"speech-to-text ({transcript.Provider ?? "unknown provider"} · {transcript.Model ?? "unknown model"})"
+            : $"{transcript.Format} from the feed";
+
     public static Color StateColor(EpisodeState state) => state switch
     {
-        EpisodeState.New => Color.Info,
+        EpisodeState.New or EpisodeState.Transcribing => Color.Info,
         EpisodeState.AwaitingTranscription => Color.Warning,
         EpisodeState.TranscriptFetched or EpisodeState.Transcribed => Color.Success,
         EpisodeState.Failed => Color.Error,

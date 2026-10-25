@@ -42,7 +42,7 @@ public sealed class PipelineTests : IAsyncLifetime
 
         var polling = Options.Create(new PollingOptions { BackfillEpisodes = 2, MaxAttempts = 2 });
         var http = new StubHttpClientFactory(_http);
-        _poller = new FeedPoller(_dbFactory, http, polling, TimeProvider.System, NullLogger<FeedPoller>.Instance);
+        _poller = new FeedPoller(_dbFactory, http, polling, new EpisodeStateLock(), TimeProvider.System, NullLogger<FeedPoller>.Instance);
         _fetcher = new TranscriptFetcher(_dbFactory, http, polling, TimeProvider.System, NullLogger<TranscriptFetcher>.Instance);
     }
 
@@ -170,6 +170,31 @@ public sealed class PipelineTests : IAsyncLifetime
 
         Assert.Equal(EpisodeState.AwaitingTranscription, (await EpisodeStatesAsync())["ep-003"]);
         Assert.False(await _fetcher.ProcessNextAsync(Ct));
+    }
+
+    [Fact]
+    public async Task Marks_feeds_that_publish_transcripts()
+    {
+        _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
+        await _poller.PollAsync(_podcastId, Ct);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.True((await db.PodcastFeeds.SingleAsync(Ct)).PublishesTranscripts);
+    }
+
+    [Fact]
+    public async Task Later_polls_refresh_the_audio_url_of_waiting_episodes()
+    {
+        _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
+        await _poller.PollAsync(_podcastId, Ct);
+
+        _http.Respond(FeedUrl, Fixtures.Read("feed.xml").Replace("https://cdn.example.com/ep2.mp3", "https://cdn.example.com/ep2.mp3?token=new", StringComparison.Ordinal));
+        await _poller.PollAsync(_podcastId, Ct);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var episode = await db.Episodes.SingleAsync(e => e.IdentityKey == "ep-002", Ct);
+        Assert.Equal("https://cdn.example.com/ep2.mp3?token=new", episode.EnclosureUrl);
+        Assert.Equal(EpisodeState.AwaitingTranscription, episode.State);
     }
 
     [Fact]

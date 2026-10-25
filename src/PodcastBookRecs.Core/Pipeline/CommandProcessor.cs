@@ -8,6 +8,8 @@ namespace PodcastBookRecs.Core.Pipeline;
 public sealed partial class CommandProcessor(
     IDbContextFactory<AppDbContext> dbFactory,
     FeedPoller poller,
+    EpisodeStateLock stateLock,
+    TranscriptionWorkspace workspace,
     TimeProvider time,
     ILogger<CommandProcessor> logger)
 {
@@ -70,9 +72,13 @@ public sealed partial class CommandProcessor(
         }
     }
 
-    /// <summary>Puts an episode back at the start: New if it links a transcript, otherwise AwaitingTranscription.</summary>
+    /// <summary>
+    /// Puts an episode back at the start: New if it links a transcript, otherwise AwaitingTranscription. Deletes any
+    /// partial transcription work so a retried transcription starts over.
+    /// </summary>
     private async Task RetryEpisodeAsync(Guid episodeId, CancellationToken cancellationToken)
     {
+        using var _ = await stateLock.AcquireAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var episode = await db.Episodes.Include(e => e.Transcript).SingleOrDefaultAsync(e => e.Id == episodeId, cancellationToken)
             ?? throw new InvalidOperationException($"Episode {episodeId} not found.");
@@ -88,6 +94,7 @@ public sealed partial class CommandProcessor(
         episode.LastError = null;
         episode.UpdatedAt = time.GetUtcNow().UtcDateTime;
         await db.SaveChangesAsync(cancellationToken);
+        workspace.Delete(episodeId);
     }
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Command {Type} ({Id}) failed")]
