@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "segments": [
+    { "speaker": "Alice", "startTime": 1.0, "endTime": 4.5, "body": "Welcome back to the show." },
+    { "speaker": "Bob", "startTime": 4.5, "endTime": 9.25, "body": "I finally read The Lantern Index." },
+    { "startTime": "62", "body": "No speaker or end time here." },
+    { "speaker": "Alice", "startTime": 70, "body": "   " }
+  ]
+}

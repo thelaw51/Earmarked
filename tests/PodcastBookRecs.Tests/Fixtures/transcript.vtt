@@ -1,0 +1,19 @@
+WEBVTT
+Kind: captions
+
+NOTE This is an invented transcript for tests.
+
+STYLE
+::cue { color: white; }
+
+1
+00:00:01.000 --> 00:00:04.500 align:start
+<v Alice>Welcome back to the show.</v>
+
+2
+00:00:04.500 --> 00:00:09.250
+<v.loud Bob Smith>I finally read <i>The Lantern Index</i>
+by Mara Quill &amp; loved it.
+
+00:01:02.000 --> 00:01:05.000
+No speaker on this cue.

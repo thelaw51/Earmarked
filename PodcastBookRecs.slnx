@@ -2,4 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/PodcastBookRecs.Core/PodcastBookRecs.Core.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PodcastBookRecs.Tests/PodcastBookRecs.Tests.csproj" />
+  </Folder>
 </Solution>
