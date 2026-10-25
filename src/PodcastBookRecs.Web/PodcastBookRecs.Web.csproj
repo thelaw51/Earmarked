@@ -9,4 +9,8 @@
     <ProjectReference Include="..\PodcastBookRecs.Core\PodcastBookRecs.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="PodcastBookRecs.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -16,3 +16,42 @@
     right: 0.75rem;
     top: 0.5rem;
 }
+
+/* Sign-in fields. The account pages render without a circuit, where MudBlazor inputs don't work. */
+.account-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.account-form label {
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.875rem;
+    margin-top: 0.75rem;
+}
+
+.account-form input[type=email],
+.account-form input[type=password] {
+    background: var(--mud-palette-surface);
+    border: 1px solid var(--mud-palette-lines-inputs);
+    border-radius: var(--mud-default-borderradius);
+    color: var(--mud-palette-text-primary);
+    font: inherit;
+    padding: 0.6rem 0.75rem;
+}
+
+.account-form input:focus {
+    border-color: var(--mud-palette-primary);
+    outline: 1px solid var(--mud-palette-primary);
+}
+
+.account-form .account-check {
+    align-items: center;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.account-form .validation-message {
+    color: var(--mud-palette-error);
+    font-size: 0.75rem;
+}

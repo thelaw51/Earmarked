@@ -9,11 +9,11 @@
     <link rel="stylesheet" href="@Assets["_content/MudBlazor/MudBlazor.min.css"]" />
     <link rel="stylesheet" href="@Assets["app.css"]" />
     <ImportMap />
-    <HeadOutlet @rendermode="InteractiveServerNoPrerender" />
+    <HeadOutlet @rendermode="PageRenderMode" />
 </head>
 
 <body>
-    <Routes @rendermode="InteractiveServerNoPrerender" />
+    <Routes @rendermode="PageRenderMode" />
     <ReconnectModal />
     <script src="@Assets["_framework/blazor.web.js"]"></script>
     <script src="@Assets["_content/MudBlazor/MudBlazor.min.js"]"></script>
@@ -24,4 +24,11 @@
 @code {
     // Prerendering would run each page's data load twice and block the first response while the schema gate waits.
     private static readonly IComponentRenderMode InteractiveServerNoPrerender = new InteractiveServerRenderMode(prerender: false);
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = null!;
+
+    // Pages marked [ExcludeFromInteractiveRouting] (sign-in, sign-out, errors) render statically, because only the
+    // HTTP response can set or clear the auth cookie. Everything else runs in a circuit.
+    private IComponentRenderMode? PageRenderMode => HttpContext.AcceptsInteractiveRouting() ? InteractiveServerNoPrerender : null;
 }
