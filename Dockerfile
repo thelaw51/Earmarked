@@ -32,6 +32,11 @@ WORKDIR /app
 COPY --from=build /app .
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
+# ffmpeg splits episode audio into chunks for transcription.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
 # The image's non-root user is UID 1654. Bind-mounted /data must be writable by that UID (see README).
 RUN mkdir -p /data /config && chown "$APP_UID:$APP_UID" /data /config
 USER $APP_UID

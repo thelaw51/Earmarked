@@ -60,6 +60,24 @@ public static class EpisodeIntake
         return true;
     }
 
+    /// <summary>States whose audio URL is refreshed from the feed: signed links (e.g. Patreon) expire before a long backlog reaches them.</summary>
+    public static readonly EpisodeState[] EnclosureRefreshableStates = [EpisodeState.AwaitingTranscription, EpisodeState.Transcribing];
+
+    /// <summary>Updates the stored audio URL, type and length when the feed's differ. Never changes the episode's state.</summary>
+    public static bool RefreshEnclosure(Episode episode, ParsedEpisode latest, DateTime now)
+    {
+        if (!EnclosureRefreshableStates.Contains(episode.State) || latest.EnclosureUrl is null || latest.EnclosureUrl == episode.EnclosureUrl)
+        {
+            return false;
+        }
+
+        episode.EnclosureUrl = latest.EnclosureUrl;
+        episode.EnclosureType = latest.EnclosureType;
+        episode.EnclosureLength = latest.EnclosureLength;
+        episode.UpdatedAt = now;
+        return true;
+    }
+
     /// <summary>New if the item links a transcript in a format we can parse, otherwise AwaitingTranscription.</summary>
     public static EpisodeState InitialState(ParsedEpisode episode) =>
         TranscriptLinkSelector.SelectBest(episode.TranscriptLinks) is null ? EpisodeState.AwaitingTranscription : EpisodeState.New;

@@ -55,7 +55,28 @@ else
                         <MudText Typo="Typo.body2">@count</MudText>
                     </MudStack>
                 }
-                <MudText Typo="Typo.caption" Class="mt-2 d-block">Transcription and extraction backends will appear here from Phase 2.</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12">
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudText Typo="Typo.h6" Class="mb-2">Backends</MudText>
+                @if (_backends.Count == 0)
+                {
+                    <MudText Typo="Typo.body2">No backends configured. Set a <code>Transcription:Provider</code> to enable speech-to-text.</MudText>
+                }
+                @foreach (var backend in _backends)
+                {
+                    var stale = Time.GetUtcNow().UtcDateTime - backend.UpdatedAt > WorkerStatusNames.StaleAfter;
+                    <MudAlert Severity="@(stale ? Severity.Warning : backend.Healthy ? Severity.Success : Severity.Error)" Dense="true" Class="mb-2">
+                        <b>@backend.Name</b> ·
+                        @(stale ? "no recent check (is the Worker running?)" : backend.Healthy ? "reachable" : "unreachable")
+                        @if (!string.IsNullOrEmpty(backend.Detail))
+                        {
+                            <text> · @backend.Detail</text>
+                        }
+                        · checked @Display.LocalTime(backend.UpdatedAt)
+                    </MudAlert>
+                }
             </MudPaper>
         </MudItem>
     </MudGrid>
@@ -63,6 +84,7 @@ else
 
 @code {
     private WorkerStatus? _worker;
+    private List<WorkerStatus> _backends = [];
     private List<(EpisodeState State, int Count)> _counts = [];
     private int _pendingCommands;
     private bool _loading = true;
@@ -75,7 +97,9 @@ else
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
-            _worker = await db.WorkerStatuses.AsNoTracking().SingleOrDefaultAsync(s => s.Name == WorkerStatusNames.Worker);
+            var statuses = await db.WorkerStatuses.AsNoTracking().OrderBy(s => s.Name).ToListAsync();
+            _worker = statuses.SingleOrDefault(s => s.Name == WorkerStatusNames.Worker);
+            _backends = statuses.Where(s => s.Name != WorkerStatusNames.Worker).ToList();
             _counts = (await db.Episodes.GroupBy(e => e.State).Select(g => new { g.Key, Count = g.Count() }).ToListAsync())
                 .OrderBy(x => x.Key)
                 .Select(x => (x.Key, x.Count))

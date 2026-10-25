@@ -14,6 +14,7 @@ public sealed partial class FeedPoller(
     IDbContextFactory<AppDbContext> dbFactory,
     IHttpClientFactory httpFactory,
     IOptions<PollingOptions> polling,
+    EpisodeStateLock stateLock,
     TimeProvider time,
     ILogger<FeedPoller> logger)
 {
@@ -78,11 +79,23 @@ public sealed partial class FeedPoller(
                 .ToHashSet(StringComparer.Ordinal);
             var plan = EpisodeIntake.Plan(feed.Episodes, existing, podcast.FirstPolledAt is null, polling.Value.BackfillEpisodes);
 
+            // Held from loading waiting episodes until they're saved, so the transcriber can't claim one in between
+            // and have its state overwritten by this refresh.
+            using var stateGuard = await stateLock.AcquireAsync(cancellationToken);
             var latestByKey = feed.Episodes.ToDictionary(e => e.IdentityKey, StringComparer.Ordinal);
             var waiting = await db.Episodes
-                .Where(e => e.PodcastFeedId == podcast.Id && EpisodeIntake.RefreshableStates.Contains(e.State))
+                .Where(e => e.PodcastFeedId == podcast.Id
+                    && (EpisodeIntake.RefreshableStates.Contains(e.State) || EpisodeIntake.EnclosureRefreshableStates.Contains(e.State)))
                 .ToListAsync(cancellationToken);
-            var requeued = waiting.Count(e => latestByKey.TryGetValue(e.IdentityKey, out var latest) && EpisodeIntake.RefreshTranscriptLinks(e, latest, now));
+            var requeued = 0;
+            foreach (var episode in waiting)
+            {
+                if (latestByKey.TryGetValue(episode.IdentityKey, out var latest))
+                {
+                    requeued += EpisodeIntake.RefreshTranscriptLinks(episode, latest, now) ? 1 : 0;
+                    EpisodeIntake.RefreshEnclosure(episode, latest, now);
+                }
+            }
 
             foreach (var (item, state) in plan)
             {
@@ -110,6 +123,7 @@ public sealed partial class FeedPoller(
             podcast.ImageUrl = feed.ImageUrl ?? podcast.ImageUrl;
             podcast.ETag = response.Headers.ETag?.ToString();
             podcast.LastModified = response.Content.Headers.LastModified?.ToString("R");
+            podcast.PublishesTranscripts |= feed.Episodes.Any(e => e.TranscriptLinks.Count > 0);
             podcast.FirstPolledAt ??= now;
             podcast.LastPolledAt = now;
             podcast.LastPollError = null;

@@ -4,6 +4,12 @@
     "BackfillEpisodes": 10,
     "MaxAttempts": 5
   },
+  "Transcription": {
+    "Provider": "OpenAiCompatible",
+    "BaseUrl": "http://mac-mini.example.lan:8178",
+    "Model": "whisper",
+    "Language": "en"
+  },
   "Feeds": [
     { "Url": "https://feeds.example.com/your-podcast.rss" }
   ],

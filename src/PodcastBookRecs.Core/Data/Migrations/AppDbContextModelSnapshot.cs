@@ -251,6 +251,9 @@ namespace PodcastBookRecs.Core.Data.Migrations
                     b.Property<DateTime?>("LastPolledAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("PublishesTranscripts")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Title")
                         .HasColumnType("TEXT");
 
@@ -276,6 +279,12 @@ namespace PodcastBookRecs.Core.Data.Migrations
 
                     b.Property<int>("Format")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("Model")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Provider")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Segments")
                         .IsRequired()

@@ -17,7 +17,8 @@ services:
     volumes:
       - /path/to/podcastbookrecs/config:/config:ro
       - /path/to/podcastbookrecs/data:/data
-      # Audiobookshelf's podcast library, read-only. Used from Phase 2 to skip re-downloading audio.
+      # Audiobookshelf's podcast library, read-only. Not used yet: reusing its downloads instead of fetching audio
+      # again is a planned follow-up. Safe to leave in place or remove.
       - /path/to/nas/Podcasts:/podcasts:ro
 
   web:

@@ -7,7 +7,8 @@ using PodcastBookRecs.Core.Pipeline;
 namespace PodcastBookRecs.Worker.Services;
 
 /// <summary>
-/// Runs the Worker's loops side by side: UI commands, scheduled feed polls, transcript fetching and the heartbeat.
+/// Runs the Worker's loops side by side: UI commands, scheduled feed polls, transcript fetching, the heartbeat and,
+/// when a provider is configured, transcription.
 /// A loop that throws logs the error and carries on after its delay, so one bad feed or a locked database
 /// doesn't stop the others.
 /// </summary>
@@ -18,14 +19,80 @@ internal sealed partial class PipelineService(
     TranscriptFetcher transcripts,
     IOptions<PollingOptions> polling,
     TimeProvider time,
-    ILogger<PipelineService> logger) : BackgroundService
+    ILogger<PipelineService> logger,
+    EpisodeTranscriber? transcriber = null) : BackgroundService
 {
-    protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
-        Task.WhenAll(
+    private static readonly TimeSpan IdleDelay = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MinPause = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MaxPause = TimeSpan.FromMinutes(10);
+
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var loops = new List<Task>
+        {
             Loop("commands", TimeSpan.FromSeconds(5), commands.ProcessPendingAsync, stoppingToken),
             Loop("feed polling", TimeSpan.FromMinutes(1), PollDueFeedsAsync, stoppingToken),
             Loop("transcript fetching", TimeSpan.FromSeconds(30), DrainTranscriptsAsync, stoppingToken),
-            Loop("heartbeat", TimeSpan.FromSeconds(30), HeartbeatAsync, stoppingToken));
+            Loop("heartbeat", TimeSpan.FromSeconds(30), HeartbeatAsync, stoppingToken),
+        };
+        if (transcriber is not null)
+        {
+            loops.Add(TranscriptionLoop(transcriber, stoppingToken));
+        }
+
+        return Task.WhenAll(loops);
+    }
+
+    /// <summary>
+    /// Transcribes episodes back to back while any are due. When the backend is unreachable or the disk is full,
+    /// waits 30 seconds, doubling up to 10 minutes, without counting anything against the episode.
+    /// </summary>
+    private async Task TranscriptionLoop(EpisodeTranscriber worker, CancellationToken stoppingToken)
+    {
+        await Task.Yield();
+        try
+        {
+            await worker.CleanUpOrphansAsync(stoppingToken);
+        }
+        catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+        {
+            LogLoopFailed(ex, "transcription clean-up");
+        }
+
+        var pause = MinPause;
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            TimeSpan delay;
+            try
+            {
+                var outcome = await worker.ProcessNextAsync(stoppingToken);
+                delay = outcome switch
+                {
+                    TranscriberOutcome.Worked => TimeSpan.Zero,
+                    TranscriberOutcome.Idle => IdleDelay,
+                    _ => pause,
+                };
+                pause = outcome == TranscriberOutcome.Paused ? TimeSpan.FromTicks(Math.Min(pause.Ticks * 2, MaxPause.Ticks)) : MinPause;
+            }
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+            {
+                LogLoopFailed(ex, "transcription");
+                delay = IdleDelay;
+            }
+
+            if (delay > TimeSpan.Zero)
+            {
+                try
+                {
+                    await Task.Delay(delay, time, stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+        }
+    }
 
     private async Task Loop(string name, TimeSpan delay, Func<CancellationToken, Task> work, CancellationToken stoppingToken)
     {

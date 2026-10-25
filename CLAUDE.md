@@ -17,20 +17,20 @@ Local runs read `.local/config/config.json` and write `.local/data/` (both git-i
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Feed polling, published `<podcast:transcript>` fetch and parse, podcast/episode/status UI, CI/CD to GHCR | Done and deployed |
-| 2 | Speech-to-text for episodes without a published transcript, job queue hardening | Next |
-| 3 | Book extraction with a local LLM, quote validation, Open Library resolution, ranked book list | Planned |
+| 2 | Speech-to-text for episodes without a published transcript (whisper.cpp on a Mac, `mac/`), chunked and resumable | Done |
+| 3 | Book extraction with a local LLM, quote validation, Open Library resolution, ranked book list | Next |
 | 4 | Review queue, filters, export | Planned |
 
-Phase 2 plan: transcription runs natively (not in Docker) on an Apple Silicon Mac on the LAN, behind an OpenAI-compatible `/v1/audio/transcriptions` endpoint. The LLM for Phase 3 (LM Studio) shares that Mac's memory, so expect one heavy job at a time. Treat "backend unreachable" as a reason to back off and retry, not as a job failure that uses up attempts.
+Transcription runs natively (not in Docker) on an Apple Silicon Mac on the LAN, behind an OpenAI-compatible `/v1/audio/transcriptions` endpoint; `mac/setup.sh` installs it. Phase 3's LLM (LM Studio) shares that Mac's memory, so expect one heavy job at a time, and reuse the Phase 2 patterns: our own interface, an adapter under `Core/Providers/`, `BackendUnavailableException` for "can't reach it", and a health check tagged `BackendHealth.Tag` so it shows on the Status page.
 
-Most podcasts publish no transcript, so nearly every episode ends up in `AwaitingTranscription` until Phase 2 lands.
+Most podcasts publish no transcript, so most episodes go through speech-to-text.
 
 ## Layout
 
 | Project | Contents |
 |---|---|
-| `src/PodcastBookRecs.Core` | EF Core model and migrations (`Data/`), feed parsing (`Feeds/`), transcript parsing (`Transcripts/`), pipeline services (`Pipeline/`), user admin (`Accounts/`), shared config, logging and Identity settings (`Configuration/`) |
-| `src/PodcastBookRecs.Worker` | Hosts the pipeline: `DatabaseMigrator` runs first, then `PipelineService` runs four loops (UI commands every 5 s, due feed polls every minute, transcript fetching, heartbeat) |
+| `src/PodcastBookRecs.Core` | EF Core model and migrations (`Data/`), feed parsing (`Feeds/`), transcript parsing (`Transcripts/`), pipeline services (`Pipeline/`), user admin (`Accounts/`), shared config, logging and Identity settings (`Configuration/`), backend contracts (`Backends/`), the transcription interface (`Transcription/`) and its adapters (`Providers/`), ffmpeg chunking (`Audio/`), the private-address guard (`Net/`) |
+| `src/PodcastBookRecs.Worker` | Hosts the pipeline: `DatabaseMigrator` runs first, then `PipelineService` runs its loops (UI commands every 5 s, due feed polls every minute, transcript fetching, heartbeat, and transcription when a provider is set). `BackendStatusPublisher` writes backend health rows every 30 s. |
 | `src/PodcastBookRecs.Web` | Blazor Server UI |
 | `tests/PodcastBookRecs.Tests` | Unit and integration tests |
 
@@ -38,17 +38,20 @@ The UI and the Worker never call each other. They share only the SQLite database
 
 ## Pipeline rules
 
-- **Episode states.** `New` (has a usable transcript link) → `TranscriptFetched`, or `AwaitingTranscription` (no usable link, waits for speech-to-text) → `Transcribed`. `Skipped` marks episodes outside the backfill window on a feed's first poll; they are stored so later polls don't treat them as new. `Failed` is reserved.
+- **Episode states.** `New` (has a usable transcript link) → `TranscriptFetched`, or `AwaitingTranscription` (no usable link) → `Transcribing` (claimed by `EpisodeTranscriber`) → `Transcribed`. `Skipped` marks episodes outside the backfill window on a feed's first poll; they are stored so later polls don't treat them as new. `Failed` is used when transcription runs out of attempts.
 - **Identity.** Episodes are deduplicated per feed on the item GUID, falling back to the enclosure URL.
-- **Late transcripts.** Every poll refreshes the transcript links of episodes in `EpisodeIntake.RefreshableStates` and requeues an `AwaitingTranscription` episode only when its set of link URLs changed. Any new "transcription in progress" state must stay out of `RefreshableStates`, or a poll could requeue an episode mid-job.
-- **Retries.** Transient HTTP errors back off exponentially up to `Polling:MaxAttempts`; a dead or unparseable link moves on to the next link, then to `AwaitingTranscription`.
+- **Late transcripts.** Every poll refreshes the transcript links of episodes in `EpisodeIntake.RefreshableStates` and requeues an `AwaitingTranscription` episode only when its set of link URLs changed. `Transcribing` must stay out of `RefreshableStates`, or a poll could requeue an episode mid-job. Feeds that have ever carried transcript links get `PodcastFeed.PublishesTranscripts`, and their new episodes wait `Transcription:PublishedTranscriptGraceDays` before transcription.
+- **Episode state changes go through `EpisodeStateLock`.** The poller's refresh, the transcriber's claim and completion, and "Reset and retry" all hold it, and the claim is a conditional `ExecuteUpdate`. Any new code that changes an episode's state in the Worker must take the same lock.
+- **Transcription.** `EpisodeTranscriber` downloads audio, splits it with ffmpeg into WAV chunks, and saves each finished chunk as `chunk_NNN.json` in `/data/work/<episode>/`, so it resumes after a restart. The poller refreshes `EnclosureUrl` for waiting and transcribing episodes, because signed links expire.
+- **Retries.** Transient HTTP errors back off exponentially up to `Polling:MaxAttempts`; a dead or unparseable link moves on to the next link, then to `AwaitingTranscription`. For transcription, `BackendUnavailableException` (connection refused, DNS, connect timeout, HTTP 502/503/504) and low disk pause without counting an attempt; everything about the episode itself (download errors, ffmpeg errors, rejected or timed-out chunks) counts one.
+- **Plain-text transcripts** get speakers from `Name:` paragraph prefixes when at least half the paragraphs have one (`TranscriptParser`).
 
 ## Data model conventions
 
 - **Keys are version 7 GUIDs**, created in code (`= Guid.CreateVersion7()`), not by the database. They sort by creation time. `WorkerStatus` is the exception: its key is the component name (e.g. `worker`). Don't order by GUID when exact order matters; `CommandProcessor` orders by `CreatedAt`.
 - **All `DateTime`s are UTC.** `AppDbContext.ConfigureConventions` marks every `DateTime` read from SQLite as UTC. Convert to local time only for display (`Display.LocalTime`). Don't switch to `DateTimeOffset`: the SQLite provider can't translate its comparisons or ordering to SQL.
 - **JSON columns** hold `Episode.TranscriptLinks` and `Transcript.Segments` through value converters. A transcript lives in its own table, one per episode.
-- **Names stay provider-neutral.** Stored values and enum names never name a vendor (`TranscriptSource.Transcribed`, not `Whisper`). Record which provider and model produced data in their own columns.
+- **Names stay provider-neutral.** Stored values and enum names never name a vendor (`TranscriptSource.Transcribed`, not `Whisper`). Record which provider and model produced data in their own columns (`Transcript.Provider`, `Transcript.Model`).
 
 ## Migrations
 
@@ -63,8 +66,9 @@ Both containers open one SQLite file in WAL mode with a 30 s busy timeout (`Sqli
 ## Security and privacy
 
 - **Private feed URLs carry subscriber tokens** in the path or query (Supporting Cast, Patreon). Never log or display one: use `FeedUrlRedactor.Redact` (host only). `System.Net.Http.HttpClient` logging is held at Warning because it logs full request URLs. Episode enclosure URLs from private feeds carry the token too, so the UI never shows them.
-- **Feed content is untrusted.** XML is parsed with DTDs ignored and no resolver. Feed and transcript downloads are capped on bytes actually read (`LoadIntoBufferAsync(max)`), not only on `Content-Length`. Only http(s) feed URLs are accepted (`FeedUrl.IsValid`).
-- **Open follow-up for Phase 2:** transcript and enclosure URLs come from feeds, so a feed could point the Worker at a LAN address. Block private, loopback and link-local addresses before downloading audio.
+- **Feed content is untrusted.** XML is parsed with DTDs ignored and no resolver. Feed and transcript downloads are capped on bytes actually read (`LoadIntoBufferAsync(max)`), not only on `Content-Length`; audio is capped while streaming. Only http(s) feed URLs are accepted (`FeedUrl.IsValid`).
+- **Private-address guard.** The `feeds` and `enclosures` HTTP clients connect through `OutboundConnections.ConnectToPublicAddressAsync`: it resolves once, refuses any non-public address (`PrivateAddressGuard`), connects to the vetted IP, and needs `UseProxy = false`. Any new client for feed-supplied URLs must use `ServiceCollectionExtensions.CreateFeedHandler`. User-configured backends (the transcription client) are exempt. `Http:AllowPrivateNetworkFeeds` turns the guard off.
+- **ffmpeg runs on untrusted files** with `-protocol_whitelist file` and `-format_whitelist` (no playlists or concat, which would let a file make ffmpeg open other inputs), a duration cap, a wall-clock timeout, `ArgumentList` arguments and bounded stderr. Keep all of these if you change the command. ffmpeg's stderr goes to logs, never to `LastError`.
 - Don't render feed-supplied URLs as `href`s without checking the scheme is http(s).
 - **Login.** ASP.NET Core Identity, users only (`IdentityUserContext<AppUser, Guid>`, no roles). A fallback policy requires a signed-in user on every endpoint, the Blazor hub included. Only static assets, `/health`, `/account/login` and `/Error` are anonymous; anything new that must be reachable signed out needs `[AllowAnonymous]` or `.AllowAnonymous()`. Every page also carries `[Authorize]` from `_Imports.razor`, because `AuthorizeRouteView` checks attributes, not the fallback policy. Lockout (5 attempts, 15 minutes) and the 12-character, length-only password rule live in `IdentityExtensions`, which the tests share.
 - **Sessions end on a password reset.** The cookie and open circuits both re-check the security stamp every 5 minutes (`IdentityRevalidatingAuthenticationStateProvider`). A circuit that fails the check renders `RedirectToLogin`.
@@ -76,6 +80,8 @@ Both containers open one SQLite file in WAL mode with a 30 s busy timeout (`Sqli
 
 - `TreatWarningsAsErrors` with `AnalysisLevel` latest-recommended. Use `[LoggerMessage]` source-generated logging, and compute log arguments before the call (CA1873).
 - Test names use underscores (CA1707 is off for `tests/` only). Pass `TestContext.Current.CancellationToken` to async calls (xUnit1051).
+- The ffmpeg tests run the real binary: skipped locally without ffmpeg, failing on CI (`CI=true`), which installs it in the "Build and test" job.
+- `HttpClient` throws the same `TaskCanceledException` for a connect timeout and a request timeout. The transcription client does its own connecting (`OutboundConnections.ConnectWithTimeout`) so "can't connect" always surfaces as `HttpRequestError.ConnectionError`.
 - Fixtures are short invented files under `tests/PodcastBookRecs.Tests/Fixtures/`, never real transcripts or feeds. Integration tests run against a migrated temp SQLite file with a stub `HttpMessageHandler`.
 - `global.json` pins SDK 10.0.402 with `rollForward: feature`. Keep it that way: `actions/setup-dotnet` turns `latestFeature` or `latestPatch` into "newest available", which once pulled an unreleased SDK and broke CI. Bump the version deliberately.
 - To try production code against real data without committing it, use a .NET 10 file-based app in a scratch folder (`#:project` pointing at Core, plus `#:property PublishAot=false` if it uses reflection-based JSON).
@@ -87,7 +93,8 @@ One image runs either app: `entrypoint.sh worker|web`. Things that broke before 
 - `.editorconfig` must be copied into the build, or analyser rules switched off for migrations come back on.
 - Publish must restore again after the source is copied: the SDK only adds the package that ships `blazor.web.js` once it sees `.razor` files.
 - `entrypoint.sh` changes into each app's folder, because ASP.NET Core uses the working directory as its content root.
-- The image publishes for one runtime (from `TARGETARCH`) and runs as UID 1654, which must own the `/data` bind mount. Data Protection keys live in `/data/keys`.
+- The image publishes for one runtime (from `TARGETARCH`) and runs as UID 1654, which must own the `/data` bind mount. Data Protection keys live in `/data/keys`; transcription scratch files in `/data/work`.
+- ffmpeg comes from Ubuntu's apt package (6.1 at the time of writing). It roughly doubles the image size; a static build would be smaller but adds a third-party supply-chain dependency.
 
 CI pushes `ghcr.io/thelaw51/podcastbookrecs` tagged `latest` and `sha-<short>` from `main`, plus semver tags from `v*` tags. The package is public. Deployment is a manual re-pull in Portainer; no auto-deploy.
 

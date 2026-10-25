@@ -11,7 +11,7 @@ It runs as two containers from one image: a **Worker** that polls feeds and proc
 | Phase | What it adds | State |
 |---|---|---|
 | 1 | Feed polling, published `<podcast:transcript>` fetching and parsing, podcast and episode pages, CI/CD | **Done** |
-| 2 | Speech-to-text transcription (Whisper to start) for episodes without a published transcript | In progress: the [Mac transcription server](#transcription-server-on-a-mac) is ready; the Worker doesn't use it yet |
+| 2 | Speech-to-text transcription (Whisper to start) for episodes without a published transcript, on a [Mac transcription server](#transcription-server-on-a-mac) | **Done** |
 | 3 | Book extraction with a local LLM, Open Library matching, ranked book list | Planned |
 | 4 | Review queue, filters, export | Planned |
 
@@ -23,7 +23,7 @@ Most podcasts don't publish transcripts, so until Phase 2 lands those episodes s
 2. New items are deduplicated on their GUID, falling back to the enclosure URL.
 3. The first time a feed is polled, only the newest `Polling:BackfillEpisodes` (10 by default) are queued. Older ones are stored as *Skipped* so later polls don't mistake them for new episodes.
 4. An episode with a `<podcast:transcript>` link is fetched in the best available format: VTT, then SRT, then JSON, then HTML, then plain text. A dead or unparseable link moves on to the next one. Network errors retry with exponential backoff, up to `Polling:MaxAttempts`.
-5. Episodes with no usable transcript wait for the transcription service.
+5. Episodes with no usable transcript are transcribed, one at a time, newest first, if `Transcription:Provider` is set (see [Transcription in the Worker](#transcription-in-the-worker)). Shows that have published transcripts before get a grace period first, in case one turns up late.
 
 ## Deploying with Portainer
 
@@ -135,8 +135,25 @@ Give the Mac a reserved IP address on your router, since the Worker's config poi
 - **Logs:** `~/Library/Logs/whisper-server.log`
 - **Restart:** `launchctl kickstart -k gui/$(id -u)/com.podcastbookrecs.whisper-server`. Do this after `brew upgrade whisper-cpp` too.
 - **Stop and remove:** `launchctl bootout gui/$(id -u)/com.podcastbookrecs.whisper-server`, then delete `~/Library/LaunchAgents/com.podcastbookrecs.whisper-server.plist`
-- **After a reboot:** a launchd agent only runs once you're logged in. If FileVault keeps the Mac at the login screen, transcription waits until someone logs in. Once the Worker transcribes (the next part of Phase 2), it treats an unreachable server as "try again later", not as a failed episode.
+- **After a reboot:** a launchd agent only runs once you're logged in. If FileVault keeps the Mac at the login screen, transcription waits until someone logs in. The Worker treats an unreachable server as "try again later", not as a failed episode.
 - **Test it:** `curl http://<mac-ip>:8178/v1/audio/transcriptions -F file=@some.mp3 -F response_format=verbose_json`
+
+## Transcription in the Worker
+
+With `Transcription:Provider` set, the Worker transcribes episodes that have no usable published transcript:
+
+1. It downloads the episode's audio to `/data/work/<episode>/`.
+2. ffmpeg (inside the Worker image) splits it into `Transcription:ChunkMinutes` pieces of 16 kHz mono WAV. Embedded cover art is dropped, and audio past `Transcription:MaxAudioHours` is ignored.
+3. Each piece goes to the backend in turn. Finished pieces are saved, so a restart, or the Mac being off, resumes where it stopped.
+4. The joined transcript is stored with the provider and model that made it, and the work folder is deleted.
+
+If the backend can't be reached, or the data volume has less than `Transcription:MinFreeDiskGb` free, transcription pauses (30 seconds, doubling to 10 minutes) without counting it against the episode. Errors about one episode, such as audio that won't download or a chunk the backend rejects, use up its `Polling:MaxAttempts`. A 403 or 410 on the audio waits for the next feed poll, since signed links (Patreon, for example) expire and the poll refreshes them.
+
+The Status page shows each backend as reachable or not, checked every 30 seconds. The Worker's own `/health` ignores backends, so a Mac that's switched off doesn't make Docker mark the Worker unhealthy.
+
+### Pointing at a different transcription backend
+
+The Worker talks to OpenAI's `POST /v1/audio/transcriptions` and needs `verbose_json` with timed `segments`. Any server that speaks it works by changing `Transcription:BaseUrl` (and `Model`, if the server cares): whisper.cpp on another machine, an MLX server, or a hosted API. Hosted APIs often cap uploads around 25 MB; 15 minutes of the WAV the Worker sends is about 29 MB, so set `Transcription:ChunkMinutes` to 10 for those. A backend with a different API needs a new adapter under `src/PodcastBookRecs.Core/Providers/Transcription/`, selected by a new `Provider` name.
 
 ## Configuration
 
@@ -150,9 +167,22 @@ Settings come from `/config/config.json`, then environment variables prefixed `P
 | `Feeds` | `[]` | Feeds imported on Worker startup if missing. Feeds added in the UI live in the database. |
 | `OpenLibrary:ContactEmail` | | Sent to Open Library from Phase 3, which gives higher rate limits to identified clients |
 | `ForwardedHeaders:KnownNetworks` | private ranges | CIDR blocks allowed to send `X-Forwarded-Proto` and `X-Forwarded-For`, e.g. `["172.18.0.0/16"]`. Loopback is always trusted. |
-| `Paths:Data` | `/data` | Database and key storage. Set by the image; you shouldn't need to change it. |
+| `Paths:Data` | `/data` | Database, key and work-folder storage. Set by the image; you shouldn't need to change it. |
+| `Transcription:Provider` | | `OpenAiCompatible`, or empty to turn transcription off |
+| `Transcription:BaseUrl` | | The backend, e.g. `http://<mac-ip>:8178` |
+| `Transcription:Model` | `whisper` | Sent with each request and recorded on each transcript |
+| `Transcription:Language` | `en` | Spoken language; empty lets the backend detect it |
+| `Transcription:ChunkMinutes` | `15` | Length of each piece sent to the backend |
+| `Transcription:RequestTimeoutMinutes` | `10` | How long one piece may take before it counts as a failure |
+| `Transcription:PublishedTranscriptGraceDays` | `3` | How long new episodes of shows that publish transcripts wait for one |
+| `Transcription:MaxAudioHours` | `8` | Audio past this is ignored; also caps the work folder's size |
+| `Transcription:FfmpegTimeoutMinutes` | `30` | ffmpeg is stopped if splitting takes longer |
+| `Transcription:MinFreeDiskGb` | `3` | Transcription pauses below this much free space on `/data` |
+| `Http:AllowPrivateNetworkFeeds` | `false` | Feeds, transcripts and audio on private or local addresses are refused unless this is `true` |
 
-Private feed URLs (for example a Supporting Cast subscriber feed) contain an access token. The app stores them as entered, but logs and the UI only ever show the host.
+Private feed URLs (for example a Supporting Cast subscriber feed) contain an access token. The app stores them as entered, but logs and the UI only ever show the host. Their audio URLs often carry the token too, so those are never shown either.
+
+Feed content is untrusted. URLs taken from feeds (the feed itself, transcript links, episode audio) may not reach private, loopback or link-local addresses, so a feed can't point the Worker at devices on your network. ffmpeg only reads the downloaded file, in known audio formats, so a crafted file can't make it fetch anything else.
 
 Endpoints: both containers answer `GET /health` on port 8080 inside the container.
 
@@ -163,6 +193,8 @@ Requires the .NET 10 SDK.
 ```bash
 dotnet test
 ```
+
+The ffmpeg tests need `ffmpeg` on your `PATH` (`brew install ffmpeg`). They're skipped locally without it, but fail on CI, which installs it.
 
 To run locally, put a config file at `.local/config/config.json` (git ignores `.local/`), then start each app in its own terminal:
 
@@ -193,8 +225,8 @@ Only the Worker applies migrations, at startup. The UI shows a waiting message u
 
 | Project | Contents |
 |---|---|
-| `src/PodcastBookRecs.Core` | EF Core model and migrations, feed and transcript parsing, pipeline services |
-| `src/PodcastBookRecs.Worker` | Background loops: commands from the UI, feed polling, transcript fetching, heartbeat |
+| `src/PodcastBookRecs.Core` | EF Core model and migrations, feed and transcript parsing, pipeline services, the transcription interface and its providers, ffmpeg chunking |
+| `src/PodcastBookRecs.Worker` | Background loops: commands from the UI, feed polling, transcript fetching, transcription, heartbeat, backend status |
 | `src/PodcastBookRecs.Web` | Blazor Server UI built with MudBlazor |
 | `tests/PodcastBookRecs.Tests` | xUnit v3 tests with small invented fixtures |
 

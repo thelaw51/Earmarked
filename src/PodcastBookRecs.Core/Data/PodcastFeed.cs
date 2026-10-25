@@ -22,5 +22,11 @@ public class PodcastFeed
     public string? ETag { get; set; }
     public string? LastModified { get; set; }
 
+    /// <summary>
+    /// True once any episode of this feed has carried a transcript link. Such shows sometimes add a transcript days
+    /// after release, so their new episodes wait a grace period before being transcribed.
+    /// </summary>
+    public bool PublishesTranscripts { get; set; }
+
     public List<Episode> Episodes { get; set; } = [];
 }

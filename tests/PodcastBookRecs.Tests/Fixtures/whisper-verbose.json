@@ -1,0 +1,133 @@
+{
+ "task": "transcribe",
+ "language": "english",
+ "duration": 42.5760612487793,
+ "text": " Welcome back to the show. Today I want to talk about a few books that changed how I think about work. The first one is Deep Work by Cal Newport. I read it   ",
+ "segments": [
+  {
+   "id": 0,
+   "text": " Welcome back to the show. Today I want to talk about a few",
+   "start": 0.0,
+   "end": 3.15,
+   "tokens": [
+    4027,
+    646,
+    281
+   ],
+   "words": [
+    {
+     "word": " Welcome",
+     "start": 0.01,
+     "end": 0.39,
+     "t_dtw": -1,
+     "probability": 0.9855015873908997
+    },
+    {
+     "word": " back",
+     "start": 0.39,
+     "end": 0.59,
+     "t_dtw": -1,
+     "probability": 0.9982029795646667
+    }
+   ],
+   "temperature": 0.0,
+   "avg_logprob": -0.023395920172333717,
+   "no_speech_prob": 1.9273671568953432e-05
+  },
+  {
+   "id": 1,
+   "text": " books that changed how I think about",
+   "start": 3.15,
+   "end": 5.3,
+   "tokens": [
+    3642,
+    300,
+    3105
+   ],
+   "words": [
+    {
+     "word": " books",
+     "start": 3.15,
+     "end": 3.52,
+     "t_dtw": -1,
+     "probability": 0.9997120499610901
+    },
+    {
+     "word": " that",
+     "start": 3.52,
+     "end": 3.87,
+     "t_dtw": -1,
+     "probability": 0.9986657500267029
+    }
+   ],
+   "temperature": 0.0,
+   "avg_logprob": -0.010930776596069336,
+   "no_speech_prob": 0.0
+  },
+  {
+   "id": 2,
+   "text": " work. The first one is Deep Work by Cal Newport. I read it",
+   "start": 5.3,
+   "end": 9.08,
+   "tokens": [
+    589,
+    13,
+    440
+   ],
+   "words": [
+    {
+     "word": " work",
+     "start": 5.3100000000000005,
+     "end": 5.6000000000000005,
+     "t_dtw": -1,
+     "probability": 0.9997959136962891
+    },
+    {
+     "word": ".",
+     "start": 5.6000000000000005,
+     "end": 5.83,
+     "t_dtw": -1,
+     "probability": 0.999641478061676
+    }
+   ],
+   "temperature": 0.0,
+   "avg_logprob": -0.0024608373641967773,
+   "no_speech_prob": 1.9273671568953432e-05
+  },
+  {
+   "id": 3,
+   "text": "   ",
+   "start": 9.5,
+   "end": 9.9,
+   "tokens": [
+    4027,
+    646,
+    281
+   ],
+   "words": [
+    {
+     "word": " Welcome",
+     "start": 0.01,
+     "end": 0.39,
+     "t_dtw": -1,
+     "probability": 0.9855015873908997
+    },
+    {
+     "word": " back",
+     "start": 0.39,
+     "end": 0.59,
+     "t_dtw": -1,
+     "probability": 0.9982029795646667
+    }
+   ],
+   "temperature": 0.0,
+   "avg_logprob": -0.023395920172333717,
+   "no_speech_prob": 1.9273671568953432e-05
+  }
+ ],
+ "detected_language": "english",
+ "detected_language_probability": 0.9998459815979004,
+ "language_probabilities": {
+  "en": 0.9998459815979004
+ }
+}

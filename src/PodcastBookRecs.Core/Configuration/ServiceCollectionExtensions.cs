@@ -5,7 +5,13 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
+using PodcastBookRecs.Core.Audio;
+using PodcastBookRecs.Core.Backends;
 using PodcastBookRecs.Core.Data;
+using PodcastBookRecs.Core.Net;
+using PodcastBookRecs.Core.Pipeline;
+using PodcastBookRecs.Core.Providers.Transcription.OpenAiCompatible;
+using PodcastBookRecs.Core.Transcription;
 
 namespace PodcastBookRecs.Core.Configuration;
 
@@ -14,6 +20,9 @@ public static class ServiceCollectionExtensions
 {
     public const string EnvironmentPrefix = "PBR_";
     public const string FeedHttpClient = "feeds";
+    public const string EnclosureHttpClient = "enclosures";
+
+    private static readonly string UserAgent = $"PodcastBookRecs/{AppVersion.Display} (+https://github.com/thelaw51/PodcastBookRecs)";
 
     /// <summary>
     /// Adds <c>config.json</c> from the config directory (<c>/config</c> unless <c>PBR_CONFIG_DIR</c> says otherwise),
@@ -27,11 +36,14 @@ public static class ServiceCollectionExtensions
             .AddEnvironmentVariables(EnvironmentPrefix);
     }
 
-    /// <summary>Registers options, the SQLite context factory, the feed HTTP client and the database health check.</summary>
+    /// <summary>Registers options, the SQLite context factory, the feed and audio HTTP clients and the database health check.</summary>
     public static IServiceCollection AddPbrCore(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddOptions<PathsOptions>().Bind(configuration.GetSection(PathsOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
         services.AddOptions<PollingOptions>().Bind(configuration.GetSection(PollingOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+        services.AddOptions<HttpOptions>().Bind(configuration.GetSection(HttpOptions.Section));
+        services.AddSingleton<EpisodeStateLock>();
+        services.AddSingleton<TranscriptionWorkspace>();
 
         services.AddDbContextFactory<AppDbContext>((sp, options) =>
         {
@@ -43,12 +55,71 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient(FeedHttpClient, client =>
             {
                 client.Timeout = TimeSpan.FromMinutes(2);
-                client.DefaultRequestHeaders.UserAgent.ParseAdd($"PodcastBookRecs/{AppVersion.Display} (+https://github.com/thelaw51/PodcastBookRecs)");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
             })
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AutomaticDecompression = DecompressionMethods.All });
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateFeedHandler(sp.GetRequiredService<IOptions<HttpOptions>>().Value));
+
+        // Episode audio: same guard as feeds, but large files, so no overall client timeout (the caller sets its own).
+        services.AddHttpClient(EnclosureHttpClient, client =>
+            {
+                client.Timeout = Timeout.InfiniteTimeSpan;
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+            })
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateFeedHandler(sp.GetRequiredService<IOptions<HttpOptions>>().Value));
 
         services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("database");
         return services;
+    }
+
+    /// <summary>
+    /// Registers speech-to-text for the Worker: the configured provider's adapter and health check, the ffmpeg
+    /// chunker and the transcriber. Does nothing beyond binding options when no provider is configured.
+    /// </summary>
+    public static IServiceCollection AddPbrTranscription(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddOptions<TranscriptionOptions>().Bind(configuration.GetSection(TranscriptionOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+        var transcription = configuration.GetSection(TranscriptionOptions.Section).Get<TranscriptionOptions>() ?? new TranscriptionOptions();
+        if (!transcription.Enabled)
+        {
+            return services;
+        }
+
+        services.AddHttpClient(OpenAiCompatibleTranscriptionService.HttpClientName, client =>
+            {
+                client.BaseAddress = new Uri(transcription.BaseUrl!.TrimEnd('/') + "/");
+                client.Timeout = TimeSpan.FromMinutes(transcription.RequestTimeoutMinutes);
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                UseProxy = false,
+                ConnectCallback = OutboundConnections.ConnectWithTimeout(TimeSpan.FromSeconds(10)),
+            });
+
+        switch (transcription.Provider)
+        {
+            case var p when string.Equals(p, TranscriptionProviders.OpenAiCompatible, StringComparison.OrdinalIgnoreCase):
+                services.AddSingleton<ITranscriptionService, OpenAiCompatibleTranscriptionService>();
+                services.AddHealthChecks().AddCheck<OpenAiCompatibleHealthCheck>("transcription", tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
+                break;
+        }
+
+        services.AddSingleton<IAudioChunker, FfmpegAudioChunker>();
+        services.AddSingleton<EpisodeTranscriber>();
+        return services;
+    }
+
+    /// <summary>Handler for feed-supplied URLs: refuses private network addresses unless explicitly allowed.</summary>
+    internal static SocketsHttpHandler CreateFeedHandler(HttpOptions http)
+    {
+        var handler = new SocketsHttpHandler { AutomaticDecompression = DecompressionMethods.All };
+        if (!http.AllowPrivateNetworkFeeds)
+        {
+            handler.UseProxy = false;
+            handler.ConnectCallback = OutboundConnections.ConnectToPublicAddressAsync;
+        }
+
+        return handler;
     }
 
     private sealed class DatabaseHealthCheck(IDbContextFactory<AppDbContext> dbFactory) : IHealthCheck
