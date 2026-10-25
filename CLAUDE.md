@@ -2,9 +2,97 @@
 
 Self-hosted tracker for books mentioned on podcasts. .NET 10, Blazor Server with MudBlazor, EF Core on SQLite. A Worker and a UI ship as one Docker image and share `/data`. See [README.md](README.md) for the pipeline, deployment and configuration.
 
+This repo is **public**. Never commit hostnames, IP addresses, email addresses, real feed URLs, real transcripts or a real `config.json`. Use placeholders.
+
 ```bash
-dotnet test
+dotnet test                                    # build and run all tests (xUnit v3 on Microsoft.Testing.Platform)
+dotnet run --project src/PodcastBookRecs.Worker
+dotnet run --project src/PodcastBookRecs.Web   # http://localhost:5237
 ```
+
+Local runs read `.local/config/config.json` and write `.local/data/` (both git-ignored), set by each project's `launchSettings.json`.
+
+## Status and roadmap
+
+| Phase | Scope | State |
+|---|---|---|
+| 1 | Feed polling, published `<podcast:transcript>` fetch and parse, podcast/episode/status UI, CI/CD to GHCR | Done and deployed |
+| 2 | Speech-to-text for episodes without a published transcript, job queue hardening | Next |
+| 3 | Book extraction with a local LLM, quote validation, Open Library resolution, ranked book list | Planned |
+| 4 | Review queue, filters, export | Planned |
+
+Phase 2 plan: transcription runs natively (not in Docker) on an Apple Silicon Mac on the LAN, behind an OpenAI-compatible `/v1/audio/transcriptions` endpoint. The LLM for Phase 3 (LM Studio) shares that Mac's memory, so expect one heavy job at a time. Treat "backend unreachable" as a reason to back off and retry, not as a job failure that uses up attempts.
+
+Most podcasts publish no transcript, so nearly every episode ends up in `AwaitingTranscription` until Phase 2 lands.
+
+## Layout
+
+| Project | Contents |
+|---|---|
+| `src/PodcastBookRecs.Core` | EF Core model and migrations (`Data/`), feed parsing (`Feeds/`), transcript parsing (`Transcripts/`), pipeline services (`Pipeline/`), shared config and logging (`Configuration/`) |
+| `src/PodcastBookRecs.Worker` | Hosts the pipeline: `DatabaseMigrator` runs first, then `PipelineService` runs four loops (UI commands every 5 s, due feed polls every minute, transcript fetching, heartbeat) |
+| `src/PodcastBookRecs.Web` | Blazor Server UI |
+| `tests/PodcastBookRecs.Tests` | Unit and integration tests |
+
+The UI and the Worker never call each other. They share only the SQLite database: the UI writes `WorkerCommands` rows that the Worker polls, and the Worker writes `WorkerStatus` heartbeats that the UI reads.
+
+## Pipeline rules
+
+- **Episode states.** `New` (has a usable transcript link) → `TranscriptFetched`, or `AwaitingTranscription` (no usable link, waits for speech-to-text) → `Transcribed`. `Skipped` marks episodes outside the backfill window on a feed's first poll; they are stored so later polls don't treat them as new. `Failed` is reserved.
+- **Identity.** Episodes are deduplicated per feed on the item GUID, falling back to the enclosure URL.
+- **Late transcripts.** Every poll refreshes the transcript links of episodes in `EpisodeIntake.RefreshableStates` and requeues an `AwaitingTranscription` episode only when its set of link URLs changed. Any new "transcription in progress" state must stay out of `RefreshableStates`, or a poll could requeue an episode mid-job.
+- **Retries.** Transient HTTP errors back off exponentially up to `Polling:MaxAttempts`; a dead or unparseable link moves on to the next link, then to `AwaitingTranscription`.
+
+## Data model conventions
+
+- **Keys are version 7 GUIDs**, created in code (`= Guid.CreateVersion7()`), not by the database. They sort by creation time. `WorkerStatus` is the exception: its key is the component name (e.g. `worker`). Don't order by GUID when exact order matters; `CommandProcessor` orders by `CreatedAt`.
+- **All `DateTime`s are UTC.** `AppDbContext.ConfigureConventions` marks every `DateTime` read from SQLite as UTC. Convert to local time only for display (`Display.LocalTime`). Don't switch to `DateTimeOffset`: the SQLite provider can't translate its comparisons or ordering to SQL.
+- **JSON columns** hold `Episode.TranscriptLinks` and `Transcript.Segments` through value converters. A transcript lives in its own table, one per episode.
+- **Names stay provider-neutral.** Stored values and enum names never name a vendor (`TranscriptSource.Transcribed`, not `Whisper`). Record which provider and model produced data in their own columns.
+
+## Migrations
+
+- Only the Worker applies migrations, at startup. The UI's `SchemaGate` waits until none are pending and never creates the database file.
+- **The app is deployed, so never regenerate or edit an existing migration.** Add a new one: `dotnet tool restore`, then `dotnet ef migrations add <Name> -p src/PodcastBookRecs.Core -s src/PodcastBookRecs.Core -o Data/Migrations`. Check with `dotnet ef migrations has-pending-model-changes` (same `-p`/`-s`).
+- Migrations are marked as generated code in `.editorconfig`, so analysers skip them.
+
+## SQLite on a shared volume
+
+Both containers open one SQLite file in WAL mode with a 30 s busy timeout (`SqlitePragmaInterceptor`). Keep write transactions short. `/data` must be on local disk, never an SMB/NFS share.
+
+## Security and privacy
+
+- **Private feed URLs carry subscriber tokens** in the path or query (Supporting Cast, Patreon). Never log or display one: use `FeedUrlRedactor.Redact` (host only). `System.Net.Http.HttpClient` logging is held at Warning because it logs full request URLs. Episode enclosure URLs from private feeds carry the token too, so the UI never shows them.
+- **Feed content is untrusted.** XML is parsed with DTDs ignored and no resolver. Feed and transcript downloads are capped on bytes actually read (`LoadIntoBufferAsync(max)`), not only on `Content-Length`. Only http(s) feed URLs are accepted (`FeedUrl.IsValid`).
+- **Open follow-up for Phase 2:** transcript and enclosure URLs come from feeds, so a feed could point the Worker at a LAN address. Block private, loopback and link-local addresses before downloading audio.
+- Don't render feed-supplied URLs as `href`s without checking the scheme is http(s).
+- The app has no login. Remote access must go through Cloudflare Access (documented in the README).
+
+## Build and tooling
+
+- `TreatWarningsAsErrors` with `AnalysisLevel` latest-recommended. Use `[LoggerMessage]` source-generated logging, and compute log arguments before the call (CA1873).
+- Test names use underscores (CA1707 is off for `tests/` only). Pass `TestContext.Current.CancellationToken` to async calls (xUnit1051).
+- Fixtures are short invented files under `tests/PodcastBookRecs.Tests/Fixtures/`, never real transcripts or feeds. Integration tests run against a migrated temp SQLite file with a stub `HttpMessageHandler`.
+- `global.json` pins SDK 10.0.402 with `rollForward: feature`. Keep it that way: `actions/setup-dotnet` turns `latestFeature` or `latestPatch` into "newest available", which once pulled an unreleased SDK and broke CI. Bump the version deliberately.
+- To try production code against real data without committing it, use a .NET 10 file-based app in a scratch folder (`#:project` pointing at Core, plus `#:property PublishAot=false` if it uses reflection-based JSON).
+
+## Docker image
+
+One image runs either app: `entrypoint.sh worker|web`. Things that broke before and are handled in the Dockerfile:
+
+- `.editorconfig` must be copied into the build, or analyser rules switched off for migrations come back on.
+- Publish must restore again after the source is copied: the SDK only adds the package that ships `blazor.web.js` once it sees `.razor` files.
+- `entrypoint.sh` changes into each app's folder, because ASP.NET Core uses the working directory as its content root.
+- The image publishes for one runtime (from `TARGETARCH`) and runs as UID 1654, which must own the `/data` bind mount. Data Protection keys live in `/data/keys`.
+
+CI pushes `ghcr.io/thelaw51/podcastbookrecs` tagged `latest` and `sha-<short>` from `main`, plus semver tags from `v*` tags. The package is public. Deployment is a manual re-pull in Portainer; no auto-deploy.
+
+## UI
+
+- MudBlazor components, `Typo.*` and `Color.*`, no hard-coded colours. Every page has loading, empty and error states. Load data in `OnInitializedAsync` or `OnParametersSetAsync`.
+- Prerendering is off (`App.razor`) so pages load data once and `SchemaGate` can wait without blocking the first response.
+- User-facing text says "podcast"; the entity is `PodcastFeed`. Routes take GUIDs: `/podcasts/{Id:guid}`, `/episodes/{Id:guid}`.
+- UI actions never touch the pipeline directly: they insert a `WorkerCommand`.
 
 ## Third-party services must be swappable
 
