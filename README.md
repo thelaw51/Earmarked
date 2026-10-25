@@ -27,17 +27,9 @@ Most podcasts don't publish transcripts, so until Phase 2 lands those episodes s
 
 ## Deploying with Portainer
 
-### 1. Make the image public (one time)
+The image is public at `ghcr.io/thelaw51/podcastbookrecs`, so Portainer can pull it without logging in.
 
-GitHub creates container packages as **private**, even when the repository is public. After the first CI run on `main` has pushed an image:
-
-1. Open the package: your GitHub profile, **Packages**, then **podcastbookrecs**.
-2. Click **Package settings** (right-hand side).
-3. In **Danger Zone**, choose **Change visibility**, pick **Public**, and type the package name to confirm.
-
-Until you do this, Docker can't pull the image without logging in. You can't make a package private again once it's public.
-
-### 2. Prepare the folders on the Docker host
+### 1. Prepare the folders on the Docker host
 
 ```bash
 sudo mkdir -p /path/to/podcastbookrecs/config /path/to/podcastbookrecs/data
@@ -48,7 +40,7 @@ The container runs as the .NET image's non-root `app` user, UID 1654, so it need
 
 Copy [`config.example.json`](config.example.json) to `/path/to/podcastbookrecs/config/config.json` and edit it. The container mounts `config` read-only.
 
-### 3. Create the stack
+### 2. Create the stack
 
 Paste [`docker-compose.yml`](docker-compose.yml) into a new Portainer stack and replace the `/path/to/...` host paths. Two stack environment variables are optional:
 
