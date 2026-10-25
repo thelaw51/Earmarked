@@ -61,7 +61,7 @@
         var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: true);
         if (result.Succeeded)
         {
-            Navigation.NavigateTo(LocalOrHome(ReturnUrl));
+            Navigation.NavigateTo(ReturnUrls.LocalOrHome(ReturnUrl));
             return;
         }
 
@@ -71,13 +71,6 @@
             ? $"Too many failed attempts. Try again in {IdentityExtensions.LockoutDuration.TotalMinutes:0} minutes."
             : "Email or password is incorrect.";
     }
-
-    /// <summary>
-    /// Only follows return URLs on this site, so a crafted link can't send someone elsewhere after sign-in. Control
-    /// characters are refused too: browsers strip tabs and newlines, which turns <c>/\t/evil.com</c> into <c>//evil.com</c>.
-    /// </summary>
-    private static string LocalOrHome(string? url) =>
-        url is ['/'] or ['/', not ('/' or '\\'), ..] && !url.Any(char.IsControl) ? url : "/";
 
     private sealed class LoginInput
     {
