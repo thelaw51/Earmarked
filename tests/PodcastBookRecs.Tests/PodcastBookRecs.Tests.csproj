@@ -8,6 +8,7 @@
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
     <ProjectReference Include="..\..\src\PodcastBookRecs.Core\PodcastBookRecs.Core.csproj" />
+    <ProjectReference Include="..\..\src\PodcastBookRecs.Web\PodcastBookRecs.Web.csproj" />
   </ItemGroup>
 
   <ItemGroup>

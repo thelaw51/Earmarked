@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
@@ -10,8 +11,9 @@ namespace PodcastBookRecs.Core.Data;
 /// EF Core context shared by the Worker and the UI. Only the Worker applies migrations.
 /// Entity keys are version 7 GUIDs, created in code when an entity is constructed: they start with a timestamp, so
 /// new rows append to the end of each index instead of landing at random positions, and an ID exists before saving.
+/// The Identity base adds users, claims, logins and tokens, but no roles: the app has one kind of user.
 /// </summary>
-public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
+public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityUserContext<AppUser, Guid>(options)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -31,15 +33,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         configurationBuilder.Properties<DateTime?>().HaveConversion<NullableUtcDateTimeConverter>();
     }
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    protected override void OnModelCreating(ModelBuilder builder)
     {
-        modelBuilder.Entity<PodcastFeed>(b =>
+        base.OnModelCreating(builder);
+
+        builder.Entity<PodcastFeed>(b =>
         {
             b.HasIndex(p => p.FeedUrl).IsUnique();
             b.HasMany(p => p.Episodes).WithOne(e => e.PodcastFeed).OnDelete(DeleteBehavior.Cascade);
         });
 
-        modelBuilder.Entity<Episode>(b =>
+        builder.Entity<Episode>(b =>
         {
             b.HasIndex(e => new { e.PodcastFeedId, e.IdentityKey }).IsUnique();
             b.HasIndex(e => new { e.State, e.NextAttemptAt });
@@ -47,15 +51,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             b.HasOne(e => e.Transcript).WithOne(t => t.Episode).HasForeignKey<Transcript>(t => t.EpisodeId).OnDelete(DeleteBehavior.Cascade);
         });
 
-        modelBuilder.Entity<Transcript>(b =>
+        builder.Entity<Transcript>(b =>
         {
             b.HasIndex(t => t.EpisodeId).IsUnique();
             b.Property(t => t.Segments).HasConversion(JsonConverter<List<TranscriptSegment>>(), JsonComparer<List<TranscriptSegment>>());
         });
 
-        modelBuilder.Entity<WorkerCommand>(b => b.HasIndex(c => c.CompletedAt));
+        builder.Entity<WorkerCommand>(b => b.HasIndex(c => c.CompletedAt));
 
-        modelBuilder.Entity<WorkerStatus>(b => b.HasKey(s => s.Name));
+        builder.Entity<WorkerStatus>(b => b.HasKey(s => s.Name));
     }
 
     private static ValueConverter<T, string> JsonConverter<T>() where T : new() =>

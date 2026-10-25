@@ -1,4 +1,6 @@
 @using System.Net.Http
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.AspNetCore.Components.Routing
 @using Microsoft.AspNetCore.Components.Web
@@ -13,3 +15,6 @@
 @using PodcastBookRecs.Web.Components.Layout
 @using PodcastBookRecs.Web.Components.Shared
 @using PodcastBookRecs.Web.Services
+@using PodcastBookRecs.Web.Components.Account
+@* AuthorizeRouteView only checks attributes, not the fallback policy, so every page carries this. Opt out with [AllowAnonymous]. *@
+@attribute [Authorize]

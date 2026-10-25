@@ -29,7 +29,7 @@ Most podcasts publish no transcript, so most episodes go through speech-to-text.
 
 | Project | Contents |
 |---|---|
-| `src/PodcastBookRecs.Core` | EF Core model and migrations (`Data/`), feed parsing (`Feeds/`), transcript parsing (`Transcripts/`), pipeline services (`Pipeline/`), shared config and logging (`Configuration/`), backend contracts (`Backends/`), the transcription interface (`Transcription/`) and its adapters (`Providers/`), ffmpeg chunking (`Audio/`), the private-address guard (`Net/`) |
+| `src/PodcastBookRecs.Core` | EF Core model and migrations (`Data/`), feed parsing (`Feeds/`), transcript parsing (`Transcripts/`), pipeline services (`Pipeline/`), user admin (`Accounts/`), shared config, logging and Identity settings (`Configuration/`), backend contracts (`Backends/`), the transcription interface (`Transcription/`) and its adapters (`Providers/`), ffmpeg chunking (`Audio/`), the private-address guard (`Net/`) |
 | `src/PodcastBookRecs.Worker` | Hosts the pipeline: `DatabaseMigrator` runs first, then `PipelineService` runs its loops (UI commands every 5 s, due feed polls every minute, transcript fetching, heartbeat, and transcription when a provider is set). `BackendStatusPublisher` writes backend health rows every 30 s. |
 | `src/PodcastBookRecs.Web` | Blazor Server UI |
 | `tests/PodcastBookRecs.Tests` | Unit and integration tests |
@@ -70,7 +70,11 @@ Both containers open one SQLite file in WAL mode with a 30 s busy timeout (`Sqli
 - **Private-address guard.** The `feeds` and `enclosures` HTTP clients connect through `OutboundConnections.ConnectToPublicAddressAsync`: it resolves once, refuses any non-public address (`PrivateAddressGuard`), connects to the vetted IP, and needs `UseProxy = false`. Any new client for feed-supplied URLs must use `ServiceCollectionExtensions.CreateFeedHandler`. User-configured backends (the transcription client) are exempt. `Http:AllowPrivateNetworkFeeds` turns the guard off.
 - **ffmpeg runs on untrusted files** with `-protocol_whitelist file` and `-format_whitelist` (no playlists or concat, which would let a file make ffmpeg open other inputs), a duration cap, a wall-clock timeout, `ArgumentList` arguments and bounded stderr. Keep all of these if you change the command. ffmpeg's stderr goes to logs, never to `LastError`.
 - Don't render feed-supplied URLs as `href`s without checking the scheme is http(s).
-- The app has no login. Remote access must go through Cloudflare Access (documented in the README).
+- **Login.** ASP.NET Core Identity, users only (`IdentityUserContext<AppUser, Guid>`, no roles). A fallback policy requires a signed-in user on every endpoint, the Blazor hub included. Only static assets, `/health`, `/account/login` and `/Error` are anonymous; anything new that must be reachable signed out needs `[AllowAnonymous]` or `.AllowAnonymous()`. Every page also carries `[Authorize]` from `_Imports.razor`, because `AuthorizeRouteView` checks attributes, not the fallback policy. Lockout (5 attempts, 15 minutes) and the 12-character, length-only password rule live in `IdentityExtensions`, which the tests share.
+- **Sessions end on a password reset.** The cookie and open circuits both re-check the security stamp every 5 minutes (`IdentityRevalidatingAuthenticationStateProvider`). A circuit that fails the check renders `RedirectToLogin`.
+- **Behind cloudflared the app sees plain HTTP.** `UseForwardedHeaders` runs first and trusts `X-Forwarded-Proto`/`For` from `ForwardedHeaders:KnownNetworks` (private ranges by default), so the cookie gets the Secure flag and redirects use https. It deliberately ignores `X-Forwarded-Host`.
+- **No sign-up page.** Accounts come from `entrypoint.sh users add|reset-password <email>` (`UserCommands`, backed by `UserAdmin`). Don't add self-registration or a first-run setup page: on an exposed host, whoever reaches it first owns the app.
+- Identity's `LockoutEnd` is a `DateTimeOffset`. That is the one exception to the UTC `DateTime` rule; Identity compares it in memory, never in SQL.
 
 ## Build and tooling
 
@@ -98,6 +102,7 @@ CI pushes `ghcr.io/thelaw51/podcastbookrecs` tagged `latest` and `sha-<short>` f
 
 - MudBlazor components, `Typo.*` and `Color.*`, no hard-coded colours. Every page has loading, empty and error states. Load data in `OnInitializedAsync` or `OnParametersSetAsync`.
 - Prerendering is off (`App.razor`) so pages load data once and `SchemaGate` can wait without blocking the first response.
+- **Account pages render statically.** `/account/login`, `/account/logout` and `/Error` carry `[ExcludeFromInteractiveRouting]` and use `AccountLayout`, because only an HTTP response can set or clear the auth cookie. MudBlazor inputs need a circuit, so the sign-in form uses `EditForm` with plain inputs styled in `app.css`. That is the deliberate exception to the MudBlazor rule. Static pages must never sit inside `SchemaGate`: its polling loop would hold the response open.
 - User-facing text says "podcast"; the entity is `PodcastFeed`. Routes take GUIDs: `/podcasts/{Id:guid}`, `/episodes/{Id:guid}`.
 - UI actions never touch the pipeline directly: they insert a `WorkerCommand`.
 

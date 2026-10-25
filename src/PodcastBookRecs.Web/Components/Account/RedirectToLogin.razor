@@ -1,0 +1,7 @@
+@inject NavigationManager Navigation
+
+@code {
+    /// <summary>A full page load, because the sign-in page renders without a circuit.</summary>
+    protected override void OnInitialized() =>
+        Navigation.NavigateTo($"account/login?ReturnUrl={Uri.EscapeDataString("/" + Navigation.ToBaseRelativePath(Navigation.Uri))}", forceLoad: true);
+}
