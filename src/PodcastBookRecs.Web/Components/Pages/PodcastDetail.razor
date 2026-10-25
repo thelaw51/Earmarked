@@ -1,0 +1,137 @@
+@page "/podcasts/{Id:int}"
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject TimeProvider Time
+@inject ISnackbar Snackbar
+
+<PageTitle>@(_podcast?.Title ?? "Podcast")</PageTitle>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error">Couldn't load this podcast: @_error</MudAlert>
+}
+else if (_loading)
+{
+    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+}
+else if (_podcast is null)
+{
+    <MudAlert Severity="Severity.Warning">Podcast @Id doesn't exist.</MudAlert>
+}
+else
+{
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4" Spacing="3">
+        @if (_podcast.ImageUrl is not null)
+        {
+            <MudImage Src="@_podcast.ImageUrl" Alt="" Width="96" Height="96" ObjectFit="ObjectFit.Cover" Class="rounded" />
+        }
+        <MudStack Spacing="0">
+            <MudText Typo="Typo.h4">@(_podcast.Title ?? FeedUrlRedactor.Redact(_podcast.FeedUrl))</MudText>
+            @if (_podcast.Author is not null)
+            {
+                <MudText Typo="Typo.subtitle1">@_podcast.Author</MudText>
+            }
+            <MudText Typo="Typo.caption">
+                Feed @FeedUrlRedactor.Redact(_podcast.FeedUrl) · last polled @Display.LocalTime(_podcast.LastPolledAt)
+            </MudText>
+        </MudStack>
+        <MudSpacer />
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Sync" OnClick="PollAsync">Poll now</MudButton>
+        <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
+    </MudStack>
+
+    @if (_podcast.LastPollError is not null)
+    {
+        <MudAlert Severity="Severity.Error" Class="mb-4">Last poll failed: @_podcast.LastPollError</MudAlert>
+    }
+
+    <MudSwitch T="bool" @bind-Value="_showSkipped" Label="@($"Show {_skippedCount} episodes skipped by the backfill window")" Color="Color.Primary" Class="mb-2" />
+
+    @if (VisibleEpisodes.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">
+            @(_podcast.FirstPolledAt is null ? "This feed hasn't been polled yet." : "No episodes to show.")
+        </MudAlert>
+    }
+    else
+    {
+        <MudTable Items="VisibleEpisodes" Hover="true" Dense="true" Elevation="1">
+            <HeaderContent>
+                <MudTh>Published</MudTh>
+                <MudTh>Episode</MudTh>
+                <MudTh>Length</MudTh>
+                <MudTh>State</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@Display.LocalDate(context.PublishedAt)</MudTd>
+                <MudTd><MudLink Href="@($"episodes/{context.Id}")">@context.Title</MudLink></MudTd>
+                <MudTd>@Display.Timestamp(context.Duration)</MudTd>
+                <MudTd>
+                    <EpisodeStateChip State="context.State" />
+                    @if (context.LastError is not null)
+                    {
+                        <MudTooltip Text="@context.LastError">
+                            <MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Small" Color="Color.Warning" />
+                        </MudTooltip>
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+}
+
+@code {
+    [Parameter]
+    public int Id { get; set; }
+
+    private sealed record EpisodeRow(int Id, string Title, DateTime? PublishedAt, TimeSpan? Duration, EpisodeState State, string? LastError);
+
+    private Podcast? _podcast;
+    private List<EpisodeRow> _episodes = [];
+    private bool _loading = true;
+    private bool _showSkipped;
+    private string? _error;
+
+    private int _skippedCount => _episodes.Count(e => e.State == EpisodeState.Skipped);
+
+    private List<EpisodeRow> VisibleEpisodes => _showSkipped ? _episodes : _episodes.Where(e => e.State != EpisodeState.Skipped).ToList();
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _podcast = await db.Podcasts.AsNoTracking().SingleOrDefaultAsync(p => p.Id == Id);
+            _episodes = await db.Episodes.AsNoTracking()
+                .Where(e => e.PodcastId == Id)
+                .OrderByDescending(e => e.PublishedAt)
+                .Select(e => new EpisodeRow(e.Id, e.Title, e.PublishedAt, e.Duration, e.State, e.LastError))
+                .ToListAsync();
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task PollAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastId = Id, CreatedAt = Time.GetUtcNow().UtcDateTime });
+            await db.SaveChangesAsync();
+            Snackbar.Add("Poll queued.", Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Couldn't queue the poll: {ex.Message}", Severity.Error);
+        }
+    }
+}
