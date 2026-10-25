@@ -36,3 +36,15 @@ public sealed class FeedSeed
     [Required]
     public string Url { get; set; } = "";
 }
+
+/// <summary>Outbound HTTP settings for feed-supplied URLs.</summary>
+public sealed class HttpOptions
+{
+    public const string Section = "Http";
+
+    /// <summary>
+    /// Lets feeds, transcripts and audio be fetched from private, loopback and link-local addresses. Off by default:
+    /// feed content is untrusted, and without this guard a feed could point the Worker at devices on your network.
+    /// </summary>
+    public bool AllowPrivateNetworkFeeds { get; set; }
+}

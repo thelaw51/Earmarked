@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using PodcastBookRecs.Core.Data;
+using PodcastBookRecs.Core.Net;
 
 namespace PodcastBookRecs.Core.Configuration;
 
@@ -14,6 +15,9 @@ public static class ServiceCollectionExtensions
 {
     public const string EnvironmentPrefix = "PBR_";
     public const string FeedHttpClient = "feeds";
+    public const string EnclosureHttpClient = "enclosures";
+
+    private static readonly string UserAgent = $"PodcastBookRecs/{AppVersion.Display} (+https://github.com/thelaw51/PodcastBookRecs)";
 
     /// <summary>
     /// Adds <c>config.json</c> from the config directory (<c>/config</c> unless <c>PBR_CONFIG_DIR</c> says otherwise),
@@ -27,11 +31,12 @@ public static class ServiceCollectionExtensions
             .AddEnvironmentVariables(EnvironmentPrefix);
     }
 
-    /// <summary>Registers options, the SQLite context factory, the feed HTTP client and the database health check.</summary>
+    /// <summary>Registers options, the SQLite context factory, the feed and audio HTTP clients and the database health check.</summary>
     public static IServiceCollection AddPbrCore(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddOptions<PathsOptions>().Bind(configuration.GetSection(PathsOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
         services.AddOptions<PollingOptions>().Bind(configuration.GetSection(PollingOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+        services.AddOptions<HttpOptions>().Bind(configuration.GetSection(HttpOptions.Section));
 
         services.AddDbContextFactory<AppDbContext>((sp, options) =>
         {
@@ -43,12 +48,33 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient(FeedHttpClient, client =>
             {
                 client.Timeout = TimeSpan.FromMinutes(2);
-                client.DefaultRequestHeaders.UserAgent.ParseAdd($"PodcastBookRecs/{AppVersion.Display} (+https://github.com/thelaw51/PodcastBookRecs)");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
             })
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AutomaticDecompression = DecompressionMethods.All });
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateFeedHandler(sp.GetRequiredService<IOptions<HttpOptions>>().Value));
+
+        // Episode audio: same guard as feeds, but large files, so no overall client timeout (the caller sets its own).
+        services.AddHttpClient(EnclosureHttpClient, client =>
+            {
+                client.Timeout = Timeout.InfiniteTimeSpan;
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+            })
+            .ConfigurePrimaryHttpMessageHandler(sp => CreateFeedHandler(sp.GetRequiredService<IOptions<HttpOptions>>().Value));
 
         services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("database");
         return services;
+    }
+
+    /// <summary>Handler for feed-supplied URLs: refuses private network addresses unless explicitly allowed.</summary>
+    internal static SocketsHttpHandler CreateFeedHandler(HttpOptions http)
+    {
+        var handler = new SocketsHttpHandler { AutomaticDecompression = DecompressionMethods.All };
+        if (!http.AllowPrivateNetworkFeeds)
+        {
+            handler.UseProxy = false;
+            handler.ConnectCallback = OutboundConnections.ConnectToPublicAddressAsync;
+        }
+
+        return handler;
     }
 
     private sealed class DatabaseHealthCheck(IDbContextFactory<AppDbContext> dbFactory) : IHealthCheck
