@@ -44,7 +44,7 @@ else
         <MudAlert Severity="Severity.Error" Class="mb-4">Last poll failed: @_podcast.LastPollError</MudAlert>
     }
 
-    <MudSwitch T="bool" @bind-Value="_showSkipped" Label="@($"Show {_skippedCount} episodes skipped by the backfill window")" Color="Color.Primary" Class="mb-2" />
+    <MudSwitch T="bool" @bind-Value="_showSkipped" Label="@($"Show {SkippedCount} episodes skipped by the backfill window")" Color="Color.Primary" Class="mb-2" />
 
     @if (VisibleEpisodes.Count == 0)
     {
@@ -91,7 +91,7 @@ else
     private bool _showSkipped;
     private string? _error;
 
-    private int _skippedCount => _episodes.Count(e => e.State == EpisodeState.Skipped);
+    private int SkippedCount => _episodes.Count(e => e.State == EpisodeState.Skipped);
 
     private List<EpisodeRow> VisibleEpisodes => _showSkipped ? _episodes : _episodes.Where(e => e.State != EpisodeState.Skipped).ToList();
 
