@@ -1,9 +1,9 @@
 namespace PodcastBookRecs.Core.Data;
 
 /// <summary>A podcast feed the Worker polls for new episodes.</summary>
-public class Podcast
+public class PodcastFeed
 {
-    public int Id { get; set; }
+    public Guid Id { get; set; } = Guid.CreateVersion7();
 
     /// <summary>The feed URL as entered. May contain a private subscriber token, so never log or display it unredacted.</summary>
     public required string FeedUrl { get; set; }

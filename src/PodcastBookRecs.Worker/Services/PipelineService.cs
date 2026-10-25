@@ -55,10 +55,10 @@ internal sealed partial class PipelineService(
     private async Task PollDueFeedsAsync(CancellationToken cancellationToken)
     {
         var dueBefore = time.GetUtcNow().UtcDateTime.AddMinutes(-polling.Value.IntervalMinutes);
-        List<int> due;
+        List<Guid> due;
         await using (var db = await dbFactory.CreateDbContextAsync(cancellationToken))
         {
-            due = await db.Podcasts
+            due = await db.PodcastFeeds
                 .Where(p => p.Enabled && (p.LastPolledAt == null || p.LastPolledAt <= dueBefore))
                 .Select(p => p.Id)
                 .ToListAsync(cancellationToken);

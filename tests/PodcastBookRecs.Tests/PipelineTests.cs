@@ -19,6 +19,7 @@ public sealed class PipelineTests : IAsyncLifetime
     private readonly StubHandler _http = new();
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    private Guid _podcastId;
     private IDbContextFactory<AppDbContext> _dbFactory = null!;
     private FeedPoller _poller = null!;
     private TranscriptFetcher _fetcher = null!;
@@ -33,7 +34,9 @@ public sealed class PipelineTests : IAsyncLifetime
         await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
         {
             await db.Database.MigrateAsync(Ct);
-            db.Podcasts.Add(new Podcast { FeedUrl = FeedUrl, AddedAt = DateTime.UtcNow });
+            var podcast = new PodcastFeed { FeedUrl = FeedUrl, AddedAt = DateTime.UtcNow };
+            db.PodcastFeeds.Add(podcast);
+            _podcastId = podcast.Id;
             await db.SaveChangesAsync(Ct);
         }
 
@@ -58,7 +61,7 @@ public sealed class PipelineTests : IAsyncLifetime
     public async Task First_poll_applies_backfill_and_later_polls_add_only_new_items()
     {
         _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
-        await _poller.PollAsync(1, Ct);
+        await _poller.PollAsync(_podcastId, Ct);
 
         var states = await EpisodeStatesAsync();
         Assert.Equal(EpisodeState.New, states["ep-003"]);
@@ -70,7 +73,7 @@ public sealed class PipelineTests : IAsyncLifetime
             cover,
             cover + "<item><title>Episode 4</title><guid>ep-004</guid><pubDate>Mon, 26 Oct 2026 05:00:00 GMT</pubDate></item>",
             StringComparison.Ordinal));
-        await _poller.PollAsync(1, Ct);
+        await _poller.PollAsync(_podcastId, Ct);
 
         states = await EpisodeStatesAsync();
         Assert.Equal(4, states.Count);
@@ -83,7 +86,7 @@ public sealed class PipelineTests : IAsyncLifetime
     {
         _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
         _http.Respond("https://example.com/ep3.vtt", Fixtures.Read("transcript.vtt"));
-        await _poller.PollAsync(1, Ct);
+        await _poller.PollAsync(_podcastId, Ct);
 
         Assert.True(await _fetcher.ProcessNextAsync(Ct));
         Assert.False(await _fetcher.ProcessNextAsync(Ct));
@@ -103,7 +106,7 @@ public sealed class PipelineTests : IAsyncLifetime
         _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
         _http.Respond("https://example.com/ep3.vtt", "", HttpStatusCode.NotFound);
         _http.Respond("https://example.com/ep3.html", Fixtures.Read("transcript.html"));
-        await _poller.PollAsync(1, Ct);
+        await _poller.PollAsync(_podcastId, Ct);
 
         await _fetcher.ProcessNextAsync(Ct);
         Assert.Equal(EpisodeState.TranscriptFetched, (await EpisodeStatesAsync())["ep-003"]);
@@ -114,7 +117,7 @@ public sealed class PipelineTests : IAsyncLifetime
     {
         _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
         _http.Respond("https://example.com/ep3.vtt", "", HttpStatusCode.ServiceUnavailable);
-        await _poller.PollAsync(1, Ct);
+        await _poller.PollAsync(_podcastId, Ct);
 
         await _fetcher.ProcessNextAsync(Ct);
         await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
@@ -137,7 +140,7 @@ public sealed class PipelineTests : IAsyncLifetime
     public async Task A_transcript_published_after_release_is_picked_up_on_a_later_poll()
     {
         _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
-        await _poller.PollAsync(1, Ct);
+        await _poller.PollAsync(_podcastId, Ct);
         Assert.Equal(EpisodeState.AwaitingTranscription, (await EpisodeStatesAsync())["ep-002"]);
 
         _http.Respond(FeedUrl, Fixtures.Read("feed.xml").Replace(
@@ -145,7 +148,7 @@ public sealed class PipelineTests : IAsyncLifetime
             "<guid isPermaLink=\"false\">ep-002</guid><podcast:transcript url=\"https://example.com/ep2.srt\" type=\"application/x-subrip\"/>",
             StringComparison.Ordinal));
         _http.Respond("https://example.com/ep2.srt", Fixtures.Read("transcript.srt"));
-        await _poller.PollAsync(1, Ct);
+        await _poller.PollAsync(_podcastId, Ct);
         Assert.Equal(EpisodeState.New, (await EpisodeStatesAsync())["ep-002"]);
 
         while (await _fetcher.ProcessNextAsync(Ct))
@@ -159,11 +162,11 @@ public sealed class PipelineTests : IAsyncLifetime
     public async Task Links_that_already_failed_are_not_retried_on_every_poll()
     {
         _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
-        await _poller.PollAsync(1, Ct);
+        await _poller.PollAsync(_podcastId, Ct);
         await _fetcher.ProcessNextAsync(Ct);
         Assert.Equal(EpisodeState.AwaitingTranscription, (await EpisodeStatesAsync())["ep-003"]);
 
-        await _poller.PollAsync(1, Ct);
+        await _poller.PollAsync(_podcastId, Ct);
 
         Assert.Equal(EpisodeState.AwaitingTranscription, (await EpisodeStatesAsync())["ep-003"]);
         Assert.False(await _fetcher.ProcessNextAsync(Ct));
@@ -173,10 +176,10 @@ public sealed class PipelineTests : IAsyncLifetime
     public async Task Records_feed_errors_on_the_podcast()
     {
         _http.Respond(FeedUrl, "", HttpStatusCode.InternalServerError);
-        await _poller.PollAsync(1, Ct);
+        await _poller.PollAsync(_podcastId, Ct);
 
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
-        var podcast = await db.Podcasts.SingleAsync(Ct);
+        var podcast = await db.PodcastFeeds.SingleAsync(Ct);
         Assert.Contains("500", podcast.LastPollError, StringComparison.Ordinal);
         Assert.Null(podcast.FirstPolledAt);
     }

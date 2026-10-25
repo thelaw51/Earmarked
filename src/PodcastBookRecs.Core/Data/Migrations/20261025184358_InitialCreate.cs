@@ -12,11 +12,10 @@ namespace PodcastBookRecs.Core.Data.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
-                name: "Podcasts",
+                name: "PodcastFeeds",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "INTEGER", nullable: false)
-                        .Annotation("Sqlite:Autoincrement", true),
+                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
                     FeedUrl = table.Column<string>(type: "TEXT", nullable: false),
                     Title = table.Column<string>(type: "TEXT", nullable: true),
                     Author = table.Column<string>(type: "TEXT", nullable: true),
@@ -31,18 +30,17 @@ namespace PodcastBookRecs.Core.Data.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_Podcasts", x => x.Id);
+                    table.PrimaryKey("PK_PodcastFeeds", x => x.Id);
                 });
 
             migrationBuilder.CreateTable(
                 name: "WorkerCommands",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "INTEGER", nullable: false)
-                        .Annotation("Sqlite:Autoincrement", true),
+                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
                     Type = table.Column<int>(type: "INTEGER", nullable: false),
-                    PodcastId = table.Column<int>(type: "INTEGER", nullable: true),
-                    EpisodeId = table.Column<int>(type: "INTEGER", nullable: true),
+                    PodcastFeedId = table.Column<Guid>(type: "TEXT", nullable: true),
+                    EpisodeId = table.Column<Guid>(type: "TEXT", nullable: true),
                     CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false),
                     CompletedAt = table.Column<DateTime>(type: "TEXT", nullable: true),
                     Error = table.Column<string>(type: "TEXT", nullable: true)
@@ -71,9 +69,8 @@ namespace PodcastBookRecs.Core.Data.Migrations
                 name: "Episodes",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "INTEGER", nullable: false)
-                        .Annotation("Sqlite:Autoincrement", true),
-                    PodcastId = table.Column<int>(type: "INTEGER", nullable: false),
+                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
+                    PodcastFeedId = table.Column<Guid>(type: "TEXT", nullable: false),
                     IdentityKey = table.Column<string>(type: "TEXT", nullable: false),
                     ItemGuid = table.Column<string>(type: "TEXT", nullable: true),
                     Title = table.Column<string>(type: "TEXT", nullable: false),
@@ -95,9 +92,9 @@ namespace PodcastBookRecs.Core.Data.Migrations
                 {
                     table.PrimaryKey("PK_Episodes", x => x.Id);
                     table.ForeignKey(
-                        name: "FK_Episodes_Podcasts_PodcastId",
-                        column: x => x.PodcastId,
-                        principalTable: "Podcasts",
+                        name: "FK_Episodes_PodcastFeeds_PodcastFeedId",
+                        column: x => x.PodcastFeedId,
+                        principalTable: "PodcastFeeds",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
                 });
@@ -106,9 +103,8 @@ namespace PodcastBookRecs.Core.Data.Migrations
                 name: "Transcripts",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "INTEGER", nullable: false)
-                        .Annotation("Sqlite:Autoincrement", true),
-                    EpisodeId = table.Column<int>(type: "INTEGER", nullable: false),
+                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
+                    EpisodeId = table.Column<Guid>(type: "TEXT", nullable: false),
                     Source = table.Column<int>(type: "INTEGER", nullable: false),
                     Format = table.Column<int>(type: "INTEGER", nullable: false),
                     SourceUrl = table.Column<string>(type: "TEXT", nullable: true),
@@ -127,9 +123,9 @@ namespace PodcastBookRecs.Core.Data.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_Episodes_PodcastId_IdentityKey",
+                name: "IX_Episodes_PodcastFeedId_IdentityKey",
                 table: "Episodes",
-                columns: new[] { "PodcastId", "IdentityKey" },
+                columns: new[] { "PodcastFeedId", "IdentityKey" },
                 unique: true);
 
             migrationBuilder.CreateIndex(
@@ -138,8 +134,8 @@ namespace PodcastBookRecs.Core.Data.Migrations
                 columns: new[] { "State", "NextAttemptAt" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_Podcasts_FeedUrl",
-                table: "Podcasts",
+                name: "IX_PodcastFeeds_FeedUrl",
+                table: "PodcastFeeds",
                 column: "FeedUrl",
                 unique: true);
 
@@ -171,7 +167,7 @@ namespace PodcastBookRecs.Core.Data.Migrations
                 name: "Episodes");
 
             migrationBuilder.DropTable(
-                name: "Podcasts");
+                name: "PodcastFeeds");
         }
     }
 }

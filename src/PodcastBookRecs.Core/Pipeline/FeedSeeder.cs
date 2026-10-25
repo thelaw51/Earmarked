@@ -11,7 +11,7 @@ public sealed partial class FeedSeeder(IDbContextFactory<AppDbContext> dbFactory
     public async Task SeedAsync(IEnumerable<string> urls, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var existing = (await db.Podcasts.Select(p => p.FeedUrl).ToListAsync(cancellationToken)).ToHashSet(StringComparer.Ordinal);
+        var existing = (await db.PodcastFeeds.Select(p => p.FeedUrl).ToListAsync(cancellationToken)).ToHashSet(StringComparer.Ordinal);
         foreach (var url in urls.Select(u => u.Trim()).Distinct(StringComparer.Ordinal))
         {
             var redacted = FeedUrlRedactor.Redact(url);
@@ -23,7 +23,7 @@ public sealed partial class FeedSeeder(IDbContextFactory<AppDbContext> dbFactory
 
             if (existing.Add(url))
             {
-                db.Podcasts.Add(new Podcast { FeedUrl = url, AddedAt = time.GetUtcNow().UtcDateTime });
+                db.PodcastFeeds.Add(new PodcastFeed { FeedUrl = url, AddedAt = time.GetUtcNow().UtcDateTime });
                 LogAdded(redacted);
             }
         }

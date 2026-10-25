@@ -3,9 +3,9 @@ namespace PodcastBookRecs.Core.Data;
 /// <summary>One item from a podcast feed, tracked as a job moving through <see cref="EpisodeState"/>.</summary>
 public class Episode
 {
-    public int Id { get; set; }
-    public int PodcastId { get; set; }
-    public Podcast Podcast { get; set; } = null!;
+    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public Guid PodcastFeedId { get; set; }
+    public PodcastFeed PodcastFeed { get; set; } = null!;
 
     /// <summary>Dedupe key within the podcast: the item GUID, or the enclosure URL when the item has no GUID.</summary>
     public required string IdentityKey { get; set; }

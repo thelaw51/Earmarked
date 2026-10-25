@@ -19,10 +19,10 @@ public sealed partial class FeedPoller(
 {
     private const long MaxFeedBytes = 64 * 1024 * 1024;
 
-    public async Task PollAsync(int podcastId, CancellationToken cancellationToken)
+    public async Task PollAsync(Guid podcastId, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var podcast = await db.Podcasts.SingleOrDefaultAsync(p => p.Id == podcastId, cancellationToken);
+        var podcast = await db.PodcastFeeds.SingleOrDefaultAsync(p => p.Id == podcastId, cancellationToken);
         if (podcast is null)
         {
             return;
@@ -74,13 +74,13 @@ public sealed partial class FeedPoller(
                 feed = await FeedParser.ParseAsync(stream, cancellationToken);
             }
 
-            var existing = (await db.Episodes.Where(e => e.PodcastId == podcast.Id).Select(e => e.IdentityKey).ToListAsync(cancellationToken))
+            var existing = (await db.Episodes.Where(e => e.PodcastFeedId == podcast.Id).Select(e => e.IdentityKey).ToListAsync(cancellationToken))
                 .ToHashSet(StringComparer.Ordinal);
             var plan = EpisodeIntake.Plan(feed.Episodes, existing, podcast.FirstPolledAt is null, polling.Value.BackfillEpisodes);
 
             var latestByKey = feed.Episodes.ToDictionary(e => e.IdentityKey, StringComparer.Ordinal);
             var waiting = await db.Episodes
-                .Where(e => e.PodcastId == podcast.Id && EpisodeIntake.RefreshableStates.Contains(e.State))
+                .Where(e => e.PodcastFeedId == podcast.Id && EpisodeIntake.RefreshableStates.Contains(e.State))
                 .ToListAsync(cancellationToken);
             var requeued = waiting.Count(e => latestByKey.TryGetValue(e.IdentityKey, out var latest) && EpisodeIntake.RefreshTranscriptLinks(e, latest, now));
 
@@ -88,7 +88,7 @@ public sealed partial class FeedPoller(
             {
                 db.Episodes.Add(new Episode
                 {
-                    PodcastId = podcast.Id,
+                    PodcastFeedId = podcast.Id,
                     IdentityKey = item.IdentityKey,
                     ItemGuid = item.ItemGuid,
                     Title = item.Title,

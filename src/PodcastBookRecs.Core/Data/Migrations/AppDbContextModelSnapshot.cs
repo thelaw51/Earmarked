@@ -19,9 +19,9 @@ namespace PodcastBookRecs.Core.Data.Migrations
 
             modelBuilder.Entity("PodcastBookRecs.Core.Data.Episode", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("TEXT");
 
                     b.Property<int>("Attempts")
                         .HasColumnType("INTEGER");
@@ -57,8 +57,8 @@ namespace PodcastBookRecs.Core.Data.Migrations
                     b.Property<DateTime?>("NextAttemptAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<int>("PodcastId")
-                        .HasColumnType("INTEGER");
+                    b.Property<Guid>("PodcastFeedId")
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("PublishedAt")
                         .HasColumnType("TEXT");
@@ -79,7 +79,7 @@ namespace PodcastBookRecs.Core.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PodcastId", "IdentityKey")
+                    b.HasIndex("PodcastFeedId", "IdentityKey")
                         .IsUnique();
 
                     b.HasIndex("State", "NextAttemptAt");
@@ -87,11 +87,11 @@ namespace PodcastBookRecs.Core.Data.Migrations
                     b.ToTable("Episodes");
                 });
 
-            modelBuilder.Entity("PodcastBookRecs.Core.Data.Podcast", b =>
+            modelBuilder.Entity("PodcastBookRecs.Core.Data.PodcastFeed", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime>("AddedAt")
                         .HasColumnType("TEXT");
@@ -132,20 +132,20 @@ namespace PodcastBookRecs.Core.Data.Migrations
                     b.HasIndex("FeedUrl")
                         .IsUnique();
 
-                    b.ToTable("Podcasts");
+                    b.ToTable("PodcastFeeds");
                 });
 
             modelBuilder.Entity("PodcastBookRecs.Core.Data.Transcript", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<int>("EpisodeId")
-                        .HasColumnType("INTEGER");
+                    b.Property<Guid>("EpisodeId")
+                        .HasColumnType("TEXT");
 
                     b.Property<int>("Format")
                         .HasColumnType("INTEGER");
@@ -170,9 +170,9 @@ namespace PodcastBookRecs.Core.Data.Migrations
 
             modelBuilder.Entity("PodcastBookRecs.Core.Data.WorkerCommand", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("TEXT");
@@ -180,14 +180,14 @@ namespace PodcastBookRecs.Core.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<int?>("EpisodeId")
-                        .HasColumnType("INTEGER");
+                    b.Property<Guid?>("EpisodeId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Error")
                         .HasColumnType("TEXT");
 
-                    b.Property<int?>("PodcastId")
-                        .HasColumnType("INTEGER");
+                    b.Property<Guid?>("PodcastFeedId")
+                        .HasColumnType("TEXT");
 
                     b.Property<int>("Type")
                         .HasColumnType("INTEGER");
@@ -223,13 +223,13 @@ namespace PodcastBookRecs.Core.Data.Migrations
 
             modelBuilder.Entity("PodcastBookRecs.Core.Data.Episode", b =>
                 {
-                    b.HasOne("PodcastBookRecs.Core.Data.Podcast", "Podcast")
+                    b.HasOne("PodcastBookRecs.Core.Data.PodcastFeed", "PodcastFeed")
                         .WithMany("Episodes")
-                        .HasForeignKey("PodcastId")
+                        .HasForeignKey("PodcastFeedId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("Podcast");
+                    b.Navigation("PodcastFeed");
                 });
 
             modelBuilder.Entity("PodcastBookRecs.Core.Data.Transcript", b =>
@@ -248,7 +248,7 @@ namespace PodcastBookRecs.Core.Data.Migrations
                     b.Navigation("Transcript");
                 });
 
-            modelBuilder.Entity("PodcastBookRecs.Core.Data.Podcast", b =>
+            modelBuilder.Entity("PodcastBookRecs.Core.Data.PodcastFeed", b =>
                 {
                     b.Navigation("Episodes");
                 });

@@ -16,7 +16,7 @@ public sealed partial class CommandProcessor(
         List<WorkerCommand> pending;
         await using (var db = await dbFactory.CreateDbContextAsync(cancellationToken))
         {
-            pending = await db.WorkerCommands.Where(c => c.CompletedAt == null).OrderBy(c => c.Id).ToListAsync(cancellationToken);
+            pending = await db.WorkerCommands.Where(c => c.CompletedAt == null).OrderBy(c => c.CreatedAt).ThenBy(c => c.Id).ToListAsync(cancellationToken);
         }
 
         foreach (var command in pending)
@@ -43,15 +43,15 @@ public sealed partial class CommandProcessor(
     {
         switch (command.Type)
         {
-            case WorkerCommandType.PollFeed when command.PodcastId is int podcastId:
+            case WorkerCommandType.PollFeed when command.PodcastFeedId is Guid podcastId:
                 await poller.PollAsync(podcastId, cancellationToken);
                 break;
 
             case WorkerCommandType.PollAllFeeds:
-                List<int> ids;
+                List<Guid> ids;
                 await using (var db = await dbFactory.CreateDbContextAsync(cancellationToken))
                 {
-                    ids = await db.Podcasts.Where(p => p.Enabled).Select(p => p.Id).ToListAsync(cancellationToken);
+                    ids = await db.PodcastFeeds.Where(p => p.Enabled).Select(p => p.Id).ToListAsync(cancellationToken);
                 }
 
                 foreach (var id in ids)
@@ -61,7 +61,7 @@ public sealed partial class CommandProcessor(
 
                 break;
 
-            case WorkerCommandType.RetryEpisode when command.EpisodeId is int episodeId:
+            case WorkerCommandType.RetryEpisode when command.EpisodeId is Guid episodeId:
                 await RetryEpisodeAsync(episodeId, cancellationToken);
                 break;
 
@@ -71,7 +71,7 @@ public sealed partial class CommandProcessor(
     }
 
     /// <summary>Puts an episode back at the start: New if it links a transcript, otherwise AwaitingTranscription.</summary>
-    private async Task RetryEpisodeAsync(int episodeId, CancellationToken cancellationToken)
+    private async Task RetryEpisodeAsync(Guid episodeId, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var episode = await db.Episodes.Include(e => e.Transcript).SingleOrDefaultAsync(e => e.Id == episodeId, cancellationToken)
@@ -91,5 +91,5 @@ public sealed partial class CommandProcessor(
     }
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Command {Type} ({Id}) failed")]
-    private partial void LogCommandFailed(Exception ex, WorkerCommandType type, int id);
+    private partial void LogCommandFailed(Exception ex, WorkerCommandType type, Guid id);
 }

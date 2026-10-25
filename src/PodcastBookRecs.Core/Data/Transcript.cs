@@ -5,8 +5,8 @@ namespace PodcastBookRecs.Core.Data;
 /// <summary>A stored transcript, kept so extraction can be re-run without re-fetching or re-transcribing.</summary>
 public class Transcript
 {
-    public int Id { get; set; }
-    public int EpisodeId { get; set; }
+    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public Guid EpisodeId { get; set; }
     public Episode Episode { get; set; } = null!;
 
     public TranscriptSource Source { get; set; }

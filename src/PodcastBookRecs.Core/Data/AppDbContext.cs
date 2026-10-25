@@ -6,12 +6,16 @@ using PodcastBookRecs.Core.Transcripts;
 
 namespace PodcastBookRecs.Core.Data;
 
-/// <summary>EF Core context shared by the Worker and the UI. Only the Worker applies migrations.</summary>
+/// <summary>
+/// EF Core context shared by the Worker and the UI. Only the Worker applies migrations.
+/// Entity keys are version 7 GUIDs, created in code when an entity is constructed: they start with a timestamp, so
+/// new rows append to the end of each index instead of landing at random positions, and an ID exists before saving.
+/// </summary>
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public DbSet<Podcast> Podcasts => Set<Podcast>();
+    public DbSet<PodcastFeed> PodcastFeeds => Set<PodcastFeed>();
     public DbSet<Episode> Episodes => Set<Episode>();
     public DbSet<Transcript> Transcripts => Set<Transcript>();
     public DbSet<WorkerCommand> WorkerCommands => Set<WorkerCommand>();
@@ -29,15 +33,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<Podcast>(b =>
+        modelBuilder.Entity<PodcastFeed>(b =>
         {
             b.HasIndex(p => p.FeedUrl).IsUnique();
-            b.HasMany(p => p.Episodes).WithOne(e => e.Podcast).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(p => p.Episodes).WithOne(e => e.PodcastFeed).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Episode>(b =>
         {
-            b.HasIndex(e => new { e.PodcastId, e.IdentityKey }).IsUnique();
+            b.HasIndex(e => new { e.PodcastFeedId, e.IdentityKey }).IsUnique();
             b.HasIndex(e => new { e.State, e.NextAttemptAt });
             b.Property(e => e.TranscriptLinks).HasConversion(JsonConverter<List<TranscriptLink>>(), JsonComparer<List<TranscriptLink>>());
             b.HasOne(e => e.Transcript).WithOne(t => t.Episode).HasForeignKey<Transcript>(t => t.EpisodeId).OnDelete(DeleteBehavior.Cascade);

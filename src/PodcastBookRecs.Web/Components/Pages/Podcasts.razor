@@ -87,7 +87,7 @@ else
 }
 
 @code {
-    private sealed record Row(int Id, string FeedUrl, string? Title, string? Author, string? ImageUrl, bool Enabled,
+    private sealed record Row(Guid Id, string FeedUrl, string? Title, string? Author, string? ImageUrl, bool Enabled,
         DateTime? LastPolledAt, string? LastPollError, int Active, int Fetched, int Awaiting, int Skipped)
     {
         public bool Enabled { get; set; } = Enabled;
@@ -105,7 +105,7 @@ else
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
-            _rows = await db.Podcasts
+            _rows = await db.PodcastFeeds
                 .OrderBy(p => p.Title)
                 .Select(p => new Row(p.Id, p.FeedUrl, p.Title, p.Author, p.ImageUrl, p.Enabled, p.LastPolledAt, p.LastPollError,
                     p.Episodes.Count(e => e.State != EpisodeState.Skipped),
@@ -142,17 +142,16 @@ else
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
-            if (await db.Podcasts.AnyAsync(p => p.FeedUrl == url))
+            if (await db.PodcastFeeds.AnyAsync(p => p.FeedUrl == url))
             {
                 Snackbar.Add("That feed is already in the list.", Severity.Info);
                 return;
             }
 
             var now = Time.GetUtcNow().UtcDateTime;
-            var podcast = new Podcast { FeedUrl = url!, AddedAt = now };
-            db.Podcasts.Add(podcast);
-            await db.SaveChangesAsync();
-            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastId = podcast.Id, CreatedAt = now });
+            var podcast = new PodcastFeed { FeedUrl = url!, AddedAt = now };
+            db.PodcastFeeds.Add(podcast);
+            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastFeedId = podcast.Id, CreatedAt = now });
             await db.SaveChangesAsync();
 
             _newFeedUrl = null;
@@ -169,7 +168,7 @@ else
         }
     }
 
-    private Task PollAsync(Row row) => QueueAsync(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastId = row.Id }, "Poll queued.");
+    private Task PollAsync(Row row) => QueueAsync(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastFeedId = row.Id }, "Poll queued.");
 
     private Task PollAllAsync() => QueueAsync(new WorkerCommand { Type = WorkerCommandType.PollAllFeeds }, "Poll of all feeds queued.");
 
@@ -194,7 +193,7 @@ else
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
-            await db.Podcasts.Where(p => p.Id == row.Id).ExecuteUpdateAsync(s => s.SetProperty(p => p.Enabled, enabled));
+            await db.PodcastFeeds.Where(p => p.Id == row.Id).ExecuteUpdateAsync(s => s.SetProperty(p => p.Enabled, enabled));
             row.Enabled = enabled;
         }
         catch (Exception ex)

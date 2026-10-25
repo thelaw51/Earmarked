@@ -1,4 +1,4 @@
-@page "/episodes/{Id:int}"
+@page "/episodes/{Id:guid}"
 @using PodcastBookRecs.Core.Transcripts
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject TimeProvider Time
@@ -72,7 +72,7 @@ else
 
 @code {
     [Parameter]
-    public int Id { get; set; }
+    public Guid Id { get; set; }
 
     private Episode? _episode;
     private List<BreadcrumbItem> _breadcrumbs = [];
@@ -85,7 +85,7 @@ else
         {
             await using var db = await DbFactory.CreateDbContextAsync();
             _episode = await db.Episodes.AsNoTracking()
-                .Include(e => e.Podcast)
+                .Include(e => e.PodcastFeed)
                 .Include(e => e.Transcript)
                 .SingleOrDefaultAsync(e => e.Id == Id);
             if (_episode is not null)
@@ -93,7 +93,7 @@ else
                 _breadcrumbs =
                 [
                     new("Podcasts", ""),
-                    new(_episode.Podcast.Title ?? "Podcast", $"podcasts/{_episode.PodcastId}"),
+                    new(_episode.PodcastFeed.Title ?? "Podcast", $"podcasts/{_episode.PodcastFeedId}"),
                     new("Episode", null, disabled: true),
                 ];
             }

@@ -1,4 +1,4 @@
-@page "/podcasts/{Id:int}"
+@page "/podcasts/{Id:guid}"
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject TimeProvider Time
 @inject ISnackbar Snackbar
@@ -81,11 +81,11 @@ else
 
 @code {
     [Parameter]
-    public int Id { get; set; }
+    public Guid Id { get; set; }
 
-    private sealed record EpisodeRow(int Id, string Title, DateTime? PublishedAt, TimeSpan? Duration, EpisodeState State, string? LastError);
+    private sealed record EpisodeRow(Guid Id, string Title, DateTime? PublishedAt, TimeSpan? Duration, EpisodeState State, string? LastError);
 
-    private Podcast? _podcast;
+    private PodcastFeed? _podcast;
     private List<EpisodeRow> _episodes = [];
     private bool _loading = true;
     private bool _showSkipped;
@@ -102,9 +102,9 @@ else
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
-            _podcast = await db.Podcasts.AsNoTracking().SingleOrDefaultAsync(p => p.Id == Id);
+            _podcast = await db.PodcastFeeds.AsNoTracking().SingleOrDefaultAsync(p => p.Id == Id);
             _episodes = await db.Episodes.AsNoTracking()
-                .Where(e => e.PodcastId == Id)
+                .Where(e => e.PodcastFeedId == Id)
                 .OrderByDescending(e => e.PublishedAt)
                 .Select(e => new EpisodeRow(e.Id, e.Title, e.PublishedAt, e.Duration, e.State, e.LastError))
                 .ToListAsync();
@@ -125,7 +125,7 @@ else
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
-            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastId = Id, CreatedAt = Time.GetUtcNow().UtcDateTime });
+            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastFeedId = Id, CreatedAt = Time.GetUtcNow().UtcDateTime });
             await db.SaveChangesAsync();
             Snackbar.Add("Poll queued.", Severity.Info);
         }
