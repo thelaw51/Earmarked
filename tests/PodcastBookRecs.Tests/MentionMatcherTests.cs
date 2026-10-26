@@ -94,6 +94,19 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_generic_reference_is_no_match_without_asking_the_catalogue()
+    {
+        _catalog.Answer("The Book", Almanac with { Title = "The Book" });
+        await AddMentionAsync(0, "The Book", null);
+
+        await RunUntilIdleAsync();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(MatchState.NoMatch, (await db.BookMentions.SingleAsync(Ct)).MatchState);
+        Assert.Equal(0, _catalog.Calls);
+    }
+
+    [Fact]
     public async Task Searches_by_title_alone_when_the_author_search_finds_nothing()
     {
         _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac, onlyWithoutAuthor: true);

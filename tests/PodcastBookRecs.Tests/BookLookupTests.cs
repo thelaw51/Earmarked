@@ -81,6 +81,33 @@ public class BookLookupTests
     public void Suffixes_alone_dont_make_two_authors_share_a_lookup() =>
         Assert.NotEqual(CatalogMatcher.LookupKey("Small Rivers", "Ines Calder Jr."), CatalogMatcher.LookupKey("Small Rivers", "Tomas Reyne Jr."));
 
+    [Theory]
+    [InlineData("The Book")]
+    [InlineData("the book")]
+    [InlineData("My New Book")]
+    [InlineData("his second novel")]
+    [InlineData("Her memoir")]
+    public void A_generic_reference_with_no_author_is_not_a_title(string title)
+    {
+        Assert.True(CatalogMatcher.IsTooVague(title, null));
+        Assert.Null(CatalogMatcher.Pick(title, null, [Book(title, "Hungry Minds", editions: 50)]));
+    }
+
+    [Fact]
+    public void A_generic_title_still_matches_when_the_author_confirms_it()
+    {
+        Assert.False(CatalogMatcher.IsTooVague("The Book", "Alan Watts"));
+        Assert.NotNull(CatalogMatcher.Pick("The Book", "Alan Watts", [Book("The Book", "Alan Watts", editions: 30)]));
+        Assert.Null(CatalogMatcher.Pick("The Book", "Alan Watts", [Book("The Book", "Hungry Minds", editions: 30)]));
+    }
+
+    [Theory]
+    [InlineData("The Second Book of Tides")]
+    [InlineData("Small Rivers")]
+    [InlineData("Novel")]
+    public void A_title_with_any_specific_word_is_not_generic(string title) =>
+        Assert.Equal(title == "Novel", CatalogMatcher.IsTooVague(title, null));
+
     [Fact]
     public void Skips_summaries_and_prefers_the_work_with_most_editions()
     {

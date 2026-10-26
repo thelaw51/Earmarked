@@ -8,18 +8,28 @@ namespace PodcastBookRecs.Core.BookLookup;
 /// it still returns something. So a candidate must have the same title, ignoring case, punctuation, a leading article
 /// and any subtitle, and, when the model named an author, an author with the same surname (one letter out is allowed,
 /// for "Elliot" against "Eliot"). With no author to confirm it, a one-edition book is too likely to be a coincidence
-/// ("my second book" is a real title), so it needs at least <see cref="MinEditionsWithoutAuthor"/> editions.
+/// ("my second book" is a real title), so it needs at least <see cref="MinEditionsWithoutAuthor"/> editions, and a
+/// title made only of generic words ("the book", "his new memoir") isn't looked up at all: see <see cref="IsTooVague"/>.
 /// </summary>
 public static class CatalogMatcher
 {
     /// <summary>Stored on every match. Bump it when these rules change, and every mention is matched again.</summary>
-    public const string Version = "match-v1";
+    public const string Version = "match-v2";
 
     public const int MinEditionsWithoutAuthor = 2;
 
-    // Words in a title or author name that mark a derivative work: a summary or study aid, not the book itself.
     private static readonly HashSet<string> NameSuffixes = new(StringComparer.Ordinal) { "jr", "sr", "ii", "iii", "iv", "phd", "md" };
 
+    // Words that describe a book without naming one. A title made only of these is a reference, not a title.
+    private static readonly HashSet<string> GenericTitleWords = new(StringComparer.Ordinal)
+    {
+        "the", "a", "an", "my", "his", "her", "their", "your", "our", "its", "this", "that", "these", "those",
+        "new", "latest", "first", "second", "third", "next", "last", "previous", "other", "own", "whole", "upcoming", "forthcoming",
+        "book", "books", "novel", "novels", "memoir", "memoirs", "biography", "autobiography", "story", "stories", "essay", "essays",
+        "collection", "series", "sequel", "trilogy", "volume", "manuscript", "work", "piece", "text", "title", "chapter",
+    };
+
+    // Words in a title or author name that mark a derivative work: a summary or study aid, not the book itself.
     private static readonly string[] DerivativeMarkers = ["summary", "study guide", "workbook", "sparknotes", "cliffsnotes", "analysis of"];
 
     /// <summary>
@@ -36,7 +46,7 @@ public static class CatalogMatcher
     public static CatalogBook? Pick(string title, string? author, IReadOnlyList<CatalogBook> candidates)
     {
         var wanted = TitleKeys(title, null);
-        if (wanted.Count == 0)
+        if (wanted.Count == 0 || IsTooVague(title, author))
         {
             return null;
         }
@@ -51,6 +61,17 @@ public static class CatalogMatcher
             .ThenByDescending(c => c.EditionCount)
             .FirstOrDefault();
     }
+
+    /// <summary>
+    /// True for a title made only of generic words with no author to pin it down: the model has turned "the book" or
+    /// "my new memoir" into a title. Catalogues do have books called "The Book", so with an author the title is still
+    /// looked up and the surname decides.
+    /// </summary>
+    public static bool IsTooVague(string title, string? author) =>
+        Surname(author).Length == 0
+        && title.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Select(QuoteLocator.Normalise).Where(w => w.Length > 0) is var words
+        && words.Any()
+        && words.All(GenericTitleWords.Contains);
 
     /// <summary>The full title, the title before any subtitle, and (for a candidate) title plus subtitle, all as keys.</summary>
     private static HashSet<string> TitleKeys(string title, string? subtitle)
