@@ -14,9 +14,12 @@
    MudBlazor inputs need a circuit, so the fields are plain inputs styled in app.css. *@
 <PageTitle>Sign in</PageTitle>
 
+<MudText Typo="Typo.h5" Class="mb-1">Welcome back</MudText>
+<MudText Typo="Typo.body2" Class="account-tagline mb-2">Sign in to see what your podcasts have been reading.</MudText>
+
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true" Class="my-3">@_error</MudAlert>
 }
 
 <EditForm Model="Input" method="post" OnValidSubmit="SignInAsync" FormName="login" class="account-form">
@@ -33,7 +36,7 @@
         <InputCheckbox @bind-Value="Input.RememberMe" /> Keep me signed in
     </label>
 
-    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-2">Sign in</MudButton>
+    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" DropShadow="false" Class="mt-5">Sign in</MudButton>
 </EditForm>
 
 @code {

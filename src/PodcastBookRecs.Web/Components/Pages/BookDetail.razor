@@ -5,59 +5,84 @@
 
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error">Couldn't load this book: @_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Couldn't load this book: @_error</MudAlert>
 }
 else if (_loading)
 {
-    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+    <LoadingState Layout="LoadingState.LoadingLayout.Detail" Count="4" />
 }
 else if (_book is null)
 {
-    <MudAlert Severity="Severity.Warning">Book @Id doesn't exist.</MudAlert>
+    <EmptyState Title="Book not found" Icon="@Icons.Material.Rounded.SearchOff">Book @Id doesn't exist.</EmptyState>
 }
 else
 {
-    <MudBreadcrumbs Items="_breadcrumbs" Class="px-0" />
-    <MudStack Row="true" Spacing="4" Class="mb-4">
-        @if (Display.HttpsOrNull(_book.CoverUrl) is { } cover)
+    var cover = Display.HttpsOrNull(_book.CoverUrl);
+    <div class="crumbs"><MudBreadcrumbs Items="_breadcrumbs" /></div>
+    <section class="hero">
+        @if (cover is not null)
         {
-            <img src="@cover" alt="" referrerpolicy="no-referrer" style="height: 160px; width: auto;" />
+            <img src="@cover" alt="" class="hero-backdrop" referrerpolicy="no-referrer" />
         }
-        <MudStack Spacing="1">
-            <MudText Typo="Typo.h4">@_book.Title</MudText>
-            @if (_book.Authors.Length > 0)
+        <div class="hero-body">
+            @if (cover is not null)
             {
-                <MudText Typo="Typo.subtitle1">@_book.Authors</MudText>
+                <img src="@cover" alt="" referrerpolicy="no-referrer" class="book-cover book-cover-lg" />
             }
-            @if (_book.FirstPublishYear is { } year)
+            else
             {
-                <MudText Typo="Typo.body2">First published @year</MudText>
+                <span class="book-cover book-cover-lg book-cover-blank"><MudIcon Icon="@Icons.Material.Rounded.AutoStories" Size="Size.Large" /></span>
             }
-            @if (Display.HttpsOrNull(_book.InfoUrl) is { } info)
-            {
-                <MudLink Href="@info" Target="_blank" rel="noopener noreferrer" Typo="Typo.body2">View on @_book.Provider</MudLink>
-            }
-        </MudStack>
-    </MudStack>
+            <div class="hero-text">
+                <MudText Typo="Typo.overline" Color="Color.Primary">Book</MudText>
+                <MudText Typo="Typo.h4">@_book.Title</MudText>
+                @if (_book.Authors.Length > 0)
+                {
+                    <MudText Typo="Typo.subtitle1" Class="muted mt-1">@_book.Authors</MudText>
+                }
+                <div class="hero-meta">
+                    @if (_book.FirstPublishYear is { } year)
+                    {
+                        <span><MudIcon Icon="@Icons.Material.Rounded.CalendarMonth" Size="Size.Small" /> First published @year</span>
+                    }
+                    <span><MudIcon Icon="@Icons.Material.Rounded.Podcasts" Size="Size.Small" /> @_mentions.Select(m => m.Episode.PodcastFeedId).Distinct().Count() podcast(s)</span>
+                </div>
+                @if (Display.HttpsOrNull(_book.InfoUrl) is { } info)
+                {
+                    <MudButton Href="@info" Target="_blank" rel="noopener noreferrer" Variant="Variant.Outlined" Color="Color.Primary"
+                               EndIcon="@Icons.Material.Rounded.OpenInNew" Size="Size.Small" Class="mt-4">View on @_book.Provider</MudButton>
+                }
+            </div>
+        </div>
+    </section>
 
-    <MudText Typo="Typo.h6" Class="mb-2">Mentioned in @_mentions.Select(m => m.EpisodeId).Distinct().Count() episode(s)</MudText>
-    <MudSimpleTable Dense="true" Hover="true" Elevation="1">
-        <tbody>
-            @foreach (var mention in _mentions)
-            {
-                <tr>
-                    <td style="width: 30%;">
-                        <MudLink Href="@($"episodes/{mention.EpisodeId}")" Typo="Typo.body2">@mention.Episode.Title</MudLink>
-                        <MudText Typo="Typo.caption" Class="d-block">
-                            @(mention.Episode.PodcastFeed.Title ?? "Podcast") · @Display.LocalDate(mention.Episode.PublishedAt)@(mention.StartTime is null ? "" : $" · at {Display.Timestamp(mention.StartTime)}")
-                        </MudText>
-                    </td>
-                    <td style="white-space: nowrap; width: 1%;"><MudChip T="string" Size="Size.Small" Color="Display.KindColor(mention.Kind)">@Display.KindLabel(mention.Kind)</MudChip></td>
-                    <td><MudText Typo="Typo.body2">"@mention.Quote"</MudText></td>
-                </tr>
-            }
-        </tbody>
-    </MudSimpleTable>
+    <div class="section-title">
+        <MudText Typo="Typo.h6">Mentioned in</MudText>
+        <span class="count-badge">@_mentions.Select(m => m.EpisodeId).Distinct().Count() episode(s)</span>
+    </div>
+    <div class="surface-card stagger">
+        @foreach (var mention in _mentions)
+        {
+            <div class="mention" @key="mention.Id">
+                <MudChip T="string" Size="Size.Small" Color="Display.KindColor(mention.Kind)" Variant="Variant.Text" Class="state-chip ma-0">@Display.KindLabel(mention.Kind)</MudChip>
+                <div style="min-width: 0;">
+                    <a href="@($"episodes/{mention.EpisodeId}")" class="card-title-link"><MudText Typo="Typo.subtitle2">@mention.Episode.Title</MudText></a>
+                    <MudText Typo="Typo.caption" Class="muted d-block">
+                        @(mention.Episode.PodcastFeed.Title ?? "Podcast") · @Display.LocalDate(mention.Episode.PublishedAt)
+                    </MudText>
+                </div>
+                @if (mention.StartTime is not null)
+                {
+                    <span class="timestamp">@Display.Timestamp(mention.StartTime)</span>
+                }
+                else
+                {
+                    <span></span>
+                }
+                <blockquote class="quote mention-quote"><MudText Typo="Typo.body2">"@mention.Quote"</MudText></blockquote>
+            </div>
+        }
+    </div>
 }
 
 @code {

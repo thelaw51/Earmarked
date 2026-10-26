@@ -6,8 +6,8 @@
 
 <PageTitle>Error</PageTitle>
 
-<MudText Typo="Typo.h4" Color="Color.Error" Class="mb-2">Something went wrong</MudText>
-<MudText Typo="Typo.body1">The error has been logged. Check the container logs in Portainer for details.</MudText>
+<MudText Typo="Typo.h5" Color="Color.Error" Class="mb-2">Something went wrong</MudText>
+<MudText Typo="Typo.body2" Class="account-tagline">The error has been logged. Check the container logs in Portainer for details.</MudText>
 @if (!string.IsNullOrEmpty(_requestId))
 {
     <MudText Typo="Typo.body2" Class="mt-2">Request ID: <code>@_requestId</code></MudText>

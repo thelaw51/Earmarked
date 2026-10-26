@@ -7,74 +7,107 @@
 
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error">Couldn't load this podcast: @_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Couldn't load this podcast: @_error</MudAlert>
 }
 else if (_loading)
 {
-    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+    <LoadingState Layout="LoadingState.LoadingLayout.Detail" Count="8" />
 }
 else if (_podcast is null)
 {
-    <MudAlert Severity="Severity.Warning">Podcast @Id doesn't exist.</MudAlert>
+    <EmptyState Title="Podcast not found" Icon="@Icons.Material.Rounded.SearchOff">Podcast @Id doesn't exist.</EmptyState>
 }
 else
 {
-    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4" Spacing="3">
+    <div class="crumbs"><MudBreadcrumbs Items="_breadcrumbs" /></div>
+    <section class="hero">
         @if (_podcast.ImageUrl is not null)
         {
-            <MudImage Src="@_podcast.ImageUrl" Alt="" Width="96" Height="96" ObjectFit="ObjectFit.Cover" Class="rounded" />
+            <img src="@_podcast.ImageUrl" alt="" class="hero-backdrop" referrerpolicy="no-referrer" />
         }
-        <MudStack Spacing="0">
-            <MudText Typo="Typo.h4">@(_podcast.Title ?? FeedUrlRedactor.Redact(_podcast.FeedUrl))</MudText>
-            @if (_podcast.Author is not null)
-            {
-                <MudText Typo="Typo.subtitle1">@_podcast.Author</MudText>
-            }
-            <MudText Typo="Typo.caption">
-                Feed @FeedUrlRedactor.Redact(_podcast.FeedUrl) · last polled @Display.LocalTime(_podcast.LastPolledAt)
-            </MudText>
-        </MudStack>
-        <MudSpacer />
-        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Sync" OnClick="PollAsync">Poll now</MudButton>
-        <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
-    </MudStack>
+        <div class="hero-body">
+            <span class="artwork artwork-lg">
+                @if (_podcast.ImageUrl is not null)
+                {
+                    <img src="@_podcast.ImageUrl" alt="" referrerpolicy="no-referrer" />
+                }
+                else
+                {
+                    <MudIcon Icon="@Icons.Material.Rounded.Podcasts" Size="Size.Large" />
+                }
+            </span>
+            <div class="hero-text">
+                <MudText Typo="Typo.overline" Color="Color.Primary">Podcast</MudText>
+                <MudText Typo="Typo.h4">@(_podcast.Title ?? FeedUrlRedactor.Redact(_podcast.FeedUrl))</MudText>
+                @if (_podcast.Author is not null)
+                {
+                    <MudText Typo="Typo.subtitle1" Class="muted mt-1">@_podcast.Author</MudText>
+                }
+                <div class="hero-meta">
+                    <span><MudIcon Icon="@Icons.Material.Rounded.RssFeed" Size="Size.Small" /> @FeedUrlRedactor.Redact(_podcast.FeedUrl)</span>
+                    <span><MudIcon Icon="@Icons.Material.Rounded.Schedule" Size="Size.Small" /> Polled @Display.LocalTime(_podcast.LastPolledAt)</span>
+                    <span><MudIcon Icon="@Icons.Material.Rounded.Headphones" Size="Size.Small" /> @(_episodes.Count - SkippedCount) episode(s)</span>
+                </div>
+            </div>
+            <div class="hero-actions">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Sync" OnClick="PollAsync" DropShadow="false">Poll now</MudButton>
+                <MudTooltip Text="Refresh">
+                    <MudIconButton Icon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
+                </MudTooltip>
+            </div>
+        </div>
+    </section>
 
     @if (_podcast.LastPollError is not null)
     {
-        <MudAlert Severity="Severity.Error" Class="mb-4">Last poll failed: @_podcast.LastPollError</MudAlert>
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-4">Last poll failed: @_podcast.LastPollError</MudAlert>
     }
 
-    <MudSwitch T="bool" @bind-Value="_showSkipped" Label="@($"Show {SkippedCount} episodes skipped by the backfill window")" Color="Color.Primary" Class="mb-2" />
+    <div class="section-title">
+        <MudText Typo="Typo.h6">Episodes</MudText>
+        <span class="count-badge">@VisibleEpisodes.Count</span>
+        <MudSpacer />
+        @if (SkippedCount > 0)
+        {
+            <MudSwitch T="bool" @bind-Value="_showSkipped" Label="@($"Show {SkippedCount} skipped by the backfill window")" Color="Color.Primary" Size="Size.Small" />
+        }
+    </div>
 
     @if (VisibleEpisodes.Count == 0)
     {
-        <MudAlert Severity="Severity.Info">
-            @(_podcast.FirstPolledAt is null ? "This feed hasn't been polled yet." : "No episodes to show.")
-        </MudAlert>
+        <EmptyState Title="No episodes to show" Icon="@Icons.Material.Rounded.Headphones">
+            @(_podcast.FirstPolledAt is null ? "This feed hasn't been polled yet. Poll it now, or wait for the next scheduled poll." : "Every episode is outside the backfill window. Show skipped episodes to include one.")
+        </EmptyState>
     }
     else
     {
-        <MudTable Items="VisibleEpisodes" Hover="true" Dense="true" Elevation="1">
+        <MudTable Items="VisibleEpisodes" Hover="true" Elevation="0" Class="surface-card" RowsPerPage="50" Breakpoint="Breakpoint.Sm">
             <HeaderContent>
-                <MudTh>Published</MudTh>
                 <MudTh>Episode</MudTh>
-                <MudTh>Length</MudTh>
-                <MudTh>State</MudTh>
+                <MudTh Style="width: 9rem;">Published</MudTh>
+                <MudTh Style="width: 6rem;">Length</MudTh>
+                <MudTh Style="width: 14rem;">State</MudTh>
             </HeaderContent>
             <RowTemplate>
-                <MudTd>@Display.LocalDate(context.PublishedAt)</MudTd>
-                <MudTd><MudLink Href="@($"episodes/{context.Id}")">@context.Title</MudLink></MudTd>
-                <MudTd>@Display.Timestamp(context.Duration)</MudTd>
-                <MudTd>
+                <MudTd DataLabel="Episode"><a href="@($"episodes/{context.Id}")" class="card-title-link"><MudText Typo="Typo.body2" Style="font-weight: 550;">@context.Title</MudText></a></MudTd>
+                <MudTd DataLabel="Published"><MudText Typo="Typo.body2" Class="muted">@Display.LocalDate(context.PublishedAt)</MudText></MudTd>
+                <MudTd DataLabel="Length"><MudText Typo="Typo.body2" Class="muted">@Display.Timestamp(context.Duration)</MudText></MudTd>
+                <MudTd DataLabel="State">
                     <EpisodeStateChip State="context.State" />
                     @if (context.LastError is not null)
                     {
                         <MudTooltip Text="@context.LastError">
-                            <MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Small" Color="Color.Warning" />
+                            <MudIcon Icon="@Icons.Material.Rounded.Info" Size="Size.Small" Color="Color.Warning" Style="vertical-align: middle;" />
                         </MudTooltip>
                     }
                 </MudTd>
             </RowTemplate>
+            <PagerContent>
+                @if (VisibleEpisodes.Count > 50)
+                {
+                    <MudTablePager PageSizeOptions="@(new[] { 50, 100, 250 })" />
+                }
+            </PagerContent>
         </MudTable>
     }
 }
@@ -87,6 +120,7 @@ else
 
     private PodcastFeed? _podcast;
     private List<EpisodeRow> _episodes = [];
+    private List<BreadcrumbItem> _breadcrumbs = [];
     private bool _loading = true;
     private bool _showSkipped;
     private string? _error;
@@ -108,6 +142,7 @@ else
                 .OrderByDescending(e => e.PublishedAt)
                 .Select(e => new EpisodeRow(e.Id, e.Title, e.PublishedAt, e.Duration, e.State, e.LastError))
                 .ToListAsync();
+            _breadcrumbs = [new("Podcasts", ""), new(_podcast?.Title ?? "Podcast", null, disabled: true)];
             _error = null;
         }
         catch (Exception ex)

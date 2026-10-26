@@ -10,142 +10,177 @@
 
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error">Couldn't load this episode: @_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Couldn't load this episode: @_error</MudAlert>
 }
 else if (_loading)
 {
-    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+    <LoadingState Layout="LoadingState.LoadingLayout.Detail" Count="8" />
 }
 else if (_episode is null)
 {
-    <MudAlert Severity="Severity.Warning">Episode @Id doesn't exist.</MudAlert>
+    <EmptyState Title="Episode not found" Icon="@Icons.Material.Rounded.SearchOff">Episode @Id doesn't exist.</EmptyState>
 }
 else
 {
-    <MudBreadcrumbs Items="_breadcrumbs" Class="px-0" />
-    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
-        <MudText Typo="Typo.h4">@_episode.Title</MudText>
-        <MudSpacer />
-        @if (_episode.State is EpisodeState.Skipped)
+    <div class="crumbs"><MudBreadcrumbs Items="_breadcrumbs" /></div>
+    <section class="hero">
+        @if (_episode.PodcastFeed.ImageUrl is not null)
         {
-            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AddCircleOutline"
-                       OnClick="@(() => QueueAsync(WorkerCommandType.IncludeEpisode, "Episode included. It joins the queue in its normal place."))">Include</MudButton>
+            <img src="@_episode.PodcastFeed.ImageUrl" alt="" class="hero-backdrop" referrerpolicy="no-referrer" />
         }
-        @if (_episode.PrioritisedAt is null && (_episode.State is EpisodeState.Skipped || CommandProcessor.QueuedStates.Contains(_episode.State)))
-        {
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.KeyboardDoubleArrowUp"
-                       OnClick="@(() => QueueAsync(WorkerCommandType.PrioritiseEpisode, "Moved to the front of the queue. Anything already running finishes first."))">Do this next</MudButton>
-        }
-        @if (_episode.State is EpisodeState.Extracted or EpisodeState.ExtractionFailed)
-        {
-            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.MenuBook" OnClick="ReextractAsync">Re-run book extraction</MudButton>
-        }
-        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Replay" OnClick="RetryAsync">Reset and retry</MudButton>
-    </MudStack>
-
-    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-4">
-        <EpisodeStateChip State="_episode.State" />
-        @if (_episode.PrioritisedAt is not null)
-        {
-            <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.KeyboardDoubleArrowUp">Prioritised</MudChip>
-        }
-        <MudText Typo="Typo.body2">Published @Display.LocalTime(_episode.PublishedAt)</MudText>
-        @if (_episode.Duration is not null)
-        {
-            <MudText Typo="Typo.body2">· @Display.Timestamp(_episode.Duration)</MudText>
-        }
-        <MudText Typo="Typo.body2">· @_episode.TranscriptLinks.Count published transcript link(s)</MudText>
-    </MudStack>
+        <div class="hero-body">
+            <div class="hero-text">
+                <MudText Typo="Typo.overline" Color="Color.Primary">@(_episode.PodcastFeed.Title ?? "Episode")</MudText>
+                <MudText Typo="Typo.h4">@_episode.Title</MudText>
+                <div class="hero-meta">
+                    <EpisodeStateChip State="_episode.State" />
+                    @if (_episode.PrioritisedAt is not null)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Text" Icon="@Icons.Material.Rounded.KeyboardDoubleArrowUp" Class="state-chip ma-0">Prioritised</MudChip>
+                    }
+                    <span><MudIcon Icon="@Icons.Material.Rounded.CalendarMonth" Size="Size.Small" /> @Display.LocalTime(_episode.PublishedAt)</span>
+                    @if (_episode.Duration is not null)
+                    {
+                        <span><MudIcon Icon="@Icons.Material.Rounded.Timer" Size="Size.Small" /> @Display.Timestamp(_episode.Duration)</span>
+                    }
+                    <span><MudIcon Icon="@Icons.Material.Rounded.Subtitles" Size="Size.Small" /> @_episode.TranscriptLinks.Count published transcript link(s)</span>
+                </div>
+                <PipelineSteps State="_episode.State" />
+            </div>
+            <div class="hero-actions">
+                @if (_episode.PrioritisedAt is null && (_episode.State is EpisodeState.Skipped || CommandProcessor.QueuedStates.Contains(_episode.State)))
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.KeyboardDoubleArrowUp" DropShadow="false"
+                               OnClick="@(() => QueueAsync(WorkerCommandType.PrioritiseEpisode, "Moved to the front of the queue. Anything already running finishes first."))">Do this next</MudButton>
+                }
+                @if (_episode.State is EpisodeState.Skipped)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.AddCircleOutline"
+                               OnClick="@(() => QueueAsync(WorkerCommandType.IncludeEpisode, "Episode included. It joins the queue in its normal place."))">Include</MudButton>
+                }
+                @if (_episode.State is EpisodeState.Extracted or EpisodeState.ExtractionFailed)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.MenuBook" OnClick="ReextractAsync">Re-run book extraction</MudButton>
+                }
+                <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Rounded.Replay" OnClick="RetryAsync">Reset and retry</MudButton>
+            </div>
+        </div>
+    </section>
 
     @if (_episode.LastError is not null)
     {
-        <MudAlert Severity="Severity.Warning" Class="mb-4">@_episode.LastError</MudAlert>
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4">@_episode.LastError</MudAlert>
     }
 
     @if (_episode.Transcript is null)
     {
-        <MudAlert Severity="Severity.Info">
+        <EmptyState Title="No transcript yet" Icon="@(Display.IsBusy(_episode.State) ? Icons.Material.Rounded.GraphicEq : Icons.Material.Rounded.HourglassEmpty)">
             @(_episode.State switch
             {
                 EpisodeState.AwaitingTranscription => "No published transcript. It's queued for transcription.",
                 EpisodeState.Transcribing => "Transcribing now. Finished parts are kept, so it resumes after a restart.",
                 EpisodeState.Failed => "Transcription gave up. Use Reset and retry to start again.",
                 EpisodeState.Skipped => "Skipped: it was older than the backfill window when the podcast was added. Include it to process it.",
-                _ => "No transcript yet.",
+                _ => "It's queued to fetch the published transcript.",
             })
-        </MudAlert>
+        </EmptyState>
     }
     else
     {
-        <MudText Typo="Typo.h6" Class="mb-2">Books mentioned</MudText>
+        <div class="section-title">
+            <MudText Typo="Typo.h6">Books mentioned</MudText>
+            @if (_episode.State is EpisodeState.Extracted)
+            {
+                <span class="count-badge">@_episode.Mentions.Count</span>
+            }
+        </div>
         @if (_episode.State is EpisodeState.Extracted)
         {
             @if (_episode.Mentions.Count == 0)
             {
-                <MudText Typo="Typo.body2" Class="mb-4">No books found in this episode.</MudText>
+                <EmptyState Title="No books found" Icon="@Icons.Material.Rounded.MenuBook">Nobody named a book in this episode.</EmptyState>
             }
             else
             {
-                <MudSimpleTable Dense="true" Hover="true" Elevation="1" Class="mb-6">
-                    <tbody>
-                        @foreach (var mention in _episode.Mentions.OrderBy(m => m.StartTime))
-                        {
-                            <tr>
-                                <td style="white-space: nowrap; width: 1%;"><MudText Typo="Typo.caption">@Display.Timestamp(mention.StartTime)</MudText></td>
-                                <td>
-                                    @if (mention.Book is not null)
+                <div class="surface-card stagger">
+                    @foreach (var mention in _episode.Mentions.OrderBy(m => m.StartTime))
+                    {
+                        <div class="mention" @key="mention.Id">
+                            @if (Display.HttpsOrNull(mention.Book?.CoverUrl) is { } cover)
+                            {
+                                <img src="@cover" alt="" loading="lazy" referrerpolicy="no-referrer" class="mention-cover" />
+                            }
+                            else
+                            {
+                                <span class="mention-cover-blank"><MudIcon Icon="@Icons.Material.Rounded.AutoStories" Size="Size.Small" /></span>
+                            }
+                            <div style="min-width: 0;">
+                                @if (mention.Book is not null)
+                                {
+                                    <a href="@($"books/{mention.Book.Id}")" class="card-title-link"><MudText Typo="Typo.subtitle2">@mention.Book.Title</MudText></a>
+                                    <MudText Typo="Typo.caption" Class="muted d-block">@mention.Book.Authors</MudText>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.subtitle2">@mention.Title</MudText>
+                                    @if (mention.Author is not null)
                                     {
-                                        <MudLink Href="@($"books/{mention.Book.Id}")" Typo="Typo.subtitle2">@mention.Book.Title</MudLink>
-                                        <MudText Typo="Typo.caption" Class="d-block">@mention.Book.Authors</MudText>
+                                        <MudText Typo="Typo.caption" Class="muted d-block">@mention.Author</MudText>
                                     }
-                                    else
-                                    {
-                                        <MudText Typo="Typo.subtitle2">@mention.Title</MudText>
-                                        @if (mention.Author is not null)
-                                        {
-                                            <MudText Typo="Typo.caption" Class="d-block">@mention.Author</MudText>
-                                        }
-                                        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">@Display.MatchNote(mention.MatchState, _lookupOn)</MudText>
-                                    }
-                                </td>
-                                <td style="white-space: nowrap; width: 1%;"><MudChip T="string" Size="Size.Small" Color="Display.KindColor(mention.Kind)">@Display.KindLabel(mention.Kind)</MudChip></td>
-                                <td><MudText Typo="Typo.body2">"@mention.Quote"</MudText></td>
-                            </tr>
-                        }
-                    </tbody>
-                </MudSimpleTable>
-                <MudText Typo="Typo.caption" Class="d-block mb-6">
+                                    <MudText Typo="Typo.caption" Class="muted d-block" Style="font-style: italic;">@Display.MatchNote(mention.MatchState, _lookupOn)</MudText>
+                                }
+                            </div>
+                            <div class="mention-meta d-flex flex-column align-end gap-1">
+                                <MudChip T="string" Size="Size.Small" Color="Display.KindColor(mention.Kind)" Variant="Variant.Text" Class="state-chip ma-0">@Display.KindLabel(mention.Kind)</MudChip>
+                                @if (mention.StartTime is not null)
+                                {
+                                    <span class="timestamp">@Display.Timestamp(mention.StartTime)</span>
+                                }
+                            </div>
+                            <blockquote class="quote mention-quote"><MudText Typo="Typo.body2">"@mention.Quote"</MudText></blockquote>
+                        </div>
+                    }
+                </div>
+                <MudText Typo="Typo.caption" Class="muted d-block mt-2">
                     Found by @_episode.Mentions[0].Provider · @_episode.Mentions[0].Model, prompt @_episode.Mentions[0].PromptVersion
                 </MudText>
             }
         }
         else
         {
-            <MudText Typo="Typo.body2" Class="mb-4">
-                @(_episode.State switch
-                {
-                    EpisodeState.Extracting => "Searching the transcript for books now.",
-                    EpisodeState.ExtractionFailed => "Book extraction gave up. Use Re-run book extraction to try again.",
-                    _ => "Queued for book extraction.",
-                })
-            </MudText>
+            <div class="notice">
+                <MudIcon Icon="@(_episode.State is EpisodeState.ExtractionFailed ? Icons.Material.Rounded.ErrorOutline : Icons.Material.Rounded.ManageSearch)" Size="Size.Small" />
+                <MudText Typo="Typo.body2">
+                    @(_episode.State switch
+                    {
+                        EpisodeState.Extracting => "Searching the transcript for books now.",
+                        EpisodeState.ExtractionFailed => "Book extraction gave up. Use Re-run book extraction to try again.",
+                        _ => "Queued for book extraction.",
+                    })
+                </MudText>
+            </div>
         }
 
-        <MudText Typo="Typo.h6" Class="mb-2">
-            Transcript · @Display.TranscriptOrigin(_episode.Transcript), @_episode.Transcript.Segments.Count segments
-        </MudText>
-        <MudSimpleTable Dense="true" Hover="true" Elevation="1">
-            <tbody>
-                @foreach (var segment in _episode.Transcript.Segments)
-                {
-                    <tr>
-                        <td style="white-space: nowrap; width: 1%;"><MudText Typo="Typo.caption">@Display.Timestamp(segment.Start)</MudText></td>
-                        <td style="white-space: nowrap; width: 1%;"><MudText Typo="Typo.caption">@segment.Speaker</MudText></td>
-                        <td><MudText Typo="Typo.body2">@segment.Text</MudText></td>
-                    </tr>
-                }
-            </tbody>
-        </MudSimpleTable>
+        <div class="section-title">
+            <MudText Typo="Typo.h6">Transcript</MudText>
+            <span class="count-badge">@_episode.Transcript.Segments.Count segments</span>
+            <MudText Typo="Typo.caption" Class="muted">@Display.TranscriptOrigin(_episode.Transcript)</MudText>
+        </div>
+        @* The speaker column only appears when the transcript names speakers. *@
+        var hasSpeakers = _episode.Transcript.Segments.Any(s => !string.IsNullOrEmpty(s.Speaker));
+        <div class="surface-card transcript @(hasSpeakers ? "" : "transcript-no-speakers")">
+            @foreach (var segment in _episode.Transcript.Segments)
+            {
+                <div class="transcript-row">
+                    <span><span class="timestamp">@Display.Timestamp(segment.Start)</span></span>
+                    @if (hasSpeakers)
+                    {
+                        <span class="transcript-speaker">@segment.Speaker</span>
+                    }
+                    <MudText Typo="Typo.body2">@segment.Text</MudText>
+                </div>
+            }
+        </div>
     }
 }
 

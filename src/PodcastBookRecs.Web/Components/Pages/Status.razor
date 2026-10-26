@@ -5,79 +5,116 @@
 
 <PageTitle>Status</PageTitle>
 
-<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
-    <MudText Typo="Typo.h4">Status</MudText>
-    <MudSpacer />
-    <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
-</MudStack>
+<PageHeader Eyebrow="System" Title="Status" Subtitle="Whether the Worker and its backends are up, and where every episode is in the pipeline.">
+    <Actions>
+        <MudTooltip Text="Refresh">
+            <MudIconButton Icon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
+        </MudTooltip>
+    </Actions>
+</PageHeader>
 
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error">Couldn't load status: @_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Couldn't load status: @_error</MudAlert>
 }
 else if (_loading)
 {
-    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+    <LoadingState Layout="LoadingState.LoadingLayout.Cards" Count="3" />
 }
 else
 {
-    <MudGrid>
-        <MudItem xs="12" md="6">
-            <MudPaper Class="pa-4" Elevation="1">
-                <MudText Typo="Typo.h6" Class="mb-2">Worker</MudText>
+    var now = Time.GetUtcNow().UtcDateTime;
+    var workerStale = _worker is not null && now - _worker.UpdatedAt > WorkerStatusNames.StaleAfter;
+    <MudGrid Spacing="3" Class="stagger">
+        <MudItem xs="12" md="5">
+            <div class="surface-card status-card">
+                <div class="status-hero">
+                    <span class="status-light @(_worker is null ? "status-light-warn" : workerStale ? "status-light-bad" : "status-light-ok")"></span>
+                    <div>
+                        <MudText Typo="Typo.overline" Class="muted d-block">Worker</MudText>
+                        <MudText Typo="Typo.h5">@(_worker is null ? "No heartbeat yet" : workerStale ? "Not responding" : "Running")</MudText>
+                    </div>
+                </div>
                 @if (_worker is null)
                 {
-                    <MudAlert Severity="Severity.Warning" Dense="true">No heartbeat yet. Is the Worker container running?</MudAlert>
+                    <MudText Typo="Typo.body2" Class="muted mb-3">Is the Worker container running?</MudText>
                 }
-                else
-                {
-                    var stale = Time.GetUtcNow().UtcDateTime - _worker.UpdatedAt > WorkerStatusNames.StaleAfter;
-                    <MudAlert Severity="@(stale ? Severity.Error : Severity.Success)" Dense="true" Class="mb-2">
-                        @(stale ? "Not responding" : "Running") · last heartbeat @Display.LocalTime(_worker.UpdatedAt)
-                    </MudAlert>
-                    <MudText Typo="Typo.body2">Worker version @_worker.Version</MudText>
-                }
-                <MudText Typo="Typo.body2">UI version @AppVersion.Display</MudText>
-                <MudText Typo="Typo.body2">@_pendingCommands command(s) waiting for the Worker</MudText>
-            </MudPaper>
+                <dl class="kv">
+                    @if (_worker is not null)
+                    {
+                        <dt>Last heartbeat</dt>
+                        <dd>@Display.LocalTime(_worker.UpdatedAt)</dd>
+                        <dt>Worker version</dt>
+                        <dd>@_worker.Version</dd>
+                    }
+                    <dt>UI version</dt>
+                    <dd>@AppVersion.Display</dd>
+                    <dt>Commands waiting</dt>
+                    <dd>@_pendingCommands</dd>
+                </dl>
+            </div>
         </MudItem>
-        <MudItem xs="12" md="6">
-            <MudPaper Class="pa-4" Elevation="1">
-                <MudText Typo="Typo.h6" Class="mb-2">Episodes by state</MudText>
+        <MudItem xs="12" md="7">
+            <div class="surface-card status-card">
+                <MudText Typo="Typo.overline" Class="muted d-block">Pipeline</MudText>
+                <MudText Typo="Typo.h5" Class="mb-4">@_counts.Sum(c => c.Count) episode(s)</MudText>
                 @if (_counts.Count == 0)
                 {
-                    <MudText Typo="Typo.body2">No episodes yet.</MudText>
+                    <MudText Typo="Typo.body2" Class="muted">No episodes yet.</MudText>
                 }
+                @{ var max = _counts.Count == 0 ? 1 : _counts.Max(c => c.Count); }
                 @foreach (var (state, count) in _counts)
                 {
-                    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-1">
+                    <div class="bar-row">
                         <EpisodeStateChip State="state" />
-                        <MudText Typo="Typo.body2">@count</MudText>
-                    </MudStack>
+                        <div class="bar-track mud-@(Display.StateColor(state).ToString().ToLowerInvariant())-text">
+                            <div class="bar-fill" style="width: @(Math.Max(2, count * 100 / max))%;"></div>
+                        </div>
+                        <span class="bar-count">@count</span>
+                    </div>
                 }
-            </MudPaper>
+            </div>
         </MudItem>
         <MudItem xs="12">
-            <MudPaper Class="pa-4" Elevation="1">
-                <MudText Typo="Typo.h6" Class="mb-2">Backends</MudText>
-                @if (_backends.Count == 0)
+            <div class="section-title mt-2">
+                <MudText Typo="Typo.h6">Backends</MudText>
+                <span class="count-badge">@_backends.Count</span>
+            </div>
+            @if (_backends.Count == 0)
+            {
+                <EmptyState Title="No backends configured" Icon="@Icons.Material.Rounded.Hub">
+                    Set a <code>Transcription:Provider</code> to enable speech-to-text.
+                </EmptyState>
+            }
+            else
+            {
+                <div class="surface-card">
+                    @foreach (var backend in _backends)
+                    {
+                        var stale = now - backend.UpdatedAt > WorkerStatusNames.StaleAfter;
+                        <div class="backend-row">
+                            <span class="status-light @(stale ? "status-light-warn" : backend.Healthy ? "status-light-ok" : "status-light-bad")"></span>
+                            <div class="flex-grow-1" style="min-width: 0;">
+                                <MudText Typo="Typo.subtitle2">@backend.Name</MudText>
+                                @if (!string.IsNullOrEmpty(backend.Detail))
+                                {
+                                    <MudText Typo="Typo.caption" Class="muted d-block">@backend.Detail</MudText>
+                                }
+                            </div>
+                            <div class="d-flex flex-column align-end">
+                                <MudText Typo="Typo.body2" Color="@(stale ? Color.Warning : backend.Healthy ? Color.Success : Color.Error)" Style="font-weight: 600;">
+                                    @(stale ? "No recent check" : backend.Healthy ? "Reachable" : "Unreachable")
+                                </MudText>
+                                <MudText Typo="Typo.caption" Class="muted">checked @Display.LocalTime(backend.UpdatedAt)</MudText>
+                            </div>
+                        </div>
+                    }
+                </div>
+                @if (_backends.Any(b => now - b.UpdatedAt > WorkerStatusNames.StaleAfter))
                 {
-                    <MudText Typo="Typo.body2">No backends configured. Set a <code>Transcription:Provider</code> to enable speech-to-text.</MudText>
+                    <MudText Typo="Typo.caption" Class="muted d-block mt-2">"No recent check" usually means the Worker isn't running.</MudText>
                 }
-                @foreach (var backend in _backends)
-                {
-                    var stale = Time.GetUtcNow().UtcDateTime - backend.UpdatedAt > WorkerStatusNames.StaleAfter;
-                    <MudAlert Severity="@(stale ? Severity.Warning : backend.Healthy ? Severity.Success : Severity.Error)" Dense="true" Class="mb-2">
-                        <b>@backend.Name</b> ·
-                        @(stale ? "no recent check (is the Worker running?)" : backend.Healthy ? "reachable" : "unreachable")
-                        @if (!string.IsNullOrEmpty(backend.Detail))
-                        {
-                            <text> · @backend.Detail</text>
-                        }
-                        · checked @Display.LocalTime(backend.UpdatedAt)
-                    </MudAlert>
-                }
-            </MudPaper>
+            }
         </MudItem>
     </MudGrid>
 }

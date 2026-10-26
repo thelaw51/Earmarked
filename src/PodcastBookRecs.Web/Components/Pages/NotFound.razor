@@ -2,4 +2,6 @@
 @layout MainLayout
 
 <PageTitle>Not found</PageTitle>
-<MudAlert Severity="Severity.Warning">That page doesn't exist.</MudAlert>
+<EmptyState Title="Nothing here" Icon="@Icons.Material.Rounded.TravelExplore">
+    That page doesn't exist. <MudLink Href="">Back to podcasts</MudLink>
+</EmptyState>
