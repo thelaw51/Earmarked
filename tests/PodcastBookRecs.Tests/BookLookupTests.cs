@@ -7,7 +7,7 @@ namespace PodcastBookRecs.Tests;
 
 public class BookLookupTests
 {
-    private static CatalogBook Book(string title, string author, int editions = 1, string? subtitle = null, string id = "OL1W") =>
+    private static CatalogBook Book(string title, string author, int editions = 2, string? subtitle = null, string id = "OL1W") =>
         new(id, title, subtitle, [author], null, editions, $"https://catalog.test/{id}", null);
 
     [Theory]
@@ -32,6 +32,26 @@ public class BookLookupTests
     [Fact]
     public void Rejects_a_candidate_by_another_author_when_the_model_named_one() =>
         Assert.Null(CatalogMatcher.Pick("Small Rivers", "Ines Calder", [Book("Small Rivers", "Tomas Reyne")]));
+
+    [Theory]
+    [InlineData("George Elliot", true)]
+    [InlineData("G. Eliott", true)]
+    [InlineData("George Eliot", true)]
+    [InlineData("George Elton", false)]
+    public void Allows_one_letter_out_in_a_longer_surname(string author, bool matches) =>
+        Assert.Equal(matches, CatalogMatcher.Pick("Middlemarch", author, [Book("Middlemarch", "George Eliot")]) is not null);
+
+    [Fact]
+    public void Short_surnames_must_match_exactly() =>
+        Assert.Null(CatalogMatcher.Pick("Small Rivers", "Tomas Rene", [Book("Small Rivers", "Tomas Rena")]));
+
+    [Fact]
+    public void Without_an_author_a_one_edition_book_is_not_enough()
+    {
+        // "my second book" is a real one-edition title: without an author, an exact title alone is too weak.
+        Assert.Null(CatalogMatcher.Pick("My Second Book", null, [Book("My second book", "Someone", editions: 1)]));
+        Assert.NotNull(CatalogMatcher.Pick("My Second Book", "Someone", [Book("My second book", "Someone", editions: 1)]));
+    }
 
     [Fact]
     public void Skips_summaries_and_prefers_the_work_with_most_editions()
