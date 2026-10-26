@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using PodcastBookRecs.Core.BookLookup;
 using PodcastBookRecs.Core.Transcripts;
 
 namespace PodcastBookRecs.Core.Data;
@@ -22,6 +23,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityUser
     public DbSet<Transcript> Transcripts => Set<Transcript>();
     public DbSet<BookMention> BookMentions => Set<BookMention>();
     public DbSet<Book> Books => Set<Book>();
+    public DbSet<ReviewDecision> ReviewDecisions => Set<ReviewDecision>();
     public DbSet<WorkerCommand> WorkerCommands => Set<WorkerCommand>();
     public DbSet<WorkerStatus> WorkerStatuses => Set<WorkerStatus>();
 
@@ -85,13 +87,50 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityUser
             b.Property(k => k.CoverUrl).HasMaxLength(Book.MaxUrlLength);
         });
 
-        builder.Entity<WorkerCommand>(b => b.HasIndex(c => c.CompletedAt));
+        builder.Entity<ReviewDecision>(b =>
+        {
+            b.HasIndex(d => d.LookupKey).IsUnique();
+            b.Property(d => d.LookupKey).HasMaxLength(BookMention.MaxTitleLength + BookMention.MaxAuthorLength);
+            b.Property(d => d.Title).HasMaxLength(BookMention.MaxTitleLength);
+            b.Property(d => d.Author).HasMaxLength(BookMention.MaxAuthorLength);
+            b.Property(d => d.Note).HasMaxLength(ReviewDecision.MaxNoteLength);
+            b.Property(d => d.Pick).HasConversion(NullableJsonConverter<CatalogBook>(), NullableJsonComparer<CatalogBook>());
+            b.HasOne(d => d.Book).WithMany().OnDelete(DeleteBehavior.SetNull);
+        });
+
+        builder.Entity<WorkerCommand>(b =>
+        {
+            b.HasIndex(c => c.CompletedAt);
+            b.Property(c => c.LookupKey).HasMaxLength(BookMention.MaxTitleLength + BookMention.MaxAuthorLength);
+        });
 
         builder.Entity<WorkerStatus>(b => b.HasKey(s => s.Name));
     }
 
     private static ValueConverter<T, string> JsonConverter<T>() where T : new() =>
         new(v => JsonSerializer.Serialize(v, JsonOptions), v => JsonSerializer.Deserialize<T>(v, JsonOptions) ?? new T());
+
+    /// <summary>For a column that may be empty. A value that no longer parses reads as null rather than failing the whole query.</summary>
+    private static ValueConverter<T?, string?> NullableJsonConverter<T>() where T : class =>
+        new(v => v == null ? null : JsonSerializer.Serialize(v, JsonOptions), v => v == null ? null : DeserializeOrNull<T>(v));
+
+    private static T? DeserializeOrNull<T>(string json) where T : class
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<T>(json, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static ValueComparer<T?> NullableJsonComparer<T>() where T : class =>
+        new(
+            (a, b) => JsonSerializer.Serialize(a, JsonOptions) == JsonSerializer.Serialize(b, JsonOptions),
+            v => v == null ? 0 : JsonSerializer.Serialize(v, JsonOptions).GetHashCode(StringComparison.Ordinal),
+            v => v == null ? null : JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(v, JsonOptions), JsonOptions));
 
     private static ValueComparer<T> JsonComparer<T>() =>
         new(
