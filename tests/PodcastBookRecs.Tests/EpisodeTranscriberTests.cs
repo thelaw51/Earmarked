@@ -150,6 +150,52 @@ public sealed class EpisodeTranscriberTests : IAsyncLifetime
         Assert.Equal(WorkOutcome.Worked, await _transcriber.ProcessNextAsync(Ct));
     }
 
+    [Fact]
+    public async Task A_prioritised_episode_skips_the_grace_period()
+    {
+        await SetFeedAsync(f => f.PublishesTranscripts = true);
+        await SetAsync(e => (e.PublishedAt, e.PrioritisedAt) = (DateTime.UtcNow.AddDays(-1), DateTime.UtcNow));
+
+        Assert.Equal(WorkOutcome.Worked, await _transcriber.ProcessNextAsync(Ct));
+    }
+
+    [Fact]
+    public async Task Prioritised_episodes_go_first_in_the_order_asked_then_newest_first()
+    {
+        var ids = new List<Guid>();
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            // Newer than the existing episode; the later two are prioritised, the older of them asked for second.
+            for (var i = 2; i <= 4; i++)
+            {
+                var episode = new Episode
+                {
+                    PodcastFeedId = _feedId,
+                    IdentityKey = $"ep-{i}",
+                    Title = $"Episode {i}",
+                    PublishedAt = DateTime.UtcNow.AddDays(-10 + i),
+                    EnclosureUrl = AudioUrl,
+                    State = EpisodeState.AwaitingTranscription,
+                    PrioritisedAt = i switch { 3 => DateTime.UtcNow.AddMinutes(-1), 4 => DateTime.UtcNow.AddMinutes(-5), _ => null },
+                };
+                db.Episodes.Add(episode);
+                ids.Add(episode.Id);
+            }
+
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var order = new List<Guid>();
+        while (await _transcriber.ClaimNextAsync(Ct) is { } claimed)
+        {
+            order.Add(claimed.Id);
+            await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+            await db.Episodes.Where(e => e.Id == claimed.Id).ExecuteUpdateAsync(s => s.SetProperty(e => e.State, EpisodeState.Transcribed), Ct);
+        }
+
+        Assert.Equal([ids[2], ids[1], ids[0], _episodeId], order);
+    }
+
     [Theory]
     [InlineData(EpisodeState.New)]
     [InlineData(EpisodeState.TranscriptFetched)]

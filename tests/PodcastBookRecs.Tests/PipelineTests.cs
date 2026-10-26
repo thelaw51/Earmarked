@@ -23,6 +23,7 @@ public sealed class PipelineTests : IAsyncLifetime
     private IDbContextFactory<AppDbContext> _dbFactory = null!;
     private FeedPoller _poller = null!;
     private TranscriptFetcher _fetcher = null!;
+    private CommandProcessor _commands = null!;
 
     public async ValueTask InitializeAsync()
     {
@@ -42,7 +43,10 @@ public sealed class PipelineTests : IAsyncLifetime
 
         var polling = Options.Create(new PollingOptions { BackfillEpisodes = 2, MaxAttempts = 2 });
         var http = new StubHttpClientFactory(_http);
-        _poller = new FeedPoller(_dbFactory, http, polling, new EpisodeStateLock(), TimeProvider.System, NullLogger<FeedPoller>.Instance);
+        var stateLock = new EpisodeStateLock();
+        _poller = new FeedPoller(_dbFactory, http, polling, stateLock, TimeProvider.System, NullLogger<FeedPoller>.Instance);
+        _commands = new CommandProcessor(_dbFactory, _poller, stateLock,
+            new TranscriptionWorkspace(Options.Create(new PathsOptions { Data = Path.GetTempPath() })), TimeProvider.System, NullLogger<CommandProcessor>.Instance);
         _fetcher = new TranscriptFetcher(_dbFactory, http, polling, TimeProvider.System, NullLogger<TranscriptFetcher>.Instance);
     }
 
@@ -207,6 +211,80 @@ public sealed class PipelineTests : IAsyncLifetime
         var podcast = await db.PodcastFeeds.SingleAsync(Ct);
         Assert.Contains("500", podcast.LastPollError, StringComparison.Ordinal);
         Assert.Null(podcast.FirstPolledAt);
+    }
+
+    [Fact]
+    public async Task Including_a_skipped_episode_queues_it_and_polls_its_feed_for_fresh_links()
+    {
+        const string skipped = "https://cdn.example.com/ep1.mp3";
+        _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
+        await _poller.PollAsync(_podcastId, Ct);
+        var polledBefore = await LastPolledAsync();
+
+        var error = await RunCommandAsync(WorkerCommandType.IncludeEpisode, skipped);
+
+        Assert.Null(error);
+        var episode = await EpisodeAsync(skipped);
+        Assert.Equal((EpisodeState.AwaitingTranscription, (DateTime?)null), (episode.State, episode.PrioritisedAt));
+        Assert.True(await LastPolledAsync() > polledBefore);
+    }
+
+    [Fact]
+    public async Task Do_this_next_on_a_skipped_episode_includes_it_and_prioritises_it()
+    {
+        const string skipped = "https://cdn.example.com/ep1.mp3";
+        _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
+        await _poller.PollAsync(_podcastId, Ct);
+
+        Assert.Null(await RunCommandAsync(WorkerCommandType.PrioritiseEpisode, skipped));
+
+        var episode = await EpisodeAsync(skipped);
+        Assert.Equal(EpisodeState.AwaitingTranscription, episode.State);
+        Assert.NotNull(episode.PrioritisedAt);
+    }
+
+    [Fact]
+    public async Task Do_this_next_clears_a_retry_backoff_and_is_refused_once_an_episode_is_done()
+    {
+        _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
+        await _poller.PollAsync(_podcastId, Ct);
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            await db.Episodes.Where(e => e.IdentityKey == "ep-002").ExecuteUpdateAsync(s => s.SetProperty(e => e.NextAttemptAt, DateTime.UtcNow.AddHours(1)), Ct);
+            await db.Episodes.Where(e => e.IdentityKey == "ep-003").ExecuteUpdateAsync(s => s.SetProperty(e => e.State, EpisodeState.Extracted), Ct);
+        }
+
+        Assert.Null(await RunCommandAsync(WorkerCommandType.PrioritiseEpisode, "ep-002"));
+        Assert.Null((await EpisodeAsync("ep-002")).NextAttemptAt);
+        Assert.Contains("can't be prioritised", await RunCommandAsync(WorkerCommandType.PrioritiseEpisode, "ep-003"), StringComparison.Ordinal);
+        Assert.Contains("isn't skipped", await RunCommandAsync(WorkerCommandType.IncludeEpisode, "ep-002"), StringComparison.Ordinal);
+    }
+
+    /// <summary>Queues a command for the episode with this identity key, runs it, and returns its error.</summary>
+    private async Task<string?> RunCommandAsync(WorkerCommandType type, string identityKey)
+    {
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            var id = await db.Episodes.Where(e => e.IdentityKey == identityKey).Select(e => e.Id).SingleAsync(Ct);
+            db.WorkerCommands.Add(new WorkerCommand { Type = type, EpisodeId = id, CreatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await _commands.ProcessPendingAsync(Ct);
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        return (await check.WorkerCommands.OrderByDescending(c => c.CreatedAt).FirstAsync(Ct)).Error;
+    }
+
+    private async Task<DateTime?> LastPolledAsync()
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        return await db.PodcastFeeds.Where(p => p.Id == _podcastId).Select(p => p.LastPolledAt).SingleAsync(Ct);
+    }
+
+    private async Task<Episode> EpisodeAsync(string identityKey)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        return await db.Episodes.SingleAsync(e => e.IdentityKey == identityKey, Ct);
     }
 
     private async Task<Dictionary<string, EpisodeState>> EpisodeStatesAsync()
