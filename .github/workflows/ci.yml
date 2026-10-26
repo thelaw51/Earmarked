@@ -67,6 +67,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Supplies the labels and, for v* tags, the VERSION build arg. The publish job applies the tags; don't add
+      # tags to the build step below, which pushes by digest only.
       - id: meta
         uses: docker/metadata-action@v6
         with:
