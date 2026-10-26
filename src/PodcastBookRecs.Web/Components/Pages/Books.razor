@@ -1,4 +1,5 @@
 @page "/books"
+@using PodcastBookRecs.Core.Backends
 @using PodcastBookRecs.Core.Books
 @inject IDbContextFactory<AppDbContext> DbFactory
 
@@ -24,9 +25,13 @@ else
     @if (_pending > 0 || _unmatched > 0)
     {
         <MudText Typo="Typo.body2" Class="mb-4">
-            @if (_pending > 0)
+            @if (_pending > 0 && _lookupOn)
             {
                 <text>@_pending mention(s) still being checked against the catalogue. </text>
+            }
+            else if (_pending > 0)
+            {
+                <text>Book lookup is off (<code>BookLookup:Provider</code> is empty), so @_pending mention(s) haven't been checked against a catalogue. </text>
             }
             @if (_unmatched > 0)
             {
@@ -77,6 +82,7 @@ else
 @code {
     private List<Row>? _rows;
     private int _pending;
+    private bool _lookupOn;
     private int _unmatched;
     private string? _error;
 
@@ -93,6 +99,7 @@ else
                 .ToListAsync();
             var books = await db.Books.AsNoTracking().ToDictionaryAsync(b => b.Id);
             _pending = await db.BookMentions.CountAsync(m => m.MatchState == MatchState.Pending);
+            _lookupOn = await db.WorkerStatuses.AnyAsync(s => s.Name == BackendHealth.BookLookup);
             _unmatched = await db.BookMentions.CountAsync(m => m.MatchState == MatchState.NoMatch || m.MatchState == MatchState.LookupFailed);
             _rows = BookRanking.Rank(facts)
                 .Where(r => books.ContainsKey(r.BookId))

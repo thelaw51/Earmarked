@@ -1,4 +1,5 @@
 @page "/episodes/{Id:guid}"
+@using PodcastBookRecs.Core.Backends
 @using PodcastBookRecs.Core.Transcripts
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject TimeProvider Time
@@ -88,7 +89,7 @@ else
                                         {
                                             <MudText Typo="Typo.caption" Class="d-block">@mention.Author</MudText>
                                         }
-                                        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">@Display.MatchNote(mention.MatchState)</MudText>
+                                        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">@Display.MatchNote(mention.MatchState, _lookupOn)</MudText>
                                     }
                                 </td>
                                 <td style="white-space: nowrap; width: 1%;"><MudChip T="string" Size="Size.Small" Color="Display.KindColor(mention.Kind)">@Display.KindLabel(mention.Kind)</MudChip></td>
@@ -137,6 +138,7 @@ else
     public Guid Id { get; set; }
 
     private Episode? _episode;
+    private bool _lookupOn;
     private List<BreadcrumbItem> _breadcrumbs = [];
     private bool _loading = true;
     private string? _error;
@@ -151,6 +153,7 @@ else
                 .Include(e => e.Transcript)
                 .Include(e => e.Mentions).ThenInclude(m => m.Book)
                 .SingleOrDefaultAsync(e => e.Id == Id);
+            _lookupOn = await db.WorkerStatuses.AnyAsync(s => s.Name == BackendHealth.BookLookup);
             if (_episode is not null)
             {
                 _breadcrumbs =

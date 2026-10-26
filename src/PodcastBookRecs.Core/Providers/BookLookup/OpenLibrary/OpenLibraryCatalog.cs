@@ -193,25 +193,43 @@ public sealed partial class OpenLibraryCatalog(IHttpClientFactory httpFactory, T
 }
 
 /// <summary>
-/// Reports whether Open Library answers. Checks at most every 5 minutes and repeats the last answer in between, so the
-/// Status page's 30-second schedule doesn't become a steady stream of requests. Sends no mention data.
+/// Reports whether Open Library answers and isn't asking us to slow down. A healthy answer is reused for 5 minutes, so
+/// the Status page's 30-second schedule doesn't become a steady stream of requests; a problem is checked again every
+/// time, so recovery shows straight away. Sends no mention data.
 /// </summary>
 public sealed class OpenLibraryHealthCheck(IHttpClientFactory httpFactory, TimeProvider time) : IHealthCheck
 {
     private static readonly TimeSpan RecheckAfter = TimeSpan.FromMinutes(5);
+    private static readonly HealthCheckResult Healthy = HealthCheckResult.Healthy(BookLookupProviders.OpenLibrary);
 
-    private (DateTimeOffset At, HealthCheckResult Result)? _last;
+    private DateTimeOffset? _healthyAt;
 
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
     {
-        if (_last is { } last && time.GetUtcNow() - last.At < RecheckAfter)
+        if (_healthyAt is { } at && time.GetUtcNow() - at < RecheckAfter)
         {
-            return last.Result;
+            return Healthy;
         }
 
-        var problem = await BackendProbe.ProbeAsync(httpFactory.CreateClient(OpenLibraryCatalog.HttpClientName), cancellationToken);
-        var result = problem is null ? HealthCheckResult.Healthy(BookLookupProviders.OpenLibrary) : HealthCheckResult.Unhealthy($"Unreachable: {problem}");
-        _last = (time.GetUtcNow(), result);
-        return result;
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(BackendHealth.Timeout);
+        try
+        {
+            using var response = await httpFactory.CreateClient(OpenLibraryCatalog.HttpClientName)
+                .GetAsync("", HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            if (response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500)
+            {
+                _healthyAt = null;
+                return HealthCheckResult.Unhealthy($"Reachable, but answering HTTP {(int)response.StatusCode}.");
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            _healthyAt = null;
+            return HealthCheckResult.Unhealthy(ex is OperationCanceledException ? "Unreachable: no answer within 5 seconds." : $"Unreachable: {ex.Message}");
+        }
+
+        _healthyAt = time.GetUtcNow();
+        return Healthy;
     }
 }

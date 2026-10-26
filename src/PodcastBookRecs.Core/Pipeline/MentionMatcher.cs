@@ -10,6 +10,7 @@ namespace PodcastBookRecs.Core.Pipeline;
 /// Matches book mentions to catalogue books, one mention at a time, oldest first. A mention whose title and author were
 /// already looked up under the current rules copies that answer instead of asking again. Mentions not yet matched by
 /// <see cref="CatalogMatcher.Version"/>, including every new one, are due, so changing the rules re-matches everything.
+/// A lookup that failed is tried again after <see cref="RetryFailedAfter"/>, at the back of the queue.
 /// Mentions aren't episode state, so this doesn't take <see cref="EpisodeStateLock"/>: each update is conditional, and a
 /// mention deleted by re-extraction while it was being looked up simply updates nothing.
 /// </summary>
@@ -19,12 +20,15 @@ public sealed partial class MentionMatcher(
     TimeProvider time,
     ILogger<MentionMatcher> logger)
 {
+    public static readonly TimeSpan RetryFailedAfter = TimeSpan.FromDays(1);
+
     public async Task<WorkOutcome> ProcessNextAsync(CancellationToken cancellationToken)
     {
+        var retryBefore = time.GetUtcNow().UtcDateTime - RetryFailedAfter;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var next = await db.BookMentions
-            .Where(m => m.MatcherVersion != CatalogMatcher.Version)
-            .OrderBy(m => m.CreatedAt).ThenBy(m => m.Id)
+            .Where(m => m.MatcherVersion != CatalogMatcher.Version || (m.MatchState == MatchState.LookupFailed && m.MatchedAt < retryBefore))
+            .OrderBy(m => m.MatchState == MatchState.LookupFailed).ThenBy(m => m.CreatedAt).ThenBy(m => m.Id)
             .Select(m => new { m.Id, m.Title, m.Author })
             .FirstOrDefaultAsync(cancellationToken);
         if (next is null)
@@ -35,7 +39,7 @@ public sealed partial class MentionMatcher(
         var key = CatalogMatcher.LookupKey(next.Title, next.Author);
         var known = await db.BookMentions
             .Where(m => m.LookupKey == key && m.MatcherVersion == CatalogMatcher.Version)
-            .Where(m => m.MatchState == MatchState.Matched || m.MatchState == MatchState.NoMatch)
+            .Where(m => (m.MatchState == MatchState.Matched && m.BookId != null) || m.MatchState == MatchState.NoMatch)
             .Select(m => new { m.MatchState, m.BookId })
             .FirstOrDefaultAsync(cancellationToken);
         if (known is not null)
@@ -122,7 +126,7 @@ public sealed partial class MentionMatcher(
     {
         var now = time.GetUtcNow().UtcDateTime;
         await db.BookMentions
-            .Where(m => m.Id == mentionId && m.MatcherVersion != CatalogMatcher.Version)
+            .Where(m => m.Id == mentionId && (m.MatcherVersion != CatalogMatcher.Version || m.MatchState == MatchState.LookupFailed))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(m => m.MatchState, state)
                 .SetProperty(m => m.BookId, bookId)

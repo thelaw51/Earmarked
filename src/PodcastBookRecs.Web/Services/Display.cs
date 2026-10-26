@@ -42,9 +42,9 @@ public static class Display
         Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps ? url : null;
 
     /// <summary>A short note on a mention that isn't linked to a book, or null when it is.</summary>
-    public static string? MatchNote(MatchState state) => state switch
+    public static string? MatchNote(MatchState state, bool lookupOn) => state switch
     {
-        MatchState.Pending => "Checking the catalogue",
+        MatchState.Pending => lookupOn ? "Checking the catalogue" : "Book lookup is off",
         MatchState.NoMatch => "Not found in the catalogue",
         MatchState.LookupFailed => "Catalogue lookup failed",
         _ => null,

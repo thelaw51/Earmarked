@@ -135,6 +135,43 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_failed_lookup_is_tried_again_after_a_day()
+    {
+        _catalog.Throw = new CatalogLookupFailedException("garbled");
+        var id = await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", null);
+        Assert.Equal(WorkOutcome.Worked, await _matcher.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Idle, await _matcher.ProcessNextAsync(Ct));
+
+        _catalog.Throw = null;
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
+        var later = new MentionMatcher(_dbFactory, _catalog, new ShiftedTime(MentionMatcher.RetryFailedAfter + TimeSpan.FromMinutes(1)),
+            NullLogger<MentionMatcher>.Instance);
+        Assert.Equal(WorkOutcome.Worked, await later.ProcessNextAsync(Ct));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(MatchState.Matched, (await db.BookMentions.SingleAsync(m => m.Id == id, Ct)).MatchState);
+    }
+
+    [Fact]
+    public async Task Doesnt_copy_a_match_whose_book_is_gone()
+    {
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
+        await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", null);
+        await RunUntilIdleAsync();
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            await db.Books.ExecuteDeleteAsync(Ct);
+        }
+
+        var second = await AddMentionAsync(1, "The Lighthouse Keeper's Almanac", null);
+        await RunUntilIdleAsync();
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.NotNull((await check.BookMentions.SingleAsync(m => m.Id == second, Ct)).BookId);
+        Assert.Equal(2, _catalog.Calls);
+    }
+
+    [Fact]
     public async Task Mentions_matched_by_older_rules_are_matched_again()
     {
         _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
@@ -191,6 +228,11 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         await db.SaveChangesAsync(Ct);
         await Task.Delay(5, Ct);
         return mention.Id;
+    }
+
+    private sealed class ShiftedTime(TimeSpan offset) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => System.GetUtcNow() + offset;
     }
 
     private sealed class FakeCatalog : IBookCatalog

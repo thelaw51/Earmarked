@@ -187,7 +187,7 @@ public static class ServiceCollectionExtensions
                 services.AddSingleton<IBookCatalog, OpenLibraryCatalog>();
                 // A singleton, so the check's five-minute memory of its last answer survives between runs.
                 services.AddSingleton<OpenLibraryHealthCheck>();
-                services.AddHealthChecks().AddCheck<OpenLibraryHealthCheck>("book lookup", tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
+                services.AddHealthChecks().AddCheck<OpenLibraryHealthCheck>(BackendHealth.BookLookup, tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
                 break;
         }
 

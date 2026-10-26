@@ -115,6 +115,18 @@ public class OpenLibraryCatalogTests
         Assert.Single(handler.Uris);
     }
 
+    [Fact]
+    public async Task Health_check_reports_a_slow_down_as_unhealthy_and_checks_again_next_time()
+    {
+        var handler = new Recorder(HttpStatusCode.TooManyRequests, "");
+        using var provider = Services([], handler);
+        var check = provider.GetRequiredService<OpenLibraryHealthCheck>();
+
+        Assert.Equal(HealthStatus.Unhealthy, (await check.CheckHealthAsync(new HealthCheckContext(), Ct)).Status);
+        Assert.Equal(HealthStatus.Unhealthy, (await check.CheckHealthAsync(new HealthCheckContext(), Ct)).Status);
+        Assert.Equal(2, handler.Uris.Count);
+    }
+
     private static OpenLibraryCatalog Catalog(HttpMessageHandler handler) =>
         new(new SingleClientFactory(new HttpClient(handler) { BaseAddress = new Uri("https://catalog.test/") }), TimeProvider.System) { RequestGap = TimeSpan.Zero };
 
