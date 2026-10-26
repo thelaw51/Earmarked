@@ -1,0 +1,98 @@
+@page "/books/{Id:guid}"
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<PageTitle>@(_book?.Title ?? "Book")</PageTitle>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error">Couldn't load this book: @_error</MudAlert>
+}
+else if (_loading)
+{
+    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+}
+else if (_book is null)
+{
+    <MudAlert Severity="Severity.Warning">Book @Id doesn't exist.</MudAlert>
+}
+else
+{
+    <MudBreadcrumbs Items="_breadcrumbs" Class="px-0" />
+    <MudStack Row="true" Spacing="4" Class="mb-4">
+        @if (Display.HttpsOrNull(_book.CoverUrl) is { } cover)
+        {
+            <img src="@cover" alt="" referrerpolicy="no-referrer" style="height: 160px; width: auto;" />
+        }
+        <MudStack Spacing="1">
+            <MudText Typo="Typo.h4">@_book.Title</MudText>
+            @if (_book.Authors.Length > 0)
+            {
+                <MudText Typo="Typo.subtitle1">@_book.Authors</MudText>
+            }
+            @if (_book.FirstPublishYear is { } year)
+            {
+                <MudText Typo="Typo.body2">First published @year</MudText>
+            }
+            @if (Display.HttpsOrNull(_book.InfoUrl) is { } info)
+            {
+                <MudLink Href="@info" Target="_blank" rel="noopener noreferrer" Typo="Typo.body2">View on @_book.Provider</MudLink>
+            }
+        </MudStack>
+    </MudStack>
+
+    <MudText Typo="Typo.h6" Class="mb-2">Mentioned in @_mentions.Select(m => m.EpisodeId).Distinct().Count() episode(s)</MudText>
+    <MudSimpleTable Dense="true" Hover="true" Elevation="1">
+        <tbody>
+            @foreach (var mention in _mentions)
+            {
+                <tr>
+                    <td style="width: 30%;">
+                        <MudLink Href="@($"episodes/{mention.EpisodeId}")" Typo="Typo.body2">@mention.Episode.Title</MudLink>
+                        <MudText Typo="Typo.caption" Class="d-block">
+                            @(mention.Episode.PodcastFeed.Title ?? "Podcast") · @Display.LocalDate(mention.Episode.PublishedAt)@(mention.StartTime is null ? "" : $" · at {Display.Timestamp(mention.StartTime)}")
+                        </MudText>
+                    </td>
+                    <td style="white-space: nowrap; width: 1%;"><MudChip T="string" Size="Size.Small" Color="Display.KindColor(mention.Kind)">@Display.KindLabel(mention.Kind)</MudChip></td>
+                    <td><MudText Typo="Typo.body2">"@mention.Quote"</MudText></td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+}
+
+@code {
+    [Parameter]
+    public Guid Id { get; set; }
+
+    private Book? _book;
+    private List<BookMention> _mentions = [];
+    private List<BreadcrumbItem> _breadcrumbs = [];
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _book = await db.Books.AsNoTracking().SingleOrDefaultAsync(b => b.Id == Id);
+            _mentions = _book is null
+                ? []
+                : await db.BookMentions.AsNoTracking()
+                    .Include(m => m.Episode).ThenInclude(e => e.PodcastFeed)
+                    .Where(m => m.BookId == Id)
+                    .OrderByDescending(m => m.Episode.PublishedAt)
+                    .ToListAsync();
+            _breadcrumbs = [new("Books", "books"), new(_book?.Title ?? "Book", null, disabled: true)];
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

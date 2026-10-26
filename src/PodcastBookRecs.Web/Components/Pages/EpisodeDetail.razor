@@ -76,10 +76,19 @@ else
                             <tr>
                                 <td style="white-space: nowrap; width: 1%;"><MudText Typo="Typo.caption">@Display.Timestamp(mention.StartTime)</MudText></td>
                                 <td>
-                                    <MudText Typo="Typo.subtitle2">@mention.Title</MudText>
-                                    @if (mention.Author is not null)
+                                    @if (mention.Book is not null)
                                     {
-                                        <MudText Typo="Typo.caption">@mention.Author</MudText>
+                                        <MudLink Href="@($"books/{mention.Book.Id}")" Typo="Typo.subtitle2">@mention.Book.Title</MudLink>
+                                        <MudText Typo="Typo.caption" Class="d-block">@mention.Book.Authors</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.subtitle2">@mention.Title</MudText>
+                                        @if (mention.Author is not null)
+                                        {
+                                            <MudText Typo="Typo.caption" Class="d-block">@mention.Author</MudText>
+                                        }
+                                        <MudText Typo="Typo.caption" Class="d-block mud-text-secondary">@Display.MatchNote(mention.MatchState)</MudText>
                                     }
                                 </td>
                                 <td style="white-space: nowrap; width: 1%;"><MudChip T="string" Size="Size.Small" Color="Display.KindColor(mention.Kind)">@Display.KindLabel(mention.Kind)</MudChip></td>
@@ -140,7 +149,7 @@ else
             _episode = await db.Episodes.AsNoTracking()
                 .Include(e => e.PodcastFeed)
                 .Include(e => e.Transcript)
-                .Include(e => e.Mentions)
+                .Include(e => e.Mentions).ThenInclude(m => m.Book)
                 .SingleOrDefaultAsync(e => e.Id == Id);
             if (_episode is not null)
             {

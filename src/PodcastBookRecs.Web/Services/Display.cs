@@ -37,6 +37,19 @@ public static class Display
             ? $"speech-to-text ({transcript.Provider ?? "unknown provider"} · {transcript.Model ?? "unknown model"})"
             : $"{transcript.Format} from the feed";
 
+    /// <summary>The URL if it is an absolute https link, otherwise null. For links and images whose URL came from outside.</summary>
+    public static string? HttpsOrNull(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps ? url : null;
+
+    /// <summary>A short note on a mention that isn't linked to a book, or null when it is.</summary>
+    public static string? MatchNote(MatchState state) => state switch
+    {
+        MatchState.Pending => "Checking the catalogue",
+        MatchState.NoMatch => "Not found in the catalogue",
+        MatchState.LookupFailed => "Catalogue lookup failed",
+        _ => null,
+    };
+
     public static string KindLabel(MentionKind kind) => kind switch
     {
         MentionKind.OwnBook => "Own book",

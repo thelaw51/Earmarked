@@ -1,0 +1,110 @@
+@page "/books"
+@using PodcastBookRecs.Core.Books
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<PageTitle>Books</PageTitle>
+
+@* Books that mentions were matched to in the catalogue, most widely discussed first (BookRanking). *@
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+    <MudText Typo="Typo.h4">Books</MudText>
+    <MudSpacer />
+    <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
+</MudStack>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error">Couldn't load books: @_error</MudAlert>
+}
+else if (_rows is null)
+{
+    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+}
+else
+{
+    @if (_pending > 0 || _unmatched > 0)
+    {
+        <MudText Typo="Typo.body2" Class="mb-4">
+            @if (_pending > 0)
+            {
+                <text>@_pending mention(s) still being checked against the catalogue. </text>
+            }
+            @if (_unmatched > 0)
+            {
+                <text>@_unmatched mention(s) weren't found in the catalogue and aren't listed. They stay on their episode pages.</text>
+            }
+        </MudText>
+    }
+
+    @if (_rows.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">No books yet. Books appear here once episodes have been searched for books and the titles found in the catalogue.</MudAlert>
+    }
+    else
+    {
+        <MudTable Items="_rows" Hover="true" Dense="true" Elevation="1">
+            <HeaderContent>
+                <MudTh>#</MudTh>
+                <MudTh></MudTh>
+                <MudTh>Book</MudTh>
+                <MudTh>Podcasts</MudTh>
+                <MudTh>Episodes</MudTh>
+                <MudTh>Recommended in</MudTh>
+                <MudTh>Last mentioned</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.Rank</MudTd>
+                <MudTd>
+                    @if (Display.HttpsOrNull(context.Book.CoverUrl) is { } cover)
+                    {
+                        <img src="@cover" alt="" loading="lazy" referrerpolicy="no-referrer" style="height: 56px; width: auto;" />
+                    }
+                </MudTd>
+                <MudTd>
+                    <MudLink Href="@($"books/{context.Book.Id}")" Typo="Typo.body1">@context.Book.Title</MudLink>
+                    <MudText Typo="Typo.caption" Class="d-block">
+                        @context.Book.Authors@(context.Book.FirstPublishYear is { } year ? $" · {year}" : "")
+                    </MudText>
+                </MudTd>
+                <MudTd>@context.Ranking.Podcasts</MudTd>
+                <MudTd>@context.Ranking.Episodes</MudTd>
+                <MudTd>@(context.Ranking.RecommendedIn > 0 ? $"{context.Ranking.RecommendedIn} episode(s)" : "")</MudTd>
+                <MudTd>@Display.LocalDate(context.Ranking.LastMentioned)</MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+}
+
+@code {
+    private List<Row>? _rows;
+    private int _pending;
+    private int _unmatched;
+    private string? _error;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var facts = await db.BookMentions.AsNoTracking()
+                .Where(m => m.BookId != null)
+                .Select(m => new MentionFact(m.BookId!.Value, m.EpisodeId, m.Episode.PodcastFeedId, m.Episode.PublishedAt, m.Kind))
+                .ToListAsync();
+            var books = await db.Books.AsNoTracking().ToDictionaryAsync(b => b.Id);
+            _pending = await db.BookMentions.CountAsync(m => m.MatchState == MatchState.Pending);
+            _unmatched = await db.BookMentions.CountAsync(m => m.MatchState == MatchState.NoMatch || m.MatchState == MatchState.LookupFailed);
+            _rows = BookRanking.Rank(facts)
+                .Where(r => books.ContainsKey(r.BookId))
+                .Select((r, i) => new Row(i + 1, books[r.BookId], r))
+                .ToList();
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private sealed record Row(int Rank, Book Book, RankedBook Ranking);
+}
