@@ -148,6 +148,154 @@ public sealed class AccountTests : IAsyncLifetime
         Assert.True((await scope.ServiceProvider.GetRequiredService<UserAdmin>().CreateAsync(Email, "twelve chars")).Succeeded);
     }
 
+    [Fact]
+    public async Task A_wrong_code_leaves_two_factor_off()
+    {
+        await CreateUserAsync();
+        await using var scope = _services.CreateAsyncScope();
+        var admin = scope.ServiceProvider.GetRequiredService<UserAdmin>();
+        var (_, key) = await admin.StartAuthenticatorSetupAsync(Email);
+
+        var (result, recoveryCodes) = await admin.ConfirmAuthenticatorAsync(Email, WrongCode(key!));
+
+        Assert.False(result.Succeeded);
+        Assert.Empty(recoveryCodes);
+        Assert.False(await TwoFactorEnabledAsync());
+    }
+
+    [Fact]
+    public async Task A_code_from_the_app_turns_on_two_factor_and_issues_recovery_codes_that_work_once()
+    {
+        await CreateUserAsync();
+        var recoveryCodes = await EnrolAsync();
+
+        Assert.True(await TwoFactorEnabledAsync());
+        Assert.Equal(UserAdmin.RecoveryCodeCount, recoveryCodes.Count);
+
+        await using var scope = _services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var user = await users.FindByEmailAsync(Email);
+        Assert.True((await users.RedeemTwoFactorRecoveryCodeAsync(user!, recoveryCodes[0])).Succeeded);
+        Assert.False((await users.RedeemTwoFactorRecoveryCodeAsync(user!, recoveryCodes[0])).Succeeded);
+    }
+
+    [Fact]
+    public async Task Codes_from_the_app_verify_at_sign_in()
+    {
+        await CreateUserAsync();
+        await EnrolAsync();
+
+        await using var scope = _services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var user = await users.FindByEmailAsync(Email);
+        var key = await users.GetAuthenticatorKeyAsync(user!);
+        var provider = users.Options.Tokens.AuthenticatorTokenProvider;
+
+        Assert.True(await users.VerifyTwoFactorTokenAsync(user!, provider, Totp.Code(key!, DateTimeOffset.UtcNow)));
+        Assert.False(await users.VerifyTwoFactorTokenAsync(user!, provider, WrongCode(key!)));
+    }
+
+    [Fact]
+    public async Task Enrolling_again_is_refused_while_two_factor_is_on_and_keeps_the_key()
+    {
+        await CreateUserAsync();
+        await EnrolAsync();
+        var (oldKey, _) = await KeyAndStampAsync();
+
+        await using (var scope = _services.CreateAsyncScope())
+        {
+            var (result, key) = await scope.ServiceProvider.GetRequiredService<UserAdmin>().StartAuthenticatorSetupAsync(Email);
+            Assert.False(result.Succeeded);
+            Assert.Null(key);
+        }
+
+        Assert.Equal(oldKey, (await KeyAndStampAsync()).Key);
+    }
+
+    [Fact]
+    public async Task After_disabling_a_new_device_can_be_enrolled()
+    {
+        await CreateUserAsync();
+        await EnrolAsync();
+        var (oldKey, _) = await KeyAndStampAsync();
+
+        await using (var scope = _services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<UserAdmin>().DisableTwoFactorAsync(Email);
+        }
+
+        await EnrolAsync();
+        Assert.True(await TwoFactorEnabledAsync());
+        Assert.NotEqual(oldKey, (await KeyAndStampAsync()).Key);
+    }
+
+    [Fact]
+    public async Task Disabling_two_factor_discards_the_key_and_signs_out_existing_sessions()
+    {
+        await CreateUserAsync();
+        await EnrolAsync();
+        var (oldKey, oldStamp) = await KeyAndStampAsync();
+
+        await using (var scope = _services.CreateAsyncScope())
+        {
+            Assert.True((await scope.ServiceProvider.GetRequiredService<UserAdmin>().DisableTwoFactorAsync(Email)).Succeeded);
+        }
+
+        var (newKey, newStamp) = await KeyAndStampAsync();
+        Assert.False(await TwoFactorEnabledAsync());
+        Assert.NotEqual(oldKey, newKey);
+        Assert.NotEqual(oldStamp, newStamp);
+    }
+
+    [Fact]
+    public async Task Two_factor_commands_report_an_unknown_email()
+    {
+        await using var scope = _services.CreateAsyncScope();
+        var admin = scope.ServiceProvider.GetRequiredService<UserAdmin>();
+
+        Assert.False((await admin.StartAuthenticatorSetupAsync(Email)).Result.Succeeded);
+        Assert.False((await admin.ConfirmAuthenticatorAsync(Email, "123456")).Result.Succeeded);
+        Assert.False((await admin.DisableTwoFactorAsync(Email)).Succeeded);
+    }
+
+    /// <summary>Runs the same two steps as <c>users 2fa-enable</c>, answering with a code computed from the key.</summary>
+    private async Task<IReadOnlyList<string>> EnrolAsync()
+    {
+        await using var scope = _services.CreateAsyncScope();
+        var admin = scope.ServiceProvider.GetRequiredService<UserAdmin>();
+        var (started, key) = await admin.StartAuthenticatorSetupAsync(Email);
+        Assert.True(started.Succeeded);
+
+        // Spaced the way apps display it, which the confirmation must accept.
+        var code = Totp.Code(key!, DateTimeOffset.UtcNow).Insert(3, " ");
+        var (confirmed, recoveryCodes) = await admin.ConfirmAuthenticatorAsync(Email, code);
+        Assert.True(confirmed.Succeeded);
+        return recoveryCodes;
+    }
+
+    private async Task<bool> TwoFactorEnabledAsync()
+    {
+        await using var scope = _services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        return await users.GetTwoFactorEnabledAsync((await users.FindByEmailAsync(Email))!);
+    }
+
+    private async Task<(string? Key, string? Stamp)> KeyAndStampAsync()
+    {
+        await using var scope = _services.CreateAsyncScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var user = (await users.FindByEmailAsync(Email))!;
+        return (await users.GetAuthenticatorKeyAsync(user), await users.GetSecurityStampAsync(user));
+    }
+
+    /// <summary>A six-digit code that matches none of the time steps Identity accepts around now.</summary>
+    private static string WrongCode(string key)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var valid = Enumerable.Range(-2, 5).Select(step => Totp.Code(key, now.AddSeconds(30 * step))).ToHashSet();
+        return Enumerable.Range(0, 1_000_000).Select(n => n.ToString("D6", System.Globalization.CultureInfo.InvariantCulture)).First(c => !valid.Contains(c));
+    }
+
     private async Task CreateUserAsync()
     {
         await using var scope = _services.CreateAsyncScope();

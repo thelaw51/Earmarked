@@ -65,6 +65,14 @@
             return;
         }
 
+        // The password was right. Identity has set a short-lived cookie naming the user, which the next page reads.
+        if (result.RequiresTwoFactor)
+        {
+            Navigation.NavigateTo(
+                $"account/login-2fa?ReturnUrl={Uri.EscapeDataString(ReturnUrls.LocalOrHome(ReturnUrl))}&RememberMe={Input.RememberMe}");
+            return;
+        }
+
         // Otherwise the re-rendered form sends the password back to the browser in its value attribute.
         Input.Password = "";
         // One message for every failure. An email with no account never locks, so a separate lockout message would

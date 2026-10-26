@@ -13,7 +13,8 @@ public static class IdentityExtensions
     public const int MinimumPasswordLength = 12;
 
     /// <summary>
-    /// Registers user management with lockout on and no email confirmation, since the app never sends email.
+    /// Registers user management with lockout on, authenticator-app two-factor sign-in, and no email confirmation,
+    /// since the app never sends email.
     /// Passwords need length only: composition rules push people towards predictable passwords.
     /// </summary>
     public static IdentityBuilder AddPbrIdentity(this IServiceCollection services) =>
@@ -35,5 +36,7 @@ public static class IdentityExtensions
                 options.Password.RequiredUniqueChars = 1;
             })
             .AddEntityFrameworkStores<AppDbContext>()
-            .AddSignInManager();
+            .AddSignInManager()
+            // Only the authenticator provider: the others (email and phone tokens) need Data Protection and are unused.
+            .AddTokenProvider<AuthenticatorTokenProvider<AppUser>>(TokenOptions.DefaultAuthenticatorProvider);
 }

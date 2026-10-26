@@ -1,0 +1,82 @@
+@page "/account/login-2fa"
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+@layout AccountLayout
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using PodcastBookRecs.Core.Accounts
+@using PodcastBookRecs.Core.Configuration
+@inject SignInManager<AppUser> SignInManager
+@inject NavigationManager Navigation
+
+@* The second sign-in step, reached only with the cookie Identity sets after a correct password. Static SSR like the
+   first step, for the same reason: signing in sets a cookie. *@
+<PageTitle>Sign in</PageTitle>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+}
+
+<EditForm Model="Input" method="post" OnValidSubmit="VerifyAsync" FormName="login-2fa" class="account-form">
+    <DataAnnotationsValidator />
+    <label for="code">Code from your authenticator app, or a recovery code</label>
+    <InputText id="code" type="text" @bind-Value="Input.Code" autocomplete="one-time-code" autofocus />
+    <ValidationMessage For="() => Input.Code" />
+
+    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-2">Verify</MudButton>
+</EditForm>
+
+<MudButton Href="account/login" Variant="Variant.Text" FullWidth="true" Class="mt-2">Start again</MudButton>
+
+@code {
+    [SupplyParameterFromForm]
+    private CodeInput Input { get; set; } = null!;
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    [SupplyParameterFromQuery]
+    private bool RememberMe { get; set; }
+
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+
+        // Missing or expired (Identity gives it 5 minutes): the password has to be entered again.
+        if (await SignInManager.GetTwoFactorAuthenticationUserAsync() is null)
+        {
+            Navigation.NavigateTo("account/login");
+        }
+    }
+
+    private async Task VerifyAsync()
+    {
+        // Wrong app codes count towards the same lockout as wrong passwords. Identity doesn't count recovery codes, and
+        // lets them through a lockout, because each is ten random characters. A recovery-code sign-in is never
+        // persistent, whatever "Keep me signed in" said.
+        var result = AuthenticatorCodes.IsAuthenticatorCode(Input.Code)
+            ? await SignInManager.TwoFactorAuthenticatorSignInAsync(AuthenticatorCodes.Normalise(Input.Code), RememberMe, rememberClient: false)
+            : await SignInManager.TwoFactorRecoveryCodeSignInAsync(Input.Code.Trim());
+
+        if (result.Succeeded)
+        {
+            Navigation.NavigateTo(ReturnUrls.LocalOrHome(ReturnUrl));
+            return;
+        }
+
+        Input.Code = "";
+        // Only someone who knew the password gets this far, so saying the account is locked gives nothing away.
+        _error = result.IsLockedOut
+            ? $"Too many failed attempts. Try again in {IdentityExtensions.LockoutDuration.TotalMinutes:0} minutes."
+            : "That code didn't work. App codes change every 30 seconds, and each recovery code works once.";
+    }
+
+    private sealed class CodeInput
+    {
+        [Required, StringLength(64)]
+        public string Code { get; set; } = "";
+    }
+}
