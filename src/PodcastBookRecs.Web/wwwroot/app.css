@@ -1,5 +1,4 @@
-/* Colours come from the MudBlazor palette (Services/AppTheme.cs) through --mud-palette-* variables. The only literal
-   colours here are the dark fallbacks for the account pages, which render without a circuit. */
+/* Colours come from the MudBlazor palette (Services/AppTheme.cs) through --mud-palette-* variables. */
 
 :root {
     --app-ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -909,25 +908,6 @@ html, body {
 
 .account-tagline.mud-typography {
     color: var(--mud-palette-text-secondary);
-}
-
-/* The theme provider can't see the browser's dark-mode setting without a circuit, so dark mode here is plain CSS,
-   repeating the dark palette's main surfaces from AppTheme.cs. */
-@media (prefers-color-scheme: dark) {
-    .account-shell {
-        --mud-palette-background: #0E0D14;
-        --mud-palette-surface: #18161F;
-        --mud-palette-text-primary: #ECEAF5;
-        --mud-palette-text-secondary: #9A95B3;
-        --mud-palette-lines-default: #2A2735;
-        --mud-palette-lines-inputs: #3A3648;
-        --mud-palette-primary: #9B8BFF;
-        --mud-palette-primary-text: #120F24;
-    }
-
-    body:has(.account-shell) {
-        background: #0E0D14;
-    }
 }
 
 /* Sign-in fields. The account pages render without a circuit, where MudBlazor inputs don't work. */
