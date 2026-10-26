@@ -106,6 +106,69 @@ public static class TranscriptionProviders
     public static readonly IReadOnlyList<string> Known = [OpenAiCompatible];
 }
 
+/// <summary>Book mention extraction settings. Extraction is off unless <see cref="Provider"/> is set.</summary>
+public sealed class ExtractionOptions : IValidatableObject
+{
+    public const string Section = "Extraction";
+
+    /// <summary>Which adapter to use, e.g. <c>OpenAiCompatible</c>. Empty disables extraction.</summary>
+    public string? Provider { get; set; }
+
+    /// <summary>The backend's base URL, e.g. <c>http://mac-mini.lan:1234</c>.</summary>
+    public string? BaseUrl { get; set; }
+
+    /// <summary>The model name the backend knows, e.g. <c>qwen/qwen3-8b</c> in LM Studio.</summary>
+    public string Model { get; set; } = "qwen/qwen3-8b";
+
+    /// <summary>
+    /// Words of transcript sent per request. 1,800 words is about 4,300 tokens with the prompt, which fits an 8,192
+    /// token context with room for the answer. Smaller windows find more books but take more requests.
+    /// </summary>
+    [Range(200, 20000)]
+    public int WindowWords { get; set; } = 1800;
+
+    /// <summary>Words each window repeats from the end of the previous one, so a mention across a boundary isn't cut in half.</summary>
+    [Range(0, 2000)]
+    public int OverlapWords { get; set; } = 200;
+
+    /// <summary>Covers loading the model on the first request after it was unloaded, as well as the answer itself.</summary>
+    [Range(1, 60)]
+    public int RequestTimeoutMinutes { get; set; } = 10;
+
+    public bool Enabled => !string.IsNullOrWhiteSpace(Provider);
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (!Enabled)
+        {
+            yield break;
+        }
+
+        if (!ExtractionProviders.Known.Contains(Provider!, StringComparer.OrdinalIgnoreCase))
+        {
+            yield return new ValidationResult($"Unknown Extraction:Provider '{Provider}'. Known: {string.Join(", ", ExtractionProviders.Known)}.");
+        }
+
+        if (!Uri.TryCreate(BaseUrl, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            yield return new ValidationResult("Extraction:BaseUrl must be an absolute http(s) URL when a provider is set.");
+        }
+
+        if (OverlapWords >= WindowWords / 2)
+        {
+            yield return new ValidationResult("Extraction:OverlapWords must be less than half of WindowWords.");
+        }
+    }
+}
+
+/// <summary>Names accepted in <see cref="ExtractionOptions.Provider"/>.</summary>
+public static class ExtractionProviders
+{
+    public const string OpenAiCompatible = "OpenAiCompatible";
+
+    public static readonly IReadOnlyList<string> Known = [OpenAiCompatible];
+}
+
 /// <summary>Outbound HTTP settings for feed-supplied URLs.</summary>
 public sealed class HttpOptions
 {

@@ -20,6 +20,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityUser
     public DbSet<PodcastFeed> PodcastFeeds => Set<PodcastFeed>();
     public DbSet<Episode> Episodes => Set<Episode>();
     public DbSet<Transcript> Transcripts => Set<Transcript>();
+    public DbSet<BookMention> BookMentions => Set<BookMention>();
     public DbSet<WorkerCommand> WorkerCommands => Set<WorkerCommand>();
     public DbSet<WorkerStatus> WorkerStatuses => Set<WorkerStatus>();
 
@@ -55,6 +56,16 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityUser
         {
             b.HasIndex(t => t.EpisodeId).IsUnique();
             b.Property(t => t.Segments).HasConversion(JsonConverter<List<TranscriptSegment>>(), JsonComparer<List<TranscriptSegment>>());
+        });
+
+        // Mentions belong to the transcript they were extracted from: replacing or deleting it removes them.
+        builder.Entity<BookMention>(b =>
+        {
+            b.HasOne(m => m.Episode).WithMany(e => e.Mentions).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne(m => m.Transcript).WithMany(t => t.Mentions).OnDelete(DeleteBehavior.Cascade);
+            b.Property(m => m.Title).HasMaxLength(BookMention.MaxTitleLength);
+            b.Property(m => m.Author).HasMaxLength(BookMention.MaxAuthorLength);
+            b.Property(m => m.Quote).HasMaxLength(BookMention.MaxQuoteLength);
         });
 
         builder.Entity<WorkerCommand>(b => b.HasIndex(c => c.CompletedAt));

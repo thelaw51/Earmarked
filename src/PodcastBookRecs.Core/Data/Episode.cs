@@ -29,6 +29,8 @@ public class Episode
     public DateTime UpdatedAt { get; set; }
 
     public Transcript? Transcript { get; set; }
+
+    public List<BookMention> Mentions { get; set; } = [];
 }
 
 /// <summary>Where an episode is in the pipeline.</summary>
@@ -46,10 +48,20 @@ public enum EpisodeState
     /// <summary>Claimed by the transcriber; audio is being downloaded, split or transcribed. Never refreshed by the poller.</summary>
     Transcribing = 4,
 
+    /// <summary>Claimed by the extractor; the transcript is being searched for book mentions. Never refreshed by the poller.</summary>
+    Extracting = 5,
+
+    /// <summary>Book mentions have been extracted (possibly none).</summary>
+    Extracted = 6,
+
     /// <summary>Older than the backfill window when the feed was first added. Stored so later polls don't treat it as new.</summary>
     Skipped = 10,
 
+    /// <summary>Transcription ran out of attempts.</summary>
     Failed = 20,
+
+    /// <summary>Extraction ran out of attempts. The transcript is kept, so it can be re-run without transcribing again.</summary>
+    ExtractionFailed = 21,
 }
 
 /// <summary>A <c>&lt;podcast:transcript&gt;</c> entry from the feed item.</summary>

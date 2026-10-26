@@ -8,7 +8,7 @@ namespace PodcastBookRecs.Worker.Services;
 
 /// <summary>
 /// Runs the Worker's loops side by side: UI commands, scheduled feed polls, transcript fetching, the heartbeat and,
-/// when a provider is configured, transcription.
+/// when their providers are configured, transcription and book extraction.
 /// A loop that throws logs the error and carries on after its delay, so one bad feed or a locked database
 /// doesn't stop the others.
 /// </summary>
@@ -20,7 +20,8 @@ internal sealed partial class PipelineService(
     IOptions<PollingOptions> polling,
     TimeProvider time,
     ILogger<PipelineService> logger,
-    EpisodeTranscriber? transcriber = null) : BackgroundService
+    EpisodeTranscriber? transcriber = null,
+    EpisodeExtractor? extractor = null) : BackgroundService
 {
     private static readonly TimeSpan IdleDelay = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MinPause = TimeSpan.FromSeconds(30);
@@ -37,26 +38,36 @@ internal sealed partial class PipelineService(
         };
         if (transcriber is not null)
         {
-            loops.Add(TranscriptionLoop(transcriber, stoppingToken));
+            loops.Add(BackendLoop("transcription", transcriber.CleanUpOrphansAsync, transcriber.ProcessNextAsync, stoppingToken));
+        }
+
+        if (extractor is not null)
+        {
+            loops.Add(BackendLoop("extraction", null, extractor.ProcessNextAsync, stoppingToken));
         }
 
         return Task.WhenAll(loops);
     }
 
     /// <summary>
-    /// Transcribes episodes back to back while any are due. When the backend is unreachable or the disk is full,
-    /// waits 30 seconds, doubling up to 10 minutes, without counting anything against the episode.
+    /// Processes episodes back to back while any are due, for a worker that depends on an external backend. When the
+    /// backend is unreachable (or the disk is full), waits 30 seconds, doubling up to 10 minutes, without counting
+    /// anything against the episode.
     /// </summary>
-    private async Task TranscriptionLoop(EpisodeTranscriber worker, CancellationToken stoppingToken)
+    private async Task BackendLoop(
+        string name, Func<CancellationToken, Task>? startup, Func<CancellationToken, Task<WorkOutcome>> processNext, CancellationToken stoppingToken)
     {
         await Task.Yield();
-        try
+        if (startup is not null)
         {
-            await worker.CleanUpOrphansAsync(stoppingToken);
-        }
-        catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
-        {
-            LogLoopFailed(ex, "transcription clean-up");
+            try
+            {
+                await startup(stoppingToken);
+            }
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+            {
+                LogLoopFailed(ex, name + " start-up");
+            }
         }
 
         var pause = MinPause;
@@ -65,18 +76,18 @@ internal sealed partial class PipelineService(
             TimeSpan delay;
             try
             {
-                var outcome = await worker.ProcessNextAsync(stoppingToken);
+                var outcome = await processNext(stoppingToken);
                 delay = outcome switch
                 {
-                    TranscriberOutcome.Worked => TimeSpan.Zero,
-                    TranscriberOutcome.Idle => IdleDelay,
+                    WorkOutcome.Worked => TimeSpan.Zero,
+                    WorkOutcome.Idle => IdleDelay,
                     _ => pause,
                 };
-                pause = outcome == TranscriberOutcome.Paused ? TimeSpan.FromTicks(Math.Min(pause.Ticks * 2, MaxPause.Ticks)) : MinPause;
+                pause = outcome == WorkOutcome.Paused ? TimeSpan.FromTicks(Math.Min(pause.Ticks * 2, MaxPause.Ticks)) : MinPause;
             }
             catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
             {
-                LogLoopFailed(ex, "transcription");
+                LogLoopFailed(ex, name);
                 delay = IdleDelay;
             }
 

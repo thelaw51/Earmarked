@@ -24,6 +24,10 @@ else
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
         <MudText Typo="Typo.h4">@_episode.Title</MudText>
         <MudSpacer />
+        @if (_episode.State is EpisodeState.Extracted or EpisodeState.ExtractionFailed)
+        {
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.MenuBook" OnClick="ReextractAsync">Re-run book extraction</MudButton>
+        }
         <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Replay" OnClick="RetryAsync">Reset and retry</MudButton>
     </MudStack>
 
@@ -56,6 +60,51 @@ else
     }
     else
     {
+        <MudText Typo="Typo.h6" Class="mb-2">Books mentioned</MudText>
+        @if (_episode.State is EpisodeState.Extracted)
+        {
+            @if (_episode.Mentions.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="mb-4">No books found in this episode.</MudText>
+            }
+            else
+            {
+                <MudSimpleTable Dense="true" Hover="true" Elevation="1" Class="mb-6">
+                    <tbody>
+                        @foreach (var mention in _episode.Mentions.OrderBy(m => m.StartTime))
+                        {
+                            <tr>
+                                <td style="white-space: nowrap; width: 1%;"><MudText Typo="Typo.caption">@Display.Timestamp(mention.StartTime)</MudText></td>
+                                <td>
+                                    <MudText Typo="Typo.subtitle2">@mention.Title</MudText>
+                                    @if (mention.Author is not null)
+                                    {
+                                        <MudText Typo="Typo.caption">@mention.Author</MudText>
+                                    }
+                                </td>
+                                <td style="white-space: nowrap; width: 1%;"><MudChip T="string" Size="Size.Small" Color="Display.KindColor(mention.Kind)">@Display.KindLabel(mention.Kind)</MudChip></td>
+                                <td><MudText Typo="Typo.body2">"@mention.Quote"</MudText></td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+                <MudText Typo="Typo.caption" Class="d-block mb-6">
+                    Found by @_episode.Mentions[0].Provider · @_episode.Mentions[0].Model, prompt @_episode.Mentions[0].PromptVersion
+                </MudText>
+            }
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Class="mb-4">
+                @(_episode.State switch
+                {
+                    EpisodeState.Extracting => "Searching the transcript for books now.",
+                    EpisodeState.ExtractionFailed => "Book extraction gave up. Use Re-run book extraction to try again.",
+                    _ => "Queued for book extraction.",
+                })
+            </MudText>
+        }
+
         <MudText Typo="Typo.h6" Class="mb-2">
             Transcript · @Display.TranscriptOrigin(_episode.Transcript), @_episode.Transcript.Segments.Count segments
         </MudText>
@@ -91,6 +140,7 @@ else
             _episode = await db.Episodes.AsNoTracking()
                 .Include(e => e.PodcastFeed)
                 .Include(e => e.Transcript)
+                .Include(e => e.Mentions)
                 .SingleOrDefaultAsync(e => e.Id == Id);
             if (_episode is not null)
             {
@@ -111,6 +161,21 @@ else
         finally
         {
             _loading = false;
+        }
+    }
+
+    private async Task ReextractAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.ReextractEpisode, EpisodeId = Id, CreatedAt = Time.GetUtcNow().UtcDateTime });
+            await db.SaveChangesAsync();
+            Snackbar.Add("Book extraction queued. The transcript is kept.", Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Couldn't queue book extraction: {ex.Message}", Severity.Error);
         }
     }
 

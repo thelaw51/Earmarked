@@ -12,13 +12,13 @@ using PodcastBookRecs.Core.Transcripts;
 
 namespace PodcastBookRecs.Core.Pipeline;
 
-/// <summary>What one call to <see cref="EpisodeTranscriber.ProcessNextAsync"/> did, so the caller knows how long to wait.</summary>
-public enum TranscriberOutcome
+/// <summary>What one call to a worker such as <see cref="EpisodeTranscriber.ProcessNextAsync"/> did, so the caller knows how long to wait.</summary>
+public enum WorkOutcome
 {
     /// <summary>Nothing was due.</summary>
     Idle,
 
-    /// <summary>An episode was transcribed, or a failure was recorded against it. Look for the next one straight away.</summary>
+    /// <summary>An episode was processed, or a failure was recorded against it. Look for the next one straight away.</summary>
     Worked,
 
     /// <summary>The backend couldn't be reached, or the disk is too full. Nothing was counted against the episode; back off.</summary>
@@ -48,12 +48,12 @@ public sealed partial class EpisodeTranscriber(
     private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(60);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public async Task<TranscriberOutcome> ProcessNextAsync(CancellationToken cancellationToken)
+    public async Task<WorkOutcome> ProcessNextAsync(CancellationToken cancellationToken)
     {
         var episode = await ClaimNextAsync(cancellationToken);
         if (episode is null)
         {
-            return TranscriberOutcome.Idle;
+            return WorkOutcome.Idle;
         }
 
         try
@@ -63,24 +63,24 @@ public sealed partial class EpisodeTranscriber(
         catch (BackendUnavailableException ex)
         {
             LogPaused(ex.Message);
-            return TranscriberOutcome.Paused;
+            return WorkOutcome.Paused;
         }
         catch (InsufficientDiskSpaceException ex)
         {
             LogPaused(ex.Message);
-            return TranscriberOutcome.Paused;
+            return WorkOutcome.Paused;
         }
         catch (AudioDownloadException ex) when (ex.LinkMayHaveExpired)
         {
             // Signed links (e.g. Patreon) expire. Wait for the next poll, which refreshes the stored URL.
             var nextPoll = (episode.PodcastFeed.LastPolledAt ?? time.GetUtcNow().UtcDateTime).AddMinutes(polling.Value.IntervalMinutes + 5);
             await RecordFailureAsync(episode, ex.Message, notBefore: nextPoll, cancellationToken);
-            return TranscriberOutcome.Worked;
+            return WorkOutcome.Worked;
         }
         catch (Exception ex) when (ex is TranscriptionFailedException or AudioProcessingException or AudioDownloadException or IOException)
         {
             await RecordFailureAsync(episode, ex.Message, notBefore: null, cancellationToken);
-            return TranscriberOutcome.Worked;
+            return WorkOutcome.Worked;
         }
     }
 
@@ -135,7 +135,7 @@ public sealed partial class EpisodeTranscriber(
         return await db.Episodes.AsNoTracking().Include(e => e.PodcastFeed).SingleAsync(e => e.Id == candidate.Id, cancellationToken);
     }
 
-    private async Task<TranscriberOutcome> TranscribeAsync(Episode episode, CancellationToken cancellationToken)
+    private async Task<WorkOutcome> TranscribeAsync(Episode episode, CancellationToken cancellationToken)
     {
         var o = options.Value;
         var dir = workspace.For(episode.Id);
@@ -185,7 +185,7 @@ public sealed partial class EpisodeTranscriber(
             if (tracked is null || tracked.State != EpisodeState.Transcribing)
             {
                 // Reset or deleted while we worked; its work folder is cleaned up as an orphan.
-                return TranscriberOutcome.Worked;
+                return WorkOutcome.Worked;
             }
 
             var now = time.GetUtcNow().UtcDateTime;
@@ -214,7 +214,7 @@ public sealed partial class EpisodeTranscriber(
 
         workspace.Delete(episode.Id);
         LogTranscribed(episode.Title, segments.Count, chunks.Count);
-        return TranscriberOutcome.Worked;
+        return WorkOutcome.Worked;
     }
 
     /// <summary>Streams the enclosure to disk through the guarded client. Error messages never include the URL, which can carry a token.</summary>

@@ -8,6 +8,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Prompts are versioned files: a changed prompt is a new file and version, never an edit to an old one. -->
+    <EmbeddedResource Include="Extraction/Prompts/*.txt" LogicalName="Prompts/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="PodcastBookRecs.Tests" />
   </ItemGroup>
 

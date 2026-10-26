@@ -11,6 +11,7 @@ builder.Logging.AddPbrLogging(builder.Environment);
 
 builder.Services.AddPbrCore(builder.Configuration);
 builder.Services.AddPbrTranscription(builder.Configuration);
+builder.Services.AddPbrExtraction(builder.Configuration);
 builder.Services.Configure<HealthCheckPublisherOptions>(o =>
 {
     o.Delay = TimeSpan.FromSeconds(10);

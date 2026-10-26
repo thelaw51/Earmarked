@@ -69,7 +69,7 @@ public sealed class EpisodeTranscriberTests : IAsyncLifetime
     [Fact]
     public async Task Transcribes_an_episode_and_shifts_each_chunk_by_its_offset()
     {
-        Assert.Equal(TranscriberOutcome.Worked, await _transcriber.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Worked, await _transcriber.ProcessNextAsync(Ct));
 
         var episode = await LoadAsync();
         Assert.Equal(EpisodeState.Transcribed, episode.State);
@@ -88,14 +88,14 @@ public sealed class EpisodeTranscriberTests : IAsyncLifetime
         _backend.FailOnCall = 2;
         _backend.Failure = () => new BackendUnavailableException("Can't reach the transcription backend.");
 
-        Assert.Equal(TranscriberOutcome.Paused, await _transcriber.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Paused, await _transcriber.ProcessNextAsync(Ct));
         var paused = await LoadAsync();
         Assert.Equal(EpisodeState.Transcribing, paused.State);
         Assert.Equal(0, paused.Attempts);
         Assert.True(File.Exists(Path.Combine(_workspace.For(_episodeId), "chunk_000.json")));
 
         _backend.FailOnCall = null;
-        Assert.Equal(TranscriberOutcome.Worked, await _transcriber.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Worked, await _transcriber.ProcessNextAsync(Ct));
 
         Assert.Equal(EpisodeState.Transcribed, (await LoadAsync()).State);
         Assert.Equal(["chunk_000.wav", "chunk_001.wav", "chunk_001.wav", "chunk_002.wav"], _backend.Calls);
@@ -108,12 +108,12 @@ public sealed class EpisodeTranscriberTests : IAsyncLifetime
         _backend.FailOnCall = 1;
         _backend.Failure = () => new TranscriptionFailedException("Transcription backend returned HTTP 500: bad audio");
 
-        Assert.Equal(TranscriberOutcome.Worked, await _transcriber.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Worked, await _transcriber.ProcessNextAsync(Ct));
         var first = await LoadAsync();
         Assert.Equal(EpisodeState.Transcribing, first.State);
         Assert.Equal(1, first.Attempts);
         Assert.True(first.NextAttemptAt > DateTime.UtcNow);
-        Assert.Equal(TranscriberOutcome.Idle, await _transcriber.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Idle, await _transcriber.ProcessNextAsync(Ct));
 
         _backend.FailOnCall = _backend.Calls.Count + 1;
         await SetAsync(e => e.NextAttemptAt = DateTime.UtcNow.AddMinutes(-1));
@@ -144,10 +144,10 @@ public sealed class EpisodeTranscriberTests : IAsyncLifetime
     {
         await SetFeedAsync(f => f.PublishesTranscripts = true);
         await SetAsync(e => e.PublishedAt = DateTime.UtcNow.AddDays(-1));
-        Assert.Equal(TranscriberOutcome.Idle, await _transcriber.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Idle, await _transcriber.ProcessNextAsync(Ct));
 
         await SetAsync(e => e.PublishedAt = DateTime.UtcNow.AddDays(-4));
-        Assert.Equal(TranscriberOutcome.Worked, await _transcriber.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Worked, await _transcriber.ProcessNextAsync(Ct));
     }
 
     [Theory]
@@ -159,7 +159,7 @@ public sealed class EpisodeTranscriberTests : IAsyncLifetime
     {
         await SetAsync(e => e.State = state);
 
-        Assert.Equal(TranscriberOutcome.Idle, await _transcriber.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Idle, await _transcriber.ProcessNextAsync(Ct));
         Assert.Empty(_backend.Calls);
     }
 
@@ -176,7 +176,7 @@ public sealed class EpisodeTranscriberTests : IAsyncLifetime
             }
         };
 
-        Assert.Equal(TranscriberOutcome.Worked, await _transcriber.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Worked, await _transcriber.ProcessNextAsync(Ct));
 
         var episode = await LoadAsync();
         Assert.Equal(EpisodeState.AwaitingTranscription, episode.State);
