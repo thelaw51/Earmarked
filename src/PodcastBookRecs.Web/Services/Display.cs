@@ -23,8 +23,11 @@ public static class Display
         EpisodeState.TranscriptFetched => "Transcript fetched",
         EpisodeState.Transcribing => "Transcribing",
         EpisodeState.Transcribed => "Transcribed",
+        EpisodeState.Extracting => "Finding books",
+        EpisodeState.Extracted => "Books extracted",
         EpisodeState.Skipped => "Skipped (backfill)",
         EpisodeState.Failed => "Failed",
+        EpisodeState.ExtractionFailed => "Book extraction failed",
         _ => state.ToString(),
     };
 
@@ -34,12 +37,30 @@ public static class Display
             ? $"speech-to-text ({transcript.Provider ?? "unknown provider"} · {transcript.Model ?? "unknown model"})"
             : $"{transcript.Format} from the feed";
 
+    public static string KindLabel(MentionKind kind) => kind switch
+    {
+        MentionKind.OwnBook => "Own book",
+        MentionKind.Recommended => "Recommended",
+        MentionKind.Criticised => "Criticised",
+        MentionKind.Discussed => "Discussed",
+        _ => "Passing",
+    };
+
+    public static Color KindColor(MentionKind kind) => kind switch
+    {
+        MentionKind.Recommended => Color.Success,
+        MentionKind.OwnBook => Color.Info,
+        MentionKind.Criticised => Color.Warning,
+        _ => Color.Default,
+    };
+
     public static Color StateColor(EpisodeState state) => state switch
     {
-        EpisodeState.New or EpisodeState.Transcribing => Color.Info,
+        EpisodeState.New or EpisodeState.Transcribing or EpisodeState.Extracting => Color.Info,
         EpisodeState.AwaitingTranscription => Color.Warning,
-        EpisodeState.TranscriptFetched or EpisodeState.Transcribed => Color.Success,
-        EpisodeState.Failed => Color.Error,
+        EpisodeState.TranscriptFetched or EpisodeState.Transcribed => Color.Primary,
+        EpisodeState.Extracted => Color.Success,
+        EpisodeState.Failed or EpisodeState.ExtractionFailed => Color.Error,
         _ => Color.Default,
     };
 }

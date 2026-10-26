@@ -109,7 +109,7 @@ else
                 .OrderBy(p => p.Title)
                 .Select(p => new Row(p.Id, p.FeedUrl, p.Title, p.Author, p.ImageUrl, p.Enabled, p.LastPolledAt, p.LastPollError,
                     p.Episodes.Count(e => e.State != EpisodeState.Skipped),
-                    p.Episodes.Count(e => e.State == EpisodeState.TranscriptFetched || e.State == EpisodeState.Transcribed),
+                    p.Episodes.Count(e => e.Transcript != null),
                     p.Episodes.Count(e => e.State == EpisodeState.AwaitingTranscription),
                     p.Episodes.Count(e => e.State == EpisodeState.Skipped)))
                 .ToListAsync();
