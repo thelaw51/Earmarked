@@ -16,7 +16,7 @@ public class BookMention
     public Guid TranscriptId { get; set; }
     public Transcript Transcript { get; set; } = null!;
 
-    /// <summary>The title as the model gave it. Open Library resolution (Phase 3, PR B) adds the canonical book.</summary>
+    /// <summary>The title as the model gave it. <see cref="Book"/> is the catalogue's version, once matched.</summary>
     public required string Title { get; set; }
     public string? Author { get; set; }
 
@@ -36,6 +36,36 @@ public class BookMention
     /// <summary>Which prompt produced this mention, so mentions from an older prompt can be found and re-run.</summary>
     public required string PromptVersion { get; set; }
     public DateTime CreatedAt { get; set; }
+
+    /// <summary>Whether the book catalogue has been asked about this mention, and what it said.</summary>
+    public MatchState MatchState { get; set; }
+
+    /// <summary>The catalogue's book, when <see cref="MatchState"/> is <see cref="MatchState.Matched"/>.</summary>
+    public Guid? BookId { get; set; }
+    public Book? Book { get; set; }
+
+    /// <summary>
+    /// The title and author surname in normal form (<c>CatalogMatcher.LookupKey</c>). Mentions with the same key get the
+    /// same answer, so a title already looked up is never asked about twice.
+    /// </summary>
+    public string? LookupKey { get; set; }
+
+    /// <summary>Which matching rules produced <see cref="MatchState"/>. Null until matched; a different version means match again.</summary>
+    public string? MatcherVersion { get; set; }
+    public DateTime? MatchedAt { get; set; }
+}
+
+/// <summary>Where a mention is in catalogue matching. Values are stored, so never renumber them.</summary>
+public enum MatchState
+{
+    Pending = 0,
+    Matched = 1,
+
+    /// <summary>The catalogue has no book with this title (and author). Often not a book at all.</summary>
+    NoMatch = 2,
+
+    /// <summary>The catalogue's answer for this title couldn't be used. Kept out of the queue so it can't block it.</summary>
+    LookupFailed = 3,
 }
 
 /// <summary>How a book came up. Values are stored, so never renumber them.</summary>

@@ -21,6 +21,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityUser
     public DbSet<Episode> Episodes => Set<Episode>();
     public DbSet<Transcript> Transcripts => Set<Transcript>();
     public DbSet<BookMention> BookMentions => Set<BookMention>();
+    public DbSet<Book> Books => Set<Book>();
     public DbSet<WorkerCommand> WorkerCommands => Set<WorkerCommand>();
     public DbSet<WorkerStatus> WorkerStatuses => Set<WorkerStatus>();
 
@@ -66,6 +67,22 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityUser
             b.Property(m => m.Title).HasMaxLength(BookMention.MaxTitleLength);
             b.Property(m => m.Author).HasMaxLength(BookMention.MaxAuthorLength);
             b.Property(m => m.Quote).HasMaxLength(BookMention.MaxQuoteLength);
+            b.Property(m => m.LookupKey).HasMaxLength(BookMention.MaxTitleLength + BookMention.MaxAuthorLength);
+            b.Property(m => m.MatcherVersion).HasMaxLength(40);
+            b.HasOne(m => m.Book).WithMany(k => k.Mentions).OnDelete(DeleteBehavior.SetNull);
+            b.HasIndex(m => new { m.LookupKey, m.MatcherVersion });
+            b.HasIndex(m => m.MatcherVersion);
+        });
+
+        builder.Entity<Book>(b =>
+        {
+            b.HasIndex(k => new { k.Provider, k.CatalogId }).IsUnique();
+            b.Property(k => k.Provider).HasMaxLength(40);
+            b.Property(k => k.CatalogId).HasMaxLength(40);
+            b.Property(k => k.Title).HasMaxLength(Book.MaxTitleLength);
+            b.Property(k => k.Authors).HasMaxLength(Book.MaxAuthorsLength);
+            b.Property(k => k.InfoUrl).HasMaxLength(Book.MaxUrlLength);
+            b.Property(k => k.CoverUrl).HasMaxLength(Book.MaxUrlLength);
         });
 
         builder.Entity<WorkerCommand>(b => b.HasIndex(c => c.CompletedAt));
