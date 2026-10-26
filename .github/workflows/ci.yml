@@ -20,6 +20,7 @@ jobs:
   test:
     name: Build and test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -28,20 +29,31 @@ jobs:
           global-json-file: global.json
 
       # The chunker tests run the real ffmpeg, which the Docker image ships. They fail rather than skip if it's missing here.
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # It installs in the background while the solution restores and builds, since neither needs it.
+      - name: Install ffmpeg, restore and build
+        run: |
+          # A stalled Ubuntu mirror has hung this step for 10+ minutes, so apt retries and gives up on a dead connection.
+          apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          (sudo apt-get "${apt_opts[@]}" update && sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends ffmpeg) \
+            > "$RUNNER_TEMP/ffmpeg.log" 2>&1 &
+          ffmpeg_pid=$!
+          dotnet restore
+          dotnet build --no-restore -c Release
+          wait "$ffmpeg_pid" || { cat "$RUNNER_TEMP/ffmpeg.log"; exit 1; }
 
-      - run: dotnet restore
-      - run: dotnet build --no-restore -c Release
       - run: dotnet test --no-build -c Release
 
+  # Builds alongside the tests. On pushes it uploads the image by digest only, with no tags; "publish" tags it once
+  # the tests pass, so no tag ever points at an untested build.
   image:
     name: Docker image
-    needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
 
@@ -55,6 +67,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Supplies the labels and, for v* tags, the VERSION build arg. The publish job applies the tags; don't add
+      # tags to the build step below, which pushes by digest only.
       - id: meta
         uses: docker/metadata-action@v6
         with:
@@ -69,15 +83,52 @@ jobs:
             org.opencontainers.image.description=Self-hosted tracker for books mentioned on podcasts
 
       # Pull requests build the image to catch Dockerfile breakage but never push it.
-      - uses: docker/build-push-action@v7
+      - id: build
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
+          outputs: ${{ github.event_name != 'pull_request' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=cacheonly' }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ github.ref_type == 'tag' && steps.meta.outputs.version || '' }}
             SOURCE_REVISION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  publish:
+    name: Publish image
+    needs: [test, image]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Same tag rules as the image job. Keep the two in step.
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      # Points each tag at the already-pushed manifest. Only registry metadata changes; no layers are uploaded.
+      - name: Tag the tested image
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          docker buildx imagetools create \
+            $(jq -r '.tags | map("--tag " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            "$IMAGE@$DIGEST"

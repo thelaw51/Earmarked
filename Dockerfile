@@ -28,17 +28,19 @@ RUN dotnet publish src/PodcastBookRecs.Worker -c Release -r $(cat /tmp/rid) --se
         ${VERSION:+-p:Version=$VERSION} -p:SourceRevisionId=$SOURCE_REVISION
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
-WORKDIR /app
-COPY --from=build /app .
-COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
-# ffmpeg splits episode audio into chunks for transcription.
+# ffmpeg splits episode audio into chunks for transcription. It comes before the app files so the layer stays
+# cached between commits; it is rebuilt when the aspnet base image changes.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
 # The image's non-root user is UID 1654. Bind-mounted /data must be writable by that UID (see README).
 RUN mkdir -p /data /config && chown "$APP_UID:$APP_UID" /data /config
+
+WORKDIR /app
+COPY --from=build /app .
+COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 USER $APP_UID
 
 ENV ASPNETCORE_HTTP_PORTS=8080 \

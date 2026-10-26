@@ -103,7 +103,7 @@ One image runs either app: `entrypoint.sh worker|web`. Things that broke before 
 - The image publishes for one runtime (from `TARGETARCH`) and runs as UID 1654, which must own the `/data` bind mount. Data Protection keys live in `/data/keys`; transcription scratch files in `/data/work`.
 - ffmpeg comes from Ubuntu's apt package (6.1 at the time of writing). It roughly doubles the image size; a static build would be smaller but adds a third-party supply-chain dependency.
 
-CI pushes `ghcr.io/thelaw51/podcastbookrecs` tagged `latest` and `sha-<short>` from `main`, plus semver tags from `v*` tags. The package is public. Deployment is a manual re-pull in Portainer; no auto-deploy.
+CI pushes `ghcr.io/thelaw51/podcastbookrecs` tagged `latest` and `sha-<short>` from `main`, plus semver tags from `v*` tags. The "Docker image" job builds alongside the tests and pushes by digest only; "Publish image" applies the tags once both pass, so a tag never points at an untested build. Its tag rules repeat the image job's `metadata-action` step: change both together. The package is public. Deployment is a manual re-pull in Portainer; no auto-deploy.
 
 ## UI
 
