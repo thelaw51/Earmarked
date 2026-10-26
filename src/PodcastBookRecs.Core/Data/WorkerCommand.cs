@@ -20,4 +20,10 @@ public enum WorkerCommandType
 
     /// <summary>Deletes an episode's book mentions and extracts them again from the stored transcript.</summary>
     ReextractEpisode = 3,
+
+    /// <summary>Moves an episode to the front of its queue. A skipped episode is included first.</summary>
+    PrioritiseEpisode = 4,
+
+    /// <summary>Queues an episode skipped by the backfill window, in its normal place.</summary>
+    IncludeEpisode = 5,
 }

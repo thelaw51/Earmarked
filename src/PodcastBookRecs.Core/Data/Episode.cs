@@ -26,6 +26,13 @@ public class Episode
     public DateTime? NextAttemptAt { get; set; }
     public string? LastError { get; set; }
     public DateTime DiscoveredAt { get; set; }
+
+    /// <summary>
+    /// When "Do this next" was asked for. Prioritised episodes go to the front of the transcript, transcription and
+    /// extraction queues, earliest request first, skipping the published-transcript grace period. Cleared when the
+    /// episode finishes extraction or gives up.
+    /// </summary>
+    public DateTime? PrioritisedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
     public Transcript? Transcript { get; set; }

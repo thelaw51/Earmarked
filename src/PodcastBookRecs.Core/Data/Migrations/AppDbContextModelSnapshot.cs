@@ -318,6 +318,9 @@ namespace PodcastBookRecs.Core.Data.Migrations
                     b.Property<Guid>("PodcastFeedId")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("PrioritisedAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("PublishedAt")
                         .HasColumnType("TEXT");
 
