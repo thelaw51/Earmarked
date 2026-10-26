@@ -8,8 +8,10 @@ using Microsoft.Extensions.Options;
 using PodcastBookRecs.Core.Audio;
 using PodcastBookRecs.Core.Backends;
 using PodcastBookRecs.Core.Data;
+using PodcastBookRecs.Core.Extraction;
 using PodcastBookRecs.Core.Net;
 using PodcastBookRecs.Core.Pipeline;
+using PodcastBookRecs.Core.Providers.Extraction.OpenAiCompatible;
 using PodcastBookRecs.Core.Providers.Transcription.OpenAiCompatible;
 using PodcastBookRecs.Core.Transcription;
 
@@ -106,6 +108,44 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IAudioChunker, FfmpegAudioChunker>();
         services.AddSingleton<EpisodeTranscriber>();
+        return services;
+    }
+
+    /// <summary>
+    /// Registers book mention extraction for the Worker: the configured provider's adapter and health check, and the
+    /// extractor. Does nothing beyond binding options when no provider is configured.
+    /// </summary>
+    public static IServiceCollection AddPbrExtraction(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddOptions<ExtractionOptions>().Bind(configuration.GetSection(ExtractionOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+        var extraction = configuration.GetSection(ExtractionOptions.Section).Get<ExtractionOptions>() ?? new ExtractionOptions();
+        if (!extraction.Enabled)
+        {
+            return services;
+        }
+
+        services.AddHttpClient(OpenAiCompatibleBookExtractor.HttpClientName, client =>
+            {
+                client.BaseAddress = new Uri(extraction.BaseUrl!.TrimEnd('/') + "/");
+                client.Timeout = TimeSpan.FromMinutes(extraction.RequestTimeoutMinutes);
+                client.MaxResponseContentBufferSize = 1024 * 1024;
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                UseProxy = false,
+                ConnectCallback = OutboundConnections.ConnectWithTimeout(TimeSpan.FromSeconds(10)),
+            });
+
+        switch (extraction.Provider)
+        {
+            case var p when string.Equals(p, ExtractionProviders.OpenAiCompatible, StringComparison.OrdinalIgnoreCase):
+                services.AddSingleton<IBookExtractor, OpenAiCompatibleBookExtractor>();
+                services.AddHealthChecks().AddCheck<OpenAiCompatibleExtractionHealthCheck>("extraction", tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
+                break;
+        }
+
+        services.AddSingleton<EpisodeExtractor>();
         return services;
     }
 

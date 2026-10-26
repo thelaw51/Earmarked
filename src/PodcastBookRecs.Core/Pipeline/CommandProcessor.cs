@@ -67,6 +67,10 @@ public sealed partial class CommandProcessor(
                 await RetryEpisodeAsync(episodeId, cancellationToken);
                 break;
 
+            case WorkerCommandType.ReextractEpisode when command.EpisodeId is Guid episodeId:
+                await ReextractEpisodeAsync(episodeId, cancellationToken);
+                break;
+
             default:
                 throw new InvalidOperationException($"Command {command.Type} is missing its target.");
         }
@@ -95,6 +99,32 @@ public sealed partial class CommandProcessor(
         episode.UpdatedAt = time.GetUtcNow().UtcDateTime;
         await db.SaveChangesAsync(cancellationToken);
         workspace.Delete(episodeId);
+    }
+
+    /// <summary>
+    /// Deletes an episode's mentions and queues it for extraction again from its stored transcript. Only for episodes
+    /// that finished extraction or gave up: one being extracted now would race the extractor.
+    /// </summary>
+    private async Task ReextractEpisodeAsync(Guid episodeId, CancellationToken cancellationToken)
+    {
+        using var _ = await stateLock.AcquireAsync(cancellationToken);
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var episode = await db.Episodes.Include(e => e.Transcript).SingleOrDefaultAsync(e => e.Id == episodeId, cancellationToken)
+            ?? throw new InvalidOperationException($"Episode {episodeId} not found.");
+        if (episode.Transcript is null || episode.State is not (EpisodeState.Extracted or EpisodeState.ExtractionFailed))
+        {
+            throw new InvalidOperationException($"Episode {episodeId} can't be re-extracted while it's {episode.State}.");
+        }
+
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.BookMentions.Where(m => m.EpisodeId == episodeId).ExecuteDeleteAsync(cancellationToken);
+        episode.State = episode.Transcript.Source == TranscriptSource.Transcribed ? EpisodeState.Transcribed : EpisodeState.TranscriptFetched;
+        episode.Attempts = 0;
+        episode.NextAttemptAt = null;
+        episode.LastError = null;
+        episode.UpdatedAt = time.GetUtcNow().UtcDateTime;
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Command {Type} ({Id}) failed")]

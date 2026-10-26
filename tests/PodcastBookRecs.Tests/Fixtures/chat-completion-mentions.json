@@ -1,0 +1,21 @@
+{
+  "id": "chatcmpl-test",
+  "object": "chat.completion",
+  "created": 1761400000,
+  "model": "test-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"mentions\": [{\"title\": \"The Lighthouse Keeper's Almanac\", \"author\": \"Ines Calder\", \"quote\": \"I wrote The Lighthouse Keeper's Almanac after a winter on the coast.\", \"kind\": \"own_book\", \"confidence\": 0.95}, {\"title\": \"Small Rivers\", \"author\": null, \"quote\": \"everyone should read Small Rivers, honestly\", \"kind\": \"recommended\", \"confidence\": 0.8}, {\"title\": \"A Film Nobody Saw\", \"author\": null, \"quote\": \"that film was dreadful\", \"kind\": \"invented_kind\", \"confidence\": 0.4}]}"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 512,
+    "completion_tokens": 96,
+    "total_tokens": 608
+  }
+}
