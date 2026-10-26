@@ -1,31 +1,51 @@
 @inherits LayoutComponentBase
+@inject NavigationManager Navigation
 
-<MudThemeProvider @bind-IsDarkMode="_darkMode" ObserveSystemDarkModeChange="true" />
+<MudThemeProvider @ref="_themeProvider" Theme="AppTheme.Theme" @bind-IsDarkMode="_darkMode" ObserveSystemDarkModeChange="true" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
 
-<MudLayout>
-    <MudAppBar Elevation="1">
-        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="@(() => _drawerOpen = !_drawerOpen)" />
-        <MudText Typo="Typo.h6" Class="ml-3">Podcast Book Recs</MudText>
+<MudLayout Class="app-shell">
+    <MudAppBar Elevation="0" Class="app-bar">
+        <MudIconButton Icon="@Icons.Material.Rounded.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="@(() => _drawerOpen = !_drawerOpen)" aria-label="Toggle navigation" />
+        <a href="" class="brand ml-2">
+            <span class="brand-mark"><MudIcon Icon="@Icons.Material.Rounded.AutoStories" Size="Size.Small" /></span>
+            <span class="brand-name">Podcast Book Recs</span>
+        </a>
         <MudSpacer />
+        <MudTooltip Text="@(_darkMode ? "Light mode" : "Dark mode")">
+            <MudIconButton Icon="@(_darkMode ? Icons.Material.Rounded.LightMode : Icons.Material.Rounded.DarkMode)" Color="Color.Inherit"
+                           OnClick="@(() => _darkMode = !_darkMode)" aria-label="Toggle dark mode" Class="theme-toggle" />
+        </MudTooltip>
         <AuthorizeView>
-            <MudText Typo="Typo.body2" Class="mr-2 d-none d-sm-flex">@context.User.Identity?.Name</MudText>
+            <span class="user-pill d-none d-sm-flex ml-2">
+                <MudAvatar Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled">@Initial(context.User.Identity?.Name)</MudAvatar>
+                <MudText Typo="Typo.body2" Class="ml-2 mr-1">@context.User.Identity?.Name</MudText>
+            </span>
         </AuthorizeView>
         @* A full page load, because the sign-out page renders without a circuit. *@
-        <MudIconButton Icon="@Icons.Material.Filled.Logout" Color="Color.Inherit" Href="account/logout" Target="_self" aria-label="Sign out" />
+        <MudTooltip Text="Sign out">
+            <MudIconButton Icon="@Icons.Material.Rounded.Logout" Color="Color.Inherit" Href="account/logout" Target="_self" aria-label="Sign out" />
+        </MudTooltip>
     </MudAppBar>
-    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="2">
-        <MudNavMenu>
-            <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Podcasts">Podcasts</MudNavLink>
-            <MudNavLink Href="books" Icon="@Icons.Material.Filled.MenuBook">Books</MudNavLink>
-            <MudNavLink Href="status" Icon="@Icons.Material.Filled.MonitorHeart">Status</MudNavLink>
+    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="0" Variant="DrawerVariant.Responsive" Class="app-drawer">
+        <MudText Typo="Typo.overline" Class="nav-heading">Library</MudText>
+        <MudNavMenu Class="app-nav">
+            <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Rounded.Podcasts">Podcasts</MudNavLink>
+            <MudNavLink Href="books" Icon="@Icons.Material.Rounded.MenuBook">Books</MudNavLink>
+        </MudNavMenu>
+        <MudText Typo="Typo.overline" Class="nav-heading">System</MudText>
+        <MudNavMenu Class="app-nav">
+            <MudNavLink Href="status" Icon="@Icons.Material.Rounded.MonitorHeart">Status</MudNavLink>
         </MudNavMenu>
     </MudDrawer>
-    <MudMainContent Class="pt-16 pa-4">
-        <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
-            <SchemaGate>@Body</SchemaGate>
+    <MudMainContent Class="app-main">
+        <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6 px-4 px-md-8">
+            <SchemaGate>
+                @* Keyed on the address so every navigation mounts a fresh page and replays the entrance animation. *@
+                <div class="page-enter" @key="Navigation.Uri">@Body</div>
+            </SchemaGate>
         </MudContainer>
     </MudMainContent>
 </MudLayout>
@@ -37,6 +57,19 @@
 </div>
 
 @code {
+    private MudThemeProvider? _themeProvider;
     private bool _drawerOpen = true;
     private bool _darkMode;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // ObserveSystemDarkModeChange only reports changes, so read the starting value once the provider is in the page.
+        if (firstRender && _themeProvider is not null)
+        {
+            _darkMode = await _themeProvider.GetSystemDarkModeAsync();
+            StateHasChanged();
+        }
+    }
+
+    private static string Initial(string? name) => string.IsNullOrEmpty(name) ? "?" : name[..1].ToUpperInvariant();
 }
