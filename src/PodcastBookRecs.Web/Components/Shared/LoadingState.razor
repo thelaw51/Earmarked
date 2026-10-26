@@ -1,0 +1,64 @@
+@* Placeholder shapes shown while a page loads, in the rough layout of what is coming, so the page doesn't jump. *@
+<div class="loading-state" aria-busy="true" aria-label="Loading">
+    @if (Layout == LoadingLayout.Cards)
+    {
+        <MudGrid Spacing="3">
+            @for (var i = 0; i < Count; i++)
+            {
+                <MudItem xs="12" sm="6" lg="4">
+                    <div class="surface-card pa-4">
+                        <div class="d-flex gap-3">
+                            <MudSkeleton SkeletonType="SkeletonType.Rectangle" Width="64px" Height="64px" Class="rounded-lg" Animation="Animation.Wave" />
+                            <div class="flex-grow-1">
+                                <MudSkeleton Width="70%" Height="24px" Animation="Animation.Wave" />
+                                <MudSkeleton Width="45%" Animation="Animation.Wave" />
+                            </div>
+                        </div>
+                        <MudSkeleton Width="90%" Class="mt-3" Animation="Animation.Wave" />
+                    </div>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+    else if (Layout == LoadingLayout.Detail)
+    {
+        <div class="d-flex gap-4 mb-6">
+            <MudSkeleton SkeletonType="SkeletonType.Rectangle" Width="120px" Height="120px" Class="rounded-lg" Animation="Animation.Wave" />
+            <div class="flex-grow-1">
+                <MudSkeleton Width="50%" Height="40px" Animation="Animation.Wave" />
+                <MudSkeleton Width="30%" Animation="Animation.Wave" />
+                <MudSkeleton Width="40%" Animation="Animation.Wave" />
+            </div>
+        </div>
+        <div class="surface-card pa-4">
+            @for (var i = 0; i < Count; i++)
+            {
+                <MudSkeleton Height="36px" Animation="Animation.Wave" />
+            }
+        </div>
+    }
+    else
+    {
+        <div class="surface-card pa-4">
+            @for (var i = 0; i < Count; i++)
+            {
+                <MudSkeleton Height="40px" Animation="Animation.Wave" />
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public LoadingLayout Layout { get; set; } = LoadingLayout.List;
+
+    [Parameter]
+    public int Count { get; set; } = 6;
+
+    public enum LoadingLayout
+    {
+        List,
+        Cards,
+        Detail,
+    }
+}

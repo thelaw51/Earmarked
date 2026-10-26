@@ -1,0 +1,31 @@
+@* Where an episode is in the pipeline, as three steps: get a transcript, find books, done. *@
+<ol class="pipeline-steps" aria-label="Pipeline progress">
+    @for (var i = 0; i < Steps.Length; i++)
+    {
+        var (icon, label) = Steps[i];
+        var status = i < _completed ? "done" : i == _completed ? (_failed ? "failed" : State == EpisodeState.Skipped ? "todo" : "current") : "todo";
+        <li class="pipeline-step pipeline-step-@status">
+            <span class="pipeline-step-icon">
+                <MudIcon Icon="@(status switch { "done" => Icons.Material.Rounded.Check, "failed" => Icons.Material.Rounded.PriorityHigh, _ => icon })" Size="Size.Small" />
+            </span>
+            <MudText Typo="Typo.body2" Class="pipeline-step-label">@label</MudText>
+        </li>
+    }
+</ol>
+
+@code {
+    private static readonly (string Icon, string Label)[] Steps =
+    [
+        (Icons.Material.Rounded.GraphicEq, "Transcript"),
+        (Icons.Material.Rounded.ManageSearch, "Find books"),
+        (Icons.Material.Rounded.AutoStories, "Done"),
+    ];
+
+    private int _completed;
+    private bool _failed;
+
+    [Parameter, EditorRequired]
+    public EpisodeState State { get; set; }
+
+    protected override void OnParametersSet() => (_completed, _failed) = Display.Progress(State);
+}

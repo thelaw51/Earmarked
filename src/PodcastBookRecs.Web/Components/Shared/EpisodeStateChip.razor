@@ -1,4 +1,7 @@
-<MudChip T="string" Size="Size.Small" Color="@Display.StateColor(State)" Variant="Variant.Outlined">@Display.StateLabel(State)</MudChip>
+@* Busy states get a pulsing dot, so work in progress stands out in a long list. *@
+<MudChip T="string" Size="Size.Small" Color="@Display.StateColor(State)" Variant="Variant.Text" Class="state-chip">
+    <span class="state-dot @(Display.IsBusy(State) ? "state-dot-live" : "")"></span>@Display.StateLabel(State)
+</MudChip>
 
 @code {
     [Parameter, EditorRequired]

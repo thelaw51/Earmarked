@@ -67,6 +67,22 @@ public static class Display
         _ => Color.Default,
     };
 
+    /// <summary>True while the Worker is actively working on the episode, as opposed to waiting in a queue.</summary>
+    public static bool IsBusy(EpisodeState state) => state is EpisodeState.Transcribing or EpisodeState.Extracting;
+
+    /// <summary>
+    /// How far an episode has got through the three pipeline stages (transcript, books, done), from 0 to 3, and whether
+    /// the current stage failed. Skipped episodes haven't started.
+    /// </summary>
+    public static (int Completed, bool Failed) Progress(EpisodeState state) => state switch
+    {
+        EpisodeState.TranscriptFetched or EpisodeState.Transcribed or EpisodeState.Extracting => (1, false),
+        EpisodeState.Extracted => (3, false),
+        EpisodeState.Failed => (0, true),
+        EpisodeState.ExtractionFailed => (1, true),
+        _ => (0, false),
+    };
+
     public static Color StateColor(EpisodeState state) => state switch
     {
         EpisodeState.New or EpisodeState.Transcribing or EpisodeState.Extracting => Color.Info,
