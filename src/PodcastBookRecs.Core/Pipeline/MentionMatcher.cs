@@ -86,6 +86,12 @@ public sealed partial class MentionMatcher(
     /// </summary>
     private async Task<CatalogBook?> FindAsync(string title, string? author, CancellationToken cancellationToken)
     {
+        // No catalogue answer could be accepted, so don't spend a request on it.
+        if (CatalogMatcher.IsTooVague(title, author))
+        {
+            return null;
+        }
+
         if (!string.IsNullOrWhiteSpace(author)
             && CatalogMatcher.Pick(title, author, await catalog.SearchAsync(title, author, cancellationToken)) is { } withAuthor)
         {
