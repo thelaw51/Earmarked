@@ -1,31 +1,35 @@
 ﻿<script type="module" src="@Assets["Components/Layout/ReconnectModal.razor.js"]"></script>
 
-<dialog id="components-reconnect-modal" data-nosnippet>
-    <div class="components-reconnect-container">
-        <div class="components-rejoining-animation" aria-hidden="true">
-            <div></div>
-            <div></div>
+@* Shown only after the connection has been down for a couple of seconds (ReconnectModal.razor.js). Which line shows
+   depends on the state class Blazor puts on the dialog. *@
+<dialog id="components-reconnect-modal" data-nosnippet aria-live="polite">
+    <div class="reconnect-card">
+        <div class="reconnect-spinner components-reconnect-spinner" aria-hidden="true"></div>
+        <div class="reconnect-icon components-reconnect-problem" aria-hidden="true">!</div>
+
+        <div class="reconnect-text">
+            <p class="reconnect-title components-reconnect-first-attempt-visible">Reconnecting</p>
+            <p class="reconnect-detail components-reconnect-first-attempt-visible">The connection to the server dropped. Hang on.</p>
+
+            <p class="reconnect-title components-reconnect-repeated-attempt-visible">Still reconnecting</p>
+            <p class="reconnect-detail components-reconnect-repeated-attempt-visible">
+                Next try in <span id="components-seconds-to-next-attempt"></span>s. The server may be restarting.
+            </p>
+
+            <p class="reconnect-title components-reconnect-failed-visible">Can't reach the server</p>
+            <p class="reconnect-detail components-reconnect-failed-visible">It tries again when you come back to this tab.</p>
+
+            <p class="reconnect-title components-pause-visible">Session paused</p>
+            <p class="reconnect-detail components-pause-visible">Picking up where you left off.</p>
+
+            <p class="reconnect-title components-resume-failed-visible">Couldn't pick up where you left off</p>
+            <p class="reconnect-detail components-resume-failed-visible">Reload to start a fresh session.</p>
         </div>
-        <p class="components-reconnect-first-attempt-visible">
-            Rejoining the server...
-        </p>
-        <p class="components-reconnect-repeated-attempt-visible">
-            Rejoin failed... trying again in <span id="components-seconds-to-next-attempt"></span> seconds.
-        </p>
-        <p class="components-reconnect-failed-visible">
-            Failed to rejoin.<br />Please retry or reload the page.
-        </p>
-        <button id="components-reconnect-button" class="components-reconnect-failed-visible">
-            Retry
-        </button>
-        <p class="components-pause-visible">
-            The session has been paused by the server.
-        </p>
-        <p class="components-resume-failed-visible">
-            Failed to resume the session.<br />Please retry or reload the page.
-        </p>
-        <button id="components-resume-button" class="components-pause-visible components-resume-failed-visible">
-            Resume
-        </button>
+
+        <div class="reconnect-actions">
+            <button id="components-reconnect-button" class="reconnect-primary components-reconnect-failed-visible">Retry</button>
+            <button id="components-resume-button" class="reconnect-primary components-pause-visible">Resume</button>
+            <button class="components-reload-button reconnect-secondary components-reconnect-failed-visible components-resume-failed-visible">Reload</button>
+        </div>
     </div>
 </dialog>
