@@ -41,6 +41,13 @@ public static class Display
     public static string? HttpsOrNull(string? url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps ? url : null;
 
+    /// <summary>
+    /// The URL if it is an absolute http or https link, otherwise null. For feed artwork, which is often plain http;
+    /// anything else (<c>data:</c>, <c>javascript:</c>, relative paths) is dropped.
+    /// </summary>
+    public static string? HttpOrHttpsOrNull(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp) ? url : null;
+
     /// <summary>A short note on a mention that isn't linked to a book, or null when it is.</summary>
     public static string? MatchNote(MatchState state, bool lookupOn) => state switch
     {

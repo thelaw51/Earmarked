@@ -24,9 +24,9 @@ else
 {
     <div class="crumbs"><MudBreadcrumbs Items="_breadcrumbs" /></div>
     <section class="hero">
-        @if (_episode.PodcastFeed.ImageUrl is not null)
+        @if (Display.HttpOrHttpsOrNull(_episode.PodcastFeed.ImageUrl) is { } artwork)
         {
-            <img src="@_episode.PodcastFeed.ImageUrl" alt="" class="hero-backdrop" referrerpolicy="no-referrer" />
+            <img src="@artwork" alt="" class="hero-backdrop" referrerpolicy="no-referrer" />
         }
         <div class="hero-body">
             <div class="hero-text">

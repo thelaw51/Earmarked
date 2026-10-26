@@ -46,9 +46,9 @@ else
                 <div class="surface-card hover-lift podcast-card">
                     <a href="@($"podcasts/{row.Id}")" class="card-link podcast-card-top">
                         <span class="artwork">
-                            @if (row.ImageUrl is not null)
+                            @if (Display.HttpOrHttpsOrNull(row.ImageUrl) is { } artwork)
                             {
-                                <img src="@row.ImageUrl" alt="" loading="lazy" referrerpolicy="no-referrer" />
+                                <img src="@artwork" alt="" loading="lazy" referrerpolicy="no-referrer" />
                             }
                             else
                             {

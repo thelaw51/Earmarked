@@ -19,17 +19,18 @@ else if (_podcast is null)
 }
 else
 {
+    var artwork = Display.HttpOrHttpsOrNull(_podcast.ImageUrl);
     <div class="crumbs"><MudBreadcrumbs Items="_breadcrumbs" /></div>
     <section class="hero">
-        @if (_podcast.ImageUrl is not null)
+        @if (artwork is not null)
         {
-            <img src="@_podcast.ImageUrl" alt="" class="hero-backdrop" referrerpolicy="no-referrer" />
+            <img src="@artwork" alt="" class="hero-backdrop" referrerpolicy="no-referrer" />
         }
         <div class="hero-body">
             <span class="artwork artwork-lg">
-                @if (_podcast.ImageUrl is not null)
+                @if (artwork is not null)
                 {
-                    <img src="@_podcast.ImageUrl" alt="" referrerpolicy="no-referrer" />
+                    <img src="@artwork" alt="" referrerpolicy="no-referrer" />
                 }
                 else
                 {

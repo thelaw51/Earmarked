@@ -43,8 +43,9 @@
     <MudMainContent Class="app-main">
         <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6 px-4 px-md-8">
             <SchemaGate>
-                @* Keyed on the address so every navigation mounts a fresh page and replays the entrance animation. *@
-                <div class="page-enter" @key="Navigation.Uri">@Body</div>
+                @* Keyed on the path so every navigation to another page mounts it fresh and replays the entrance
+                   animation. The query string is left out, so a page that keeps filters there doesn't remount. *@
+                <div class="page-enter" @key="PagePath">@Body</div>
             </SchemaGate>
         </MudContainer>
     </MudMainContent>
@@ -58,6 +59,8 @@
 
 @code {
     private bool _drawerOpen = true;
+
+    private string PagePath => new Uri(Navigation.Uri).AbsolutePath;
 
     // Dark by default, whatever the browser prefers. The toggle lasts until the page is reloaded.
     private bool _darkMode = true;
