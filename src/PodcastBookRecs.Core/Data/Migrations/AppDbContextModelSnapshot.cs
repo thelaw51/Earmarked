@@ -144,6 +144,55 @@ namespace PodcastBookRecs.Core.Data.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
+            modelBuilder.Entity("PodcastBookRecs.Core.Data.Book", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Authors")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CatalogId")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CoverUrl")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("FirstPublishYear")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("InfoUrl")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Provider", "CatalogId")
+                        .IsUnique();
+
+                    b.ToTable("Books");
+                });
+
             modelBuilder.Entity("PodcastBookRecs.Core.Data.BookMention", b =>
                 {
                     b.Property<Guid>("Id")
@@ -152,6 +201,9 @@ namespace PodcastBookRecs.Core.Data.Migrations
 
                     b.Property<string>("Author")
                         .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("BookId")
                         .HasColumnType("TEXT");
 
                     b.Property<double>("Confidence")
@@ -165,6 +217,20 @@ namespace PodcastBookRecs.Core.Data.Migrations
 
                     b.Property<int>("Kind")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("LookupKey")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MatchState")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("MatchedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MatcherVersion")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Model")
                         .IsRequired()
@@ -196,9 +262,15 @@ namespace PodcastBookRecs.Core.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("BookId");
+
                     b.HasIndex("EpisodeId");
 
+                    b.HasIndex("MatcherVersion");
+
                     b.HasIndex("TranscriptId");
+
+                    b.HasIndex("LookupKey", "MatcherVersion");
 
                     b.ToTable("BookMentions");
                 });
@@ -445,6 +517,11 @@ namespace PodcastBookRecs.Core.Data.Migrations
 
             modelBuilder.Entity("PodcastBookRecs.Core.Data.BookMention", b =>
                 {
+                    b.HasOne("PodcastBookRecs.Core.Data.Book", "Book")
+                        .WithMany("Mentions")
+                        .HasForeignKey("BookId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("PodcastBookRecs.Core.Data.Episode", "Episode")
                         .WithMany("Mentions")
                         .HasForeignKey("EpisodeId")
@@ -456,6 +533,8 @@ namespace PodcastBookRecs.Core.Data.Migrations
                         .HasForeignKey("TranscriptId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("Book");
 
                     b.Navigation("Episode");
 
@@ -482,6 +561,11 @@ namespace PodcastBookRecs.Core.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Episode");
+                });
+
+            modelBuilder.Entity("PodcastBookRecs.Core.Data.Book", b =>
+                {
+                    b.Navigation("Mentions");
                 });
 
             modelBuilder.Entity("PodcastBookRecs.Core.Data.Episode", b =>

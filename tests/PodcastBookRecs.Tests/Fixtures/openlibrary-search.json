@@ -1,0 +1,37 @@
+{
+  "numFound": 5,
+  "start": 0,
+  "docs": [
+    {
+      "key": "/works/OL1001W",
+      "title": "The Lighthouse Keeper's Almanac",
+      "author_name": ["Ines Calder"],
+      "first_publish_year": 2019,
+      "cover_i": 12345,
+      "edition_count": 4
+    },
+    {
+      "key": "/works/OL1002W",
+      "title": "Summary of The Lighthouse Keeper's Almanac",
+      "author_name": ["Quick Reads"],
+      "edition_count": 1
+    },
+    {
+      "key": "/books/OL77M",
+      "title": "An edition, not a work",
+      "edition_count": 1
+    },
+    {
+      "key": "/works/OL1003W",
+      "author_name": ["No Title"]
+    },
+    {
+      "key": "/works/OL1004W",
+      "title": "Small Rivers",
+      "subtitle": "A Walking Year",
+      "author_name": ["Tomas Reyne", "Tomas Reyne"],
+      "first_publish_year": 2021,
+      "edition_count": 2
+    }
+  ]
+}
