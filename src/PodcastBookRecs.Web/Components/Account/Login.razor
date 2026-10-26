@@ -4,6 +4,7 @@
 @layout AccountLayout
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Identity
+@using PodcastBookRecs.Core.Accounts
 @using PodcastBookRecs.Core.Configuration
 @inject SignInManager<AppUser> SignInManager
 @inject SchemaStatus Schema
@@ -58,19 +59,31 @@
             return;
         }
 
-        var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: true);
+        var result = await PasswordSignIn.SignInAsync(SignInManager, Input.Email, Input.Password, Input.RememberMe);
         if (result.Succeeded)
         {
             Navigation.NavigateTo(ReturnUrls.LocalOrHome(ReturnUrl));
             return;
         }
 
+        // The password was right. Identity has set a short-lived cookie naming the user, which the next page reads.
+        if (result.RequiresTwoFactor)
+        {
+            Navigation.NavigateTo(
+                $"account/login-2fa?ReturnUrl={Uri.EscapeDataString(ReturnUrls.LocalOrHome(ReturnUrl))}&RememberMe={Input.RememberMe}");
+            return;
+        }
+
         // Otherwise the re-rendered form sends the password back to the browser in its value attribute.
         Input.Password = "";
-        _error = result.IsLockedOut
-            ? $"Too many failed attempts. Try again in {IdentityExtensions.LockoutDuration.TotalMinutes:0} minutes."
-            : "Email or password is incorrect.";
+        // One message for every failure. An email with no account never locks, so a separate lockout message would
+        // tell anyone who tried five times whether the address has an account.
+        _error = FailedMessage;
     }
+
+    private static readonly string FailedMessage =
+        $"Email or password is incorrect. After {IdentityExtensions.MaxFailedAccessAttempts} wrong attempts in a row, " +
+        $"sign-in is blocked for {IdentityExtensions.LockoutDuration.TotalMinutes:0} minutes.";
 
     private sealed class LoginInput
     {

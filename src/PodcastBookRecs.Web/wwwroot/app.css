@@ -31,7 +31,8 @@
 }
 
 .account-form input[type=email],
-.account-form input[type=password] {
+.account-form input[type=password],
+.account-form input[type=text] {
     background: var(--mud-palette-surface);
     border: 1px solid var(--mud-palette-lines-inputs);
     border-radius: var(--mud-default-borderradius);
