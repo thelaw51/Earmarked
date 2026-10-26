@@ -4,6 +4,7 @@
 @layout AccountLayout
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Identity
+@using PodcastBookRecs.Core.Accounts
 @using PodcastBookRecs.Core.Configuration
 @inject SignInManager<AppUser> SignInManager
 @inject SchemaStatus Schema
@@ -58,7 +59,7 @@
             return;
         }
 
-        var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: true);
+        var result = await PasswordSignIn.SignInAsync(SignInManager, Input.Email, Input.Password, Input.RememberMe);
         if (result.Succeeded)
         {
             Navigation.NavigateTo(ReturnUrls.LocalOrHome(ReturnUrl));

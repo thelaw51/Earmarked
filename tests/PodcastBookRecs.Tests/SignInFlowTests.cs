@@ -22,6 +22,7 @@ public sealed class SignInFlowTests : IAsyncLifetime
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"pbr-test-{Guid.NewGuid():N}.db");
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    private readonly CountingHasher _hasher = new();
     private ServiceProvider _services = null!;
     private string _key = null!;
     private IReadOnlyList<string> _recoveryCodes = null!;
@@ -32,6 +33,8 @@ public sealed class SignInFlowTests : IAsyncLifetime
         services.AddLogging();
         services.AddDbContextFactory<AppDbContext>(o => o.UseSqlite($"Data Source={_dbPath}").AddInterceptors(new SqlitePragmaInterceptor()));
         services.AddDataProtection().UseEphemeralDataProtectionProvider();
+        // Before AddPbrIdentity, which only adds a hasher if none is registered.
+        services.AddSingleton<IPasswordHasher<AppUser>>(_hasher);
         services.AddPbrIdentity();
         services.AddAuthentication(IdentityConstants.ApplicationScheme).AddIdentityCookies();
         services.AddHttpContextAccessor();
@@ -104,6 +107,40 @@ public sealed class SignInFlowTests : IAsyncLifetime
         Assert.False(again.Succeeded);
     }
 
+    [Fact]
+    public async Task An_unknown_email_costs_a_password_hash_like_a_real_account()
+    {
+        var before = _hasher.Verifications;
+        var (unknown, _) = await RequestAsync("", s => PasswordSignIn.SignInAsync(s, "nobody@example.com", Password, false));
+        Assert.False(unknown.Succeeded);
+        Assert.Equal(before + 1, _hasher.Verifications);
+
+        var (wrong, _) = await RequestAsync("", s => PasswordSignIn.SignInAsync(s, Email, "wrong password", false));
+        Assert.False(wrong.Succeeded);
+        Assert.Equal(before + 2, _hasher.Verifications);
+    }
+
+    [Fact]
+    public async Task A_locked_account_costs_a_password_hash_and_still_refuses_the_right_password()
+    {
+        for (var i = 0; i < IdentityExtensions.MaxFailedAccessAttempts; i++)
+        {
+            await RequestAsync("", s => PasswordSignIn.SignInAsync(s, Email, "wrong password", false));
+        }
+
+        var before = _hasher.Verifications;
+        var (locked, _) = await RequestAsync("", s => PasswordSignIn.SignInAsync(s, Email, Password, false));
+        Assert.True(locked.IsLockedOut);
+        Assert.Equal(before + 1, _hasher.Verifications);
+    }
+
+    [Fact]
+    public async Task The_timed_sign_in_still_asks_a_real_account_for_its_code()
+    {
+        var (result, _) = await RequestAsync("", s => PasswordSignIn.SignInAsync(s, Email, Password, false));
+        Assert.True(result.RequiresTwoFactor);
+    }
+
     /// <summary>
     /// Runs <paramref name="action"/> as one request that sends <paramref name="cookieHeader"/>, and returns the cookies
     /// the response set, ready to send with the next request.
@@ -135,5 +172,22 @@ public sealed class SignInFlowTests : IAsyncLifetime
         var now = DateTimeOffset.UtcNow;
         var valid = Enumerable.Range(-2, 5).Select(step => Totp.Code(_key, now.AddSeconds(30 * step))).ToHashSet();
         return Enumerable.Range(0, 1_000_000).Select(n => n.ToString("D6", System.Globalization.CultureInfo.InvariantCulture)).First(c => !valid.Contains(c));
+    }
+
+    /// <summary>The real hasher, counting how often a password is checked.</summary>
+    private sealed class CountingHasher : IPasswordHasher<AppUser>
+    {
+        private readonly PasswordHasher<AppUser> _inner = new();
+        private int _verifications;
+
+        public int Verifications => Volatile.Read(ref _verifications);
+
+        public string HashPassword(AppUser user, string password) => _inner.HashPassword(user, password);
+
+        public PasswordVerificationResult VerifyHashedPassword(AppUser user, string hashedPassword, string providedPassword)
+        {
+            Interlocked.Increment(ref _verifications);
+            return _inner.VerifyHashedPassword(user, hashedPassword, providedPassword);
+        }
     }
 }
