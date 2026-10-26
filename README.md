@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/thelaw51/PodcastBookRecs/actions/workflows/ci.yml/badge.svg)](https://github.com/thelaw51/PodcastBookRecs/actions/workflows/ci.yml)
 
-A self-hosted tracker for books mentioned on podcasts. It watches the feeds you choose, gets a transcript for each episode, pulls out the books people mention, and (later in Phase 3) ranks them by how many different shows and episodes bring them up.
+A self-hosted tracker for books mentioned on podcasts. It watches the feeds you choose, gets a transcript for each episode, pulls out the books people mention, matches them to real books in [Open Library](https://openlibrary.org), and ranks them by how many different shows and episodes bring them up.
 
 It runs as two containers from one image: a **Worker** that polls feeds and processes episodes, and a **Blazor Server UI**. They share a SQLite database on the `/data` volume.
 
@@ -12,7 +12,7 @@ It runs as two containers from one image: a **Worker** that polls feeds and proc
 |---|---|---|
 | 1 | Feed polling, published `<podcast:transcript>` fetching and parsing, podcast and episode pages, CI/CD | **Done** |
 | 2 | Speech-to-text transcription (Whisper to start) for episodes without a published transcript, on a [Mac transcription server](#transcription-server-on-a-mac) | **Done** |
-| 3 | Book extraction with a local LLM (done), Open Library matching, ranked book list | In progress |
+| 3 | Book extraction with a local LLM, Open Library matching, ranked book list | **Done** |
 | 4 | Review queue, filters, export | Planned |
 
 Most podcasts don't publish transcripts, so most episodes go through speech-to-text.
@@ -25,6 +25,7 @@ Most podcasts don't publish transcripts, so most episodes go through speech-to-t
 4. An episode with a `<podcast:transcript>` link is fetched in the best available format: VTT, then SRT, then JSON, then HTML, then plain text. A dead or unparseable link moves on to the next one. Network errors retry with exponential backoff, up to `Polling:MaxAttempts`.
 5. Episodes with no usable transcript are transcribed, one at a time, newest first, if `Transcription:Provider` is set (see [Transcription in the Worker](#transcription-in-the-worker)). Shows that have published transcripts before get a grace period first, in case one turns up late.
 6. Episodes with a transcript are searched for book mentions, one at a time, newest first, if `Extraction:Provider` is set (see [Book extraction](#book-extraction)). Extraction runs alongside transcription.
+7. Each book mention is looked up in Open Library, and mentions of the same book from any episode point at one book (see [Matching books in Open Library](#matching-books-in-open-library)). The *Books* page ranks them.
 
 ## Deploying with Portainer
 
@@ -190,7 +191,7 @@ With `Extraction:Provider` set, the Worker looks for books in every episode that
 4. Repeats of the same title within an episode are merged, keeping the earliest mention.
 5. The mentions are stored with the provider, model and prompt version that produced them. *Re-run book extraction* on the episode page deletes them and extracts again from the stored transcript, without transcribing again.
 
-Mentions are unchecked against a book catalogue for now: expect the odd newspaper or vague title ("my second book"). Open Library matching, coming next, will filter those out.
+Some mentions aren't books: a newspaper, a court case, a vague "my second book". Matching in Open Library, next, keeps those off the book list.
 
 Pausing works as for transcription: an unreachable backend, or a model it doesn't have, pauses extraction without counting it against the episode; a failed or timed-out request uses up one of `Polling:MaxAttempts`, after which the episode shows *Book extraction failed* and keeps its transcript.
 
@@ -210,6 +211,27 @@ The Status page shows an *extraction* row, which turns red if LM Studio can't be
 
 The Worker uses OpenAI's `POST /v1/chat/completions` with `response_format` set to a JSON schema. Ollama, llama.cpp's server, vLLM and hosted APIs speak it: change `Extraction:BaseUrl` and `Extraction:Model`. A server that can't hold its answer to a schema will produce more failed requests. A backend with a different API needs a new adapter under `src/PodcastBookRecs.Core/Providers/Extraction/`, selected by a new `Provider` name.
 
+## Matching books in Open Library
+
+The Worker checks each book mention against [Open Library](https://openlibrary.org), a free public catalogue. It's on by default and needs no setup.
+
+1. It searches Open Library's title and author fields for the mention's title, and the author if the model gave one. If that finds nothing, it tries the title alone, because catalogues write authors differently ("J.R.R." against "JRR").
+2. A result only counts if its title is the same as the mention's, ignoring case, punctuation, a leading "The" and any subtitle. When the model named an author, the result must also have an author with the same surname. Summaries and study guides are skipped. Of the results left, the one with the most editions wins, so mentions with different spellings land on the same book.
+3. A matched mention points at one stored book, shared by every episode that mentions it. Anything without a match stays on its episode page marked *Not found in the catalogue*, and off the book list. Phase 4's review queue is where those get sorted out.
+4. A title already looked up isn't asked about again: the next mention with the same title and author surname reuses the answer.
+
+Requests go out at most one a second, Open Library's limit for anonymous clients, so a few hundred mentions take a few minutes. Set `OpenLibrary:ContactEmail` and it goes in the User-Agent, as Open Library asks of regular clients. If Open Library is down or asks the Worker to slow down, matching pauses and tries again later; the Status page has a *book lookup* row.
+
+Matching sends book titles and author names, nothing else, to Open Library over HTTPS. If you'd rather not, set `BookLookup:Provider` to an empty string; mentions then stay on their episode pages and the book list stays empty.
+
+### The book list
+
+The *Books* page ranks every matched book by the number of different podcasts that mentioned it, then the number of episodes, then the most recent mention. The kind of mention (recommended, discussed and so on) doesn't change the order, because the model labels kinds unreliably; the list shows how many episodes recommended each book instead. Each book has its own page with every mention: podcast, episode, time and quote.
+
+### Pointing at a different catalogue
+
+The matching rules live in `CatalogMatcher` and know nothing about Open Library. Another catalogue (Google Books, say) needs a new adapter under `src/PodcastBookRecs.Core/Providers/BookLookup/` that implements `IBookCatalog`, and a new `BookLookup:Provider` name. Each stored book records the catalogue it came from, and each match the version of the rules (`CatalogMatcher.Version`) that made it; changing the rules and bumping the version re-matches every mention.
+
 ## Configuration
 
 Settings come from `/config/config.json`, then environment variables prefixed `PBR_` override them. Nested keys use a double underscore: `PBR_Polling__IntervalMinutes=30`.
@@ -220,7 +242,8 @@ Settings come from `/config/config.json`, then environment variables prefixed `P
 | `Polling:BackfillEpisodes` | `10` | Episodes queued when a feed is first added |
 | `Polling:MaxAttempts` | `5` | Transient failures before an episode stops retrying a published transcript |
 | `Feeds` | `[]` | Feeds imported on Worker startup if missing. Feeds added in the UI live in the database. |
-| `OpenLibrary:ContactEmail` | | Sent to Open Library from Phase 3, which gives higher rate limits to identified clients |
+| `BookLookup:Provider` | `OpenLibrary` | The book catalogue mentions are matched against; empty turns matching off |
+| `OpenLibrary:ContactEmail` | | Sent in the User-Agent so Open Library can get in touch about heavy use. Optional. |
 | `AllowedHosts` | `*` | Host names the web app answers, separated by semicolons. Anything else gets 400. Set it before exposing the app; see Cloudflare Tunnel above. |
 | `ForwardedHeaders:KnownNetworks` | private ranges | CIDR blocks allowed to send `X-Forwarded-Proto` and `X-Forwarded-For`, e.g. `["172.18.0.0/16"]`. Loopback is always trusted. |
 | `Paths:Data` | `/data` | Database, key and work-folder storage. Set by the image; you shouldn't need to change it. |
