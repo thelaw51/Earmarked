@@ -17,4 +17,7 @@ public enum WorkerCommandType
     PollFeed = 0,
     PollAllFeeds = 1,
     RetryEpisode = 2,
+
+    /// <summary>Deletes an episode's book mentions and extracts them again from the stored transcript.</summary>
+    ReextractEpisode = 3,
 }

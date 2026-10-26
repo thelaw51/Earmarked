@@ -21,6 +21,8 @@ public class Transcript
     public DateTime CreatedAt { get; set; }
 
     public List<TranscriptSegment> Segments { get; set; } = [];
+
+    public List<BookMention> Mentions { get; set; } = [];
 }
 
 /// <summary>
