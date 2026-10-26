@@ -94,6 +94,7 @@ The app fetches any feed URL you add, so anyone who signs in can make the Worker
 2. Under **SSL/TLS**, then **Edge Certificates**, turn on **Always Use HTTPS** and **HSTS**. Always Use HTTPS redirects only after the browser has sent its first plain-HTTP request, cookie and all. HSTS makes the browser use HTTPS from the start.
 3. Add a rate-limiting rule for `POST /account/login`, for example 10 requests a minute per IP. Lockout is per account, so without this anyone who knows your email can keep you locked out.
 4. Under **Access**, then **Applications**, add a self-hosted application for that hostname, with a policy that allows only your email address.
+5. Set `AllowedHosts` in `config.json` to the tunnel's hostname plus every name you use on the LAN, separated by semicolons, for example `"podcasts.example.com;localhost;docker-host.lan"`. The app answers other `Host` headers with 400, so a request can't make it build redirects to another site. Include whatever name your health probe uses; a probe inside the container usually sends `localhost`, so keep that in the list.
 
 cloudflared talks plain HTTP to the app and sends `X-Forwarded-Proto: https`. The app trusts that header from private addresses (`ForwardedHeaders:KnownNetworks`), which is how it knows to mark the sign-in cookie Secure and to redirect to `https://`. If cloudflared reaches the app from a public address, add that address to the list. To check, sign in through the tunnel and look at the `pbr.auth` cookie in the browser's developer tools: it should say Secure.
 
@@ -166,6 +167,7 @@ Settings come from `/config/config.json`, then environment variables prefixed `P
 | `Polling:MaxAttempts` | `5` | Transient failures before an episode stops retrying a published transcript |
 | `Feeds` | `[]` | Feeds imported on Worker startup if missing. Feeds added in the UI live in the database. |
 | `OpenLibrary:ContactEmail` | | Sent to Open Library from Phase 3, which gives higher rate limits to identified clients |
+| `AllowedHosts` | `*` | Host names the web app answers, separated by semicolons. Anything else gets 400. Set it before exposing the app; see Cloudflare Tunnel above. |
 | `ForwardedHeaders:KnownNetworks` | private ranges | CIDR blocks allowed to send `X-Forwarded-Proto` and `X-Forwarded-For`, e.g. `["172.18.0.0/16"]`. Loopback is always trusted. |
 | `Paths:Data` | `/data` | Database, key and work-folder storage. Set by the image; you shouldn't need to change it. |
 | `Transcription:Provider` | | `OpenAiCompatible`, or empty to turn transcription off |

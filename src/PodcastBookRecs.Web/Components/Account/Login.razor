@@ -67,10 +67,14 @@
 
         // Otherwise the re-rendered form sends the password back to the browser in its value attribute.
         Input.Password = "";
-        _error = result.IsLockedOut
-            ? $"Too many failed attempts. Try again in {IdentityExtensions.LockoutDuration.TotalMinutes:0} minutes."
-            : "Email or password is incorrect.";
+        // One message for every failure. An email with no account never locks, so a separate lockout message would
+        // tell anyone who tried five times whether the address has an account.
+        _error = FailedMessage;
     }
+
+    private static readonly string FailedMessage =
+        $"Email or password is incorrect. After {IdentityExtensions.MaxFailedAccessAttempts} wrong attempts in a row, " +
+        $"sign-in is blocked for {IdentityExtensions.LockoutDuration.TotalMinutes:0} minutes.";
 
     private sealed class LoginInput
     {

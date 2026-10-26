@@ -61,6 +61,8 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
+// After the exception handler, which clears headers before re-running the pipeline for the error page.
+app.UseSecurityHeaders();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
