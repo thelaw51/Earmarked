@@ -54,6 +54,34 @@ public class BookLookupTests
     }
 
     [Fact]
+    public void A_whole_title_match_beats_a_more_popular_book_matching_only_the_part_before_the_subtitle()
+    {
+        var picked = CatalogMatcher.Pick("Small Rivers: The Delta Years", "Tomas Reyne",
+        [
+            Book("Small Rivers", "Tomas Reyne", editions: 40, id: "OL1W"),
+            Book("Small Rivers: The Delta Years", "Tomas Reyne", editions: 3, id: "OL2W"),
+        ]);
+
+        Assert.Equal("OL2W", picked?.CatalogId);
+    }
+
+    [Fact]
+    public void A_book_whose_own_title_has_a_derivative_word_can_still_match() =>
+        Assert.NotNull(CatalogMatcher.Pick("An Analysis of Tides", "Ines Calder", [Book("An Analysis of Tides", "Ines Calder")]));
+
+    [Theory]
+    [InlineData("Calder, Ines")]
+    [InlineData("Ines Calder Jr.")]
+    [InlineData("Ines Calder, Jr.")]
+    [InlineData("Calder")]
+    public void Reads_the_surname_from_reversed_names_and_names_with_suffixes(string author) =>
+        Assert.NotNull(CatalogMatcher.Pick("Small Rivers", author, [Book("Small Rivers", "Ines Calder")]));
+
+    [Fact]
+    public void Suffixes_alone_dont_make_two_authors_share_a_lookup() =>
+        Assert.NotEqual(CatalogMatcher.LookupKey("Small Rivers", "Ines Calder Jr."), CatalogMatcher.LookupKey("Small Rivers", "Tomas Reyne Jr."));
+
+    [Fact]
     public void Skips_summaries_and_prefers_the_work_with_most_editions()
     {
         var picked = CatalogMatcher.Pick("Small Rivers", null,

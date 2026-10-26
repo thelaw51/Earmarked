@@ -18,6 +18,8 @@ public static class CatalogMatcher
     public const int MinEditionsWithoutAuthor = 2;
 
     // Words in a title or author name that mark a derivative work: a summary or study aid, not the book itself.
+    private static readonly HashSet<string> NameSuffixes = new(StringComparer.Ordinal) { "jr", "sr", "ii", "iii", "iv", "phd", "md" };
+
     private static readonly string[] DerivativeMarkers = ["summary", "study guide", "workbook", "sparknotes", "cliffsnotes", "analysis of"];
 
     /// <summary>
@@ -26,7 +28,11 @@ public static class CatalogMatcher
     /// </summary>
     public static string LookupKey(string title, string? author) => $"{MentionMerger.TitleKey(title)}|{Surname(author)}";
 
-    /// <summary>The candidate that is this book, preferring the one with most editions, or null if none qualifies.</summary>
+    /// <summary>
+    /// The candidate that is this book, or null if none qualifies. One matching the whole title beats one matching only
+    /// the part before a subtitle, so "Dune Messiah: A Novel" finds Dune Messiah, not the more popular Dune; after
+    /// that, most editions wins.
+    /// </summary>
     public static CatalogBook? Pick(string title, string? author, IReadOnlyList<CatalogBook> candidates)
     {
         var wanted = TitleKeys(title, null);
@@ -35,12 +41,15 @@ public static class CatalogMatcher
             return null;
         }
 
+        var full = MentionMerger.TitleKey(title);
         var surname = Surname(author);
         return candidates
             .Where(c => TitleKeys(c.Title, c.Subtitle).Overlaps(wanted))
-            .Where(c => !IsDerivative(c))
+            .Where(c => !IsDerivative(c, title))
             .Where(c => surname.Length == 0 ? c.EditionCount >= MinEditionsWithoutAuthor : c.Authors.Any(a => SameSurname(Surname(a), surname)))
-            .MaxBy(c => c.EditionCount);
+            .OrderByDescending(c => TitleKeys(c.Title, c.Subtitle).Contains(full))
+            .ThenByDescending(c => c.EditionCount)
+            .FirstOrDefault();
     }
 
     /// <summary>The full title, the title before any subtitle, and (for a candidate) title plus subtitle, all as keys.</summary>
@@ -61,8 +70,12 @@ public static class CatalogMatcher
         return keys;
     }
 
-    private static bool IsDerivative(CatalogBook candidate) =>
-        DerivativeMarkers.Any(marker =>
+    /// <summary>
+    /// A summary or study aid rather than the book. A marker the mention's own title contains doesn't count, so a book
+    /// really called "An Analysis of Algorithms" can still match.
+    /// </summary>
+    private static bool IsDerivative(CatalogBook candidate, string mentioned) =>
+        DerivativeMarkers.Where(marker => !mentioned.Contains(marker, StringComparison.OrdinalIgnoreCase)).Any(marker =>
             candidate.Title.Contains(marker, StringComparison.OrdinalIgnoreCase)
             || candidate.Authors.Any(a => a.Contains(marker, StringComparison.OrdinalIgnoreCase)));
 
@@ -87,7 +100,26 @@ public static class CatalogMatcher
         return a.Length == b.Length ? a.AsSpan(i + 1).SequenceEqual(b.AsSpan(i + 1)) : a.AsSpan(i).SequenceEqual(b.AsSpan(i + 1));
     }
 
-    /// <summary>The last word of a name, normalised: "J.R.R. Tolkien" and "Tolkien" both give "tolkien".</summary>
-    private static string Surname(string? name) =>
-        name?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Select(QuoteLocator.Normalise).LastOrDefault(w => w.Length > 0) ?? "";
+    /// <summary>
+    /// The surname, normalised: the last word of the name, or the part before a comma for "Tolkien, J.R.R.", skipping
+    /// suffixes. "J.R.R. Tolkien", "Tolkien, J. R. R." and "Tolkien" all give "tolkien"; "Martin Luther King Jr." gives "king".
+    /// </summary>
+    private static string Surname(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return "";
+        }
+
+        // "Surname, Given" puts the surname first; "Given Surname, Jr." only looks like it.
+        var parts = name.Split(',', 2);
+        if (parts.Length == 2 && !NameSuffixes.Contains(QuoteLocator.Normalise(parts[1])))
+        {
+            name = parts[0];
+        }
+
+        return name.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Select(QuoteLocator.Normalise)
+            .LastOrDefault(w => w.Length > 0 && !NameSuffixes.Contains(w)) ?? "";
+    }
 }
