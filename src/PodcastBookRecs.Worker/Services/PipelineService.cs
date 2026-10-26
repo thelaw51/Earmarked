@@ -8,7 +8,7 @@ namespace PodcastBookRecs.Worker.Services;
 
 /// <summary>
 /// Runs the Worker's loops side by side: UI commands, scheduled feed polls, transcript fetching, the heartbeat and,
-/// when their providers are configured, transcription and book extraction.
+/// when their providers are configured, transcription, book extraction and book matching.
 /// A loop that throws logs the error and carries on after its delay, so one bad feed or a locked database
 /// doesn't stop the others.
 /// </summary>
@@ -21,7 +21,8 @@ internal sealed partial class PipelineService(
     TimeProvider time,
     ILogger<PipelineService> logger,
     EpisodeTranscriber? transcriber = null,
-    EpisodeExtractor? extractor = null) : BackgroundService
+    EpisodeExtractor? extractor = null,
+    MentionMatcher? matcher = null) : BackgroundService
 {
     private static readonly TimeSpan IdleDelay = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MinPause = TimeSpan.FromSeconds(30);
@@ -46,13 +47,18 @@ internal sealed partial class PipelineService(
             loops.Add(BackendLoop("extraction", null, extractor.ProcessNextAsync, stoppingToken));
         }
 
+        if (matcher is not null)
+        {
+            loops.Add(BackendLoop("book matching", null, matcher.ProcessNextAsync, stoppingToken));
+        }
+
         return Task.WhenAll(loops);
     }
 
     /// <summary>
     /// Processes episodes back to back while any are due, for a worker that depends on an external backend. When the
-    /// backend is unreachable (or the disk is full), waits 30 seconds, doubling up to 10 minutes, without counting
-    /// anything against the episode.
+    /// backend is unreachable or asks us to slow down (or the disk is full), waits 30 seconds, doubling up to 10
+    /// minutes, without counting anything against the work item.
     /// </summary>
     private async Task BackendLoop(
         string name, Func<CancellationToken, Task>? startup, Func<CancellationToken, Task<WorkOutcome>> processNext, CancellationToken stoppingToken)

@@ -7,10 +7,12 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using PodcastBookRecs.Core.Audio;
 using PodcastBookRecs.Core.Backends;
+using PodcastBookRecs.Core.BookLookup;
 using PodcastBookRecs.Core.Data;
 using PodcastBookRecs.Core.Extraction;
 using PodcastBookRecs.Core.Net;
 using PodcastBookRecs.Core.Pipeline;
+using PodcastBookRecs.Core.Providers.BookLookup.OpenLibrary;
 using PodcastBookRecs.Core.Providers.Extraction.OpenAiCompatible;
 using PodcastBookRecs.Core.Providers.Transcription.OpenAiCompatible;
 using PodcastBookRecs.Core.Transcription;
@@ -146,6 +148,50 @@ public static class ServiceCollectionExtensions
         }
 
         services.AddSingleton<EpisodeExtractor>();
+        return services;
+    }
+
+    /// <summary>
+    /// Registers book lookup for the Worker: the configured catalogue's adapter and health check, and the mention
+    /// matcher. Does nothing beyond binding options when lookup is turned off.
+    /// </summary>
+    public static IServiceCollection AddPbrBookLookup(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddOptions<BookLookupOptions>().Bind(configuration.GetSection(BookLookupOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+        var lookup = configuration.GetSection(BookLookupOptions.Section).Get<BookLookupOptions>() ?? new BookLookupOptions();
+        if (!lookup.Enabled)
+        {
+            return services;
+        }
+
+        switch (lookup.Provider)
+        {
+            case var p when string.Equals(p, BookLookupProviders.OpenLibrary, StringComparison.OrdinalIgnoreCase):
+                services.AddOptions<OpenLibraryOptions>().Bind(configuration.GetSection(OpenLibraryOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+                var openLibrary = configuration.GetSection(OpenLibraryOptions.Section).Get<OpenLibraryOptions>() ?? new OpenLibraryOptions();
+                services.AddHttpClient(OpenLibraryCatalog.HttpClientName, client =>
+                    {
+                        client.BaseAddress = new Uri(openLibrary.BaseUrl.TrimEnd('/') + "/");
+                        client.Timeout = TimeSpan.FromSeconds(30);
+                        // The contact address is validated as a plain email address before it gets here (OpenLibraryOptions).
+                        client.DefaultRequestHeaders.UserAgent.ParseAdd(string.IsNullOrEmpty(openLibrary.ContactEmail)
+                            ? UserAgent
+                            : UserAgent.Replace(")", $"; {openLibrary.ContactEmail})", StringComparison.Ordinal));
+                    })
+                    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+                    {
+                        AllowAutoRedirect = false,
+                        AutomaticDecompression = DecompressionMethods.All,
+                        ConnectCallback = OutboundConnections.ConnectWithTimeout(TimeSpan.FromSeconds(10)),
+                    });
+                services.AddSingleton<IBookCatalog, OpenLibraryCatalog>();
+                // A singleton, so the check's five-minute memory of its last answer survives between runs.
+                services.AddSingleton<OpenLibraryHealthCheck>();
+                services.AddHealthChecks().AddCheck<OpenLibraryHealthCheck>("book lookup", tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
+                break;
+        }
+
+        services.AddSingleton<MentionMatcher>();
         return services;
     }
 
