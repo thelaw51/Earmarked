@@ -41,6 +41,13 @@ public static class Display
     public static string? HttpsOrNull(string? url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps ? url : null;
 
+    /// <summary>
+    /// The URL if it is an absolute http or https link, otherwise null. For feed artwork, which is often plain http;
+    /// anything else (<c>data:</c>, <c>javascript:</c>, relative paths) is dropped.
+    /// </summary>
+    public static string? HttpOrHttpsOrNull(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp) ? url : null;
+
     /// <summary>A short note on a mention that isn't linked to a book, or null when it is.</summary>
     public static string? MatchNote(MatchState state, bool lookupOn) => state switch
     {
@@ -65,6 +72,22 @@ public static class Display
         MentionKind.OwnBook => Color.Info,
         MentionKind.Criticised => Color.Warning,
         _ => Color.Default,
+    };
+
+    /// <summary>True while the Worker is actively working on the episode, as opposed to waiting in a queue.</summary>
+    public static bool IsBusy(EpisodeState state) => state is EpisodeState.Transcribing or EpisodeState.Extracting;
+
+    /// <summary>
+    /// How far an episode has got through the three pipeline stages (transcript, books, done), from 0 to 3, and whether
+    /// the current stage failed. Skipped episodes haven't started.
+    /// </summary>
+    public static (int Completed, bool Failed) Progress(EpisodeState state) => state switch
+    {
+        EpisodeState.TranscriptFetched or EpisodeState.Transcribed or EpisodeState.Extracting => (1, false),
+        EpisodeState.Extracted => (3, false),
+        EpisodeState.Failed => (0, true),
+        EpisodeState.ExtractionFailed => (1, true),
+        _ => (0, false),
     };
 
     public static Color StateColor(EpisodeState state) => state switch

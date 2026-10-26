@@ -1,11 +1,19 @@
 @inherits LayoutComponentBase
 
-@* Used by pages rendered without a circuit (sign-in, sign-out, errors), so nothing here may need interactivity. *@
-<MudThemeProvider />
+@* Used by pages rendered without a circuit (sign-in, sign-out, errors), so nothing here may need interactivity.
+   Dark like the rest of the app; with no circuit there is no toggle here. *@
+<MudThemeProvider Theme="AppTheme.Theme" IsDarkMode="true" />
 
-<MudContainer MaxWidth="MaxWidth.ExtraSmall" Class="mt-16">
-    <MudPaper Elevation="2" Class="pa-6">
-        <MudText Typo="Typo.h6" Class="mb-4">Podcast Book Recs</MudText>
+<div class="account-shell">
+    <div class="account-glow" aria-hidden="true"></div>
+    <div class="account-card">
+        <div class="brand brand-large mb-6">
+            <span class="brand-mark"><MudIcon Icon="@Icons.Material.Rounded.AutoStories" /></span>
+            <span>
+                <span class="brand-name d-block">Podcast Book Recs</span>
+                <MudText Typo="Typo.caption" Class="account-tagline">Every book your podcasts talk about, in one place.</MudText>
+            </span>
+        </div>
         @Body
-    </MudPaper>
-</MudContainer>
+    </div>
+</div>

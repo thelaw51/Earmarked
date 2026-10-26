@@ -5,85 +5,96 @@
 
 <PageTitle>Podcasts</PageTitle>
 
-<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
-    <MudText Typo="Typo.h4">Podcasts</MudText>
-    <MudSpacer />
-    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Sync" OnClick="PollAllAsync">Poll all now</MudButton>
-    <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
-</MudStack>
+<PageHeader Eyebrow="Library" Title="Podcasts" Subtitle="The feeds being watched for book mentions. New episodes are picked up on each poll.">
+    <Actions>
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Sync" OnClick="PollAllAsync">Poll all now</MudButton>
+        <MudTooltip Text="Refresh">
+            <MudIconButton Icon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
+        </MudTooltip>
+    </Actions>
+</PageHeader>
 
-<MudPaper Class="pa-4 mb-4" Elevation="1">
-    <MudStack Row="true" AlignItems="AlignItems.Center">
-        <MudTextField T="string" @bind-Value="_newFeedUrl" Label="RSS feed URL" Variant="Variant.Outlined" Margin="Margin.Dense"
-                      InputType="InputType.Url" Immediate="true" OnKeyDown="OnFeedKeyDown"
-                      HelperText="Private feed URLs are stored as entered but only the host is ever shown." />
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AddFeedAsync" Disabled="@(_adding || string.IsNullOrWhiteSpace(_newFeedUrl))">Add feed</MudButton>
-    </MudStack>
-</MudPaper>
+<div class="surface-card add-feed">
+    <span class="add-feed-icon"><MudIcon Icon="@Icons.Material.Rounded.RssFeed" /></span>
+    <MudTextField T="string" @bind-Value="_newFeedUrl" Label="Add a podcast by RSS feed URL" Variant="Variant.Outlined" Margin="Margin.Dense"
+                  InputType="InputType.Url" Immediate="true" OnKeyDown="OnFeedKeyDown"
+                  HelperText="Private feed URLs are stored as entered but only the host is ever shown." />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Add" OnClick="AddFeedAsync"
+               Disabled="@(_adding || string.IsNullOrWhiteSpace(_newFeedUrl))" DropShadow="false">Add feed</MudButton>
+</div>
 
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error">Couldn't load podcasts: @_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Couldn't load podcasts: @_error</MudAlert>
 }
 else if (_rows is null)
 {
-    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+    <LoadingState Layout="LoadingState.LoadingLayout.Cards" Count="6" />
 }
 else if (_rows.Count == 0)
 {
-    <MudAlert Severity="Severity.Info">No feeds yet. Add one above, or list them under <code>Feeds</code> in config.json.</MudAlert>
+    <EmptyState Title="No podcasts yet" Icon="@Icons.Material.Rounded.Podcasts">
+        Paste a feed URL above, or list feeds under <code>Feeds</code> in config.json.
+    </EmptyState>
 }
 else
 {
-    <MudTable Items="_rows" Hover="true" Dense="true" Elevation="1">
-        <HeaderContent>
-            <MudTh></MudTh>
-            <MudTh>Podcast</MudTh>
-            <MudTh>Episodes</MudTh>
-            <MudTh>Last polled</MudTh>
-            <MudTh>Enabled</MudTh>
-            <MudTh></MudTh>
-        </HeaderContent>
-        <RowTemplate>
-            <MudTd>
-                @if (context.ImageUrl is not null)
-                {
-                    <MudAvatar Rounded="true"><MudImage Src="@context.ImageUrl" Alt="" /></MudAvatar>
-                }
-            </MudTd>
-            <MudTd>
-                <MudLink Href="@($"podcasts/{context.Id}")" Typo="Typo.body1">@(context.Title ?? FeedUrlRedactor.Redact(context.FeedUrl))</MudLink>
-                @if (context.Author is not null)
-                {
-                    <MudText Typo="Typo.caption" Class="d-block">@context.Author</MudText>
-                }
-            </MudTd>
-            <MudTd>
-                <MudText Typo="Typo.body2">@context.Active active, @context.Fetched with transcript, @context.Awaiting awaiting transcription</MudText>
-                @if (context.Skipped > 0)
-                {
-                    <MudText Typo="Typo.caption">@context.Skipped older skipped</MudText>
-                }
-            </MudTd>
-            <MudTd>
-                @Display.LocalTime(context.LastPolledAt)
-                @if (context.LastPollError is not null)
-                {
-                    <MudTooltip Text="@context.LastPollError">
-                        <MudIcon Icon="@Icons.Material.Filled.ErrorOutline" Color="Color.Error" Size="Size.Small" Class="ml-1" />
-                    </MudTooltip>
-                }
-            </MudTd>
-            <MudTd>
-                <MudSwitch T="bool" Value="context.Enabled" ValueChanged="@(v => SetEnabledAsync(context, v))" Color="Color.Primary" />
-            </MudTd>
-            <MudTd>
-                <MudTooltip Text="Poll now">
-                    <MudIconButton Icon="@Icons.Material.Filled.Sync" Size="Size.Small" OnClick="@(() => PollAsync(context))" />
-                </MudTooltip>
-            </MudTd>
-        </RowTemplate>
-    </MudTable>
+    <MudGrid Spacing="3" Class="stagger">
+        @foreach (var row in _rows)
+        {
+            <MudItem xs="12" sm="6" lg="4" @key="row.Id">
+                <div class="surface-card hover-lift podcast-card">
+                    <a href="@($"podcasts/{row.Id}")" class="card-link podcast-card-top">
+                        <span class="artwork">
+                            @if (Display.HttpOrHttpsOrNull(row.ImageUrl) is { } artwork)
+                            {
+                                <img src="@artwork" alt="" loading="lazy" referrerpolicy="no-referrer" />
+                            }
+                            else
+                            {
+                                <MudIcon Icon="@Icons.Material.Rounded.Podcasts" />
+                            }
+                        </span>
+                        <span class="d-flex flex-column" style="min-width: 0;">
+                            <MudText Typo="Typo.subtitle1" Class="clamp-2" Style="font-weight: 650; line-height: 1.3;">@(row.Title ?? FeedUrlRedactor.Redact(row.FeedUrl))</MudText>
+                            @if (row.Author is not null)
+                            {
+                                <MudText Typo="Typo.body2" Class="muted clamp-2">@row.Author</MudText>
+                            }
+                        </span>
+                    </a>
+                    <div class="stat-row">
+                        <span class="stat"><strong>@row.Active</strong> episodes</span>
+                        <span class="stat"><strong>@row.Fetched</strong> with transcript</span>
+                        @if (row.Awaiting > 0)
+                        {
+                            <span class="stat"><strong>@row.Awaiting</strong> awaiting</span>
+                        }
+                        @if (row.Skipped > 0)
+                        {
+                            <span class="stat"><strong>@row.Skipped</strong> skipped</span>
+                        }
+                    </div>
+                    <div class="podcast-card-footer">
+                        @if (row.LastPollError is not null)
+                        {
+                            <MudTooltip Text="@row.LastPollError">
+                                <MudIcon Icon="@Icons.Material.Rounded.ErrorOutline" Color="Color.Error" Size="Size.Small" />
+                            </MudTooltip>
+                        }
+                        <MudText Typo="Typo.caption" Class="muted">Polled @Display.LocalTime(row.LastPolledAt)</MudText>
+                        <MudSpacer />
+                        <MudTooltip Text="@(row.Enabled ? "Polling on" : "Polling off")">
+                            <MudSwitch T="bool" Value="row.Enabled" ValueChanged="@(v => SetEnabledAsync(row, v))" Color="Color.Primary" Size="Size.Small" AriaLabel="Polling enabled" />
+                        </MudTooltip>
+                        <MudTooltip Text="Poll now">
+                            <MudIconButton Icon="@Icons.Material.Rounded.Sync" Size="Size.Small" OnClick="@(() => PollAsync(row))" aria-label="Poll now" />
+                        </MudTooltip>
+                    </div>
+                </div>
+            </MudItem>
+        }
+    </MudGrid>
 }
 
 @code {

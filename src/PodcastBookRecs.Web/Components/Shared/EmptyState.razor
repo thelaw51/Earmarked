@@ -1,0 +1,20 @@
+@* What a page shows when it has nothing to list: an icon, a heading and a line on how to get something there. *@
+<div class="empty-state">
+    <div class="empty-state-icon"><MudIcon Icon="@Icon" Size="Size.Large" /></div>
+    <MudText Typo="Typo.h6">@Title</MudText>
+    @if (ChildContent is not null)
+    {
+        <MudText Typo="Typo.body2" Class="empty-state-text">@ChildContent</MudText>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = "";
+
+    [Parameter]
+    public string Icon { get; set; } = Icons.Material.Rounded.Inbox;
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}

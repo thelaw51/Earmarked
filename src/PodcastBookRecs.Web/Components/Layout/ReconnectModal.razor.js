@@ -1,22 +1,60 @@
-// Set up event handlers
+// Drives the reconnect card. Blazor reports connection changes through "components-reconnect-state-changed";
+// this decides when the card actually appears, so short drops reconnect without anyone seeing it.
+
+// Most drops (a server restart, a phone waking up, a flaky Wi-Fi hop) reconnect within a second or two.
+const showDelayMs = 2500;
+
 const reconnectModal = document.getElementById("components-reconnect-modal");
 reconnectModal.addEventListener("components-reconnect-state-changed", handleReconnectStateChanged);
 
-const retryButton = document.getElementById("components-reconnect-button");
-retryButton.addEventListener("click", retry);
+document.getElementById("components-reconnect-button").addEventListener("click", retry);
+document.getElementById("components-resume-button").addEventListener("click", resume);
+for (const button of document.querySelectorAll(".components-reload-button")) {
+    button.addEventListener("click", () => location.reload());
+}
 
-const resumeButton = document.getElementById("components-resume-button");
-resumeButton.addEventListener("click", resume);
+let showTimer;
+
+function open() {
+    clearTimeout(showTimer);
+    if (!reconnectModal.open) {
+        reconnectModal.showModal();
+    }
+}
+
+function close() {
+    clearTimeout(showTimer);
+    if (reconnectModal.open) {
+        reconnectModal.close();
+    }
+}
 
 function handleReconnectStateChanged(event) {
-    if (event.detail.state === "show") {
-        reconnectModal.showModal();
-    } else if (event.detail.state === "hide") {
-        reconnectModal.close();
-    } else if (event.detail.state === "failed") {
-        document.addEventListener("visibilitychange", retryWhenDocumentBecomesVisible);
-    } else if (event.detail.state === "rejected") {
-        location.reload();
+    switch (event.detail.state) {
+        case "show":
+            clearTimeout(showTimer);
+            showTimer = setTimeout(open, showDelayMs);
+            break;
+        case "hide":
+            close();
+            break;
+        case "failed":
+            // Blazor has run out of automatic attempts. Try again by ourselves when the tab or network comes back.
+            open();
+            document.addEventListener("visibilitychange", retryWhenDocumentBecomesVisible);
+            window.addEventListener("online", retry, { once: true });
+            break;
+        case "paused":
+            // The server paused the session. Resume straight away instead of asking for a click.
+            resume();
+            break;
+        case "resume-failed":
+            open();
+            break;
+        case "rejected":
+            // The server no longer has this session, so a reload is the only way back.
+            location.reload();
+            break;
     }
 }
 
@@ -36,7 +74,7 @@ async function retry() {
             if (!resumeSuccessful) {
                 location.reload();
             } else {
-                reconnectModal.close();
+                close();
             }
         }
     } catch (err) {
@@ -50,9 +88,12 @@ async function resume() {
         const successful = await Blazor.resumeCircuit();
         if (!successful) {
             location.reload();
+        } else {
+            close();
         }
     } catch {
         reconnectModal.classList.replace("components-reconnect-paused", "components-reconnect-resume-failed");
+        open();
     }
 }
 

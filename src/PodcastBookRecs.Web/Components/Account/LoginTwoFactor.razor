@@ -13,9 +13,12 @@
    first step, for the same reason: signing in sets a cookie. *@
 <PageTitle>Sign in</PageTitle>
 
+<MudText Typo="Typo.h5" Class="mb-1">Two-step check</MudText>
+<MudText Typo="Typo.body2" Class="account-tagline mb-2">Your password was right. One more code and you're in.</MudText>
+
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true" Class="my-3">@_error</MudAlert>
 }
 
 <EditForm Model="Input" method="post" OnValidSubmit="VerifyAsync" FormName="login-2fa" class="account-form">
@@ -24,7 +27,7 @@
     <InputText id="code" type="text" @bind-Value="Input.Code" autocomplete="one-time-code" autofocus />
     <ValidationMessage For="() => Input.Code" />
 
-    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-2">Verify</MudButton>
+    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" DropShadow="false" Class="mt-5">Verify</MudButton>
 </EditForm>
 
 <MudButton Href="account/login" Variant="Variant.Text" FullWidth="true" Class="mt-2">Start again</MudButton>

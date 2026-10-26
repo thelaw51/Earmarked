@@ -6,76 +6,88 @@
 <PageTitle>Books</PageTitle>
 
 @* Books that mentions were matched to in the catalogue, most widely discussed first (BookRanking). *@
-<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
-    <MudText Typo="Typo.h4">Books</MudText>
-    <MudSpacer />
-    <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
-</MudStack>
+<PageHeader Eyebrow="Library" Title="Books" Subtitle="Every book the podcasts mentioned, ranked by how many podcasts and episodes brought it up.">
+    <Actions>
+        <MudTooltip Text="Refresh">
+            <MudIconButton Icon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
+        </MudTooltip>
+    </Actions>
+</PageHeader>
 
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error">Couldn't load books: @_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Couldn't load books: @_error</MudAlert>
 }
 else if (_rows is null)
 {
-    <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+    <LoadingState Layout="LoadingState.LoadingLayout.Cards" Count="9" />
 }
 else
 {
     @if (_pending > 0 || _unmatched > 0)
     {
-        <MudText Typo="Typo.body2" Class="mb-4">
-            @if (_pending > 0 && _lookupOn)
-            {
-                <text>@_pending mention(s) still being checked against the catalogue. </text>
-            }
-            else if (_pending > 0)
-            {
-                <text>Book lookup is off (<code>BookLookup:Provider</code> is empty), so @_pending mention(s) haven't been checked against a catalogue. </text>
-            }
-            @if (_unmatched > 0)
-            {
-                <text>@_unmatched mention(s) weren't found in the catalogue and aren't listed. They stay on their episode pages.</text>
-            }
-        </MudText>
+        <div class="notice">
+            <MudIcon Icon="@Icons.Material.Outlined.Info" Size="Size.Small" />
+            <MudText Typo="Typo.body2">
+                @if (_pending > 0 && _lookupOn)
+                {
+                    <text>@_pending mention(s) still being checked against the catalogue. </text>
+                }
+                else if (_pending > 0)
+                {
+                    <text>Book lookup is off (<code>BookLookup:Provider</code> is empty), so @_pending mention(s) haven't been checked against a catalogue. </text>
+                }
+                @if (_unmatched > 0)
+                {
+                    <text>@_unmatched mention(s) weren't found in the catalogue and aren't listed. They stay on their episode pages.</text>
+                }
+            </MudText>
+        </div>
     }
 
     @if (_rows.Count == 0)
     {
-        <MudAlert Severity="Severity.Info">No books yet. Books appear here once episodes have been searched for books and the titles found in the catalogue.</MudAlert>
+        <EmptyState Title="No books yet" Icon="@Icons.Material.Rounded.MenuBook">
+            Books appear here once episodes have been searched for books and the titles found in the catalogue.
+        </EmptyState>
     }
     else
     {
-        <MudTable Items="_rows" Hover="true" Dense="true" Elevation="1">
-            <HeaderContent>
-                <MudTh>#</MudTh>
-                <MudTh></MudTh>
-                <MudTh>Book</MudTh>
-                <MudTh>Podcasts</MudTh>
-                <MudTh>Episodes</MudTh>
-                <MudTh>Recommended in</MudTh>
-                <MudTh>Last mentioned</MudTh>
-            </HeaderContent>
-            <RowTemplate>
-                <MudTd>@context.Rank</MudTd>
-                <MudTd>
-                    @if (Display.HttpsOrNull(context.Book.CoverUrl) is { } cover)
-                    {
-                        <img src="@cover" alt="" loading="lazy" referrerpolicy="no-referrer" style="height: 56px; width: auto;" />
-                    }
-                </MudTd>
-                <MudTd>
-                    <MudLink Href="@($"books/{context.Book.Id}")" Typo="Typo.body1">@context.Book.Title</MudLink>
-                    <MudText Typo="Typo.caption" Class="d-block">
-                        @context.Book.Authors@(context.Book.FirstPublishYear is { } year ? $" · {year}" : "")
-                    </MudText>
-                </MudTd>
-                <MudTd>@context.Ranking.Podcasts</MudTd>
-                <MudTd>@context.Ranking.Episodes</MudTd>
-                <MudTd>@(context.Ranking.RecommendedIn > 0 ? $"{context.Ranking.RecommendedIn} episode(s)" : "")</MudTd>
-                <MudTd>@Display.LocalDate(context.Ranking.LastMentioned)</MudTd>
-            </RowTemplate>
-        </MudTable>
+        <MudGrid Spacing="3" Class="stagger">
+            @foreach (var row in _rows)
+            {
+                <MudItem xs="12" sm="6" lg="4" @key="row.Book.Id">
+                    <a href="@($"books/{row.Book.Id}")" class="card-link surface-card hover-lift book-card">
+                        <span class="rank @(row.Rank <= 3 ? "rank-top" : "")">@row.Rank</span>
+                        @if (Display.HttpsOrNull(row.Book.CoverUrl) is { } cover)
+                        {
+                            <img src="@cover" alt="" loading="lazy" referrerpolicy="no-referrer" class="book-cover" />
+                        }
+                        else
+                        {
+                            <span class="book-cover book-cover-blank"><MudIcon Icon="@Icons.Material.Rounded.AutoStories" /></span>
+                        }
+                        <span class="book-card-body">
+                            <MudText Typo="Typo.subtitle1" Class="clamp-2" Style="font-weight: 650; line-height: 1.3;">@row.Book.Title</MudText>
+                            <MudText Typo="Typo.body2" Class="muted clamp-2">
+                                @row.Book.Authors@(row.Book.FirstPublishYear is { } year ? $" · {year}" : "")
+                            </MudText>
+                            <span class="stat-row mt-2">
+                                <span class="stat"><strong>@row.Ranking.Podcasts</strong> podcast(s)</span>
+                                <span class="stat"><strong>@row.Ranking.Episodes</strong> episode(s)</span>
+                                @if (row.Ranking.RecommendedIn > 0)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Text" Icon="@Icons.Material.Rounded.ThumbUp" Class="state-chip ma-0">
+                                        Recommended in @row.Ranking.RecommendedIn
+                                    </MudChip>
+                                }
+                            </span>
+                            <MudText Typo="Typo.caption" Class="muted mt-auto">Last mentioned @Display.LocalDate(row.Ranking.LastMentioned)</MudText>
+                        </span>
+                    </a>
+                </MudItem>
+            }
+        </MudGrid>
     }
 }
 

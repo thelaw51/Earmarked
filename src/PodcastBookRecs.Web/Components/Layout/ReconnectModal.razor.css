@@ -1,157 +1,184 @@
+/* The dialog shows only while it is [open], which ReconnectModal.razor.js controls. The state classes Blazor adds
+   choose which lines and buttons appear inside it. */
+
 .components-reconnect-first-attempt-visible,
 .components-reconnect-repeated-attempt-visible,
 .components-reconnect-failed-visible,
 .components-pause-visible,
 .components-resume-failed-visible,
-.components-rejoining-animation {
+.components-reconnect-spinner,
+.components-reconnect-problem {
     display: none;
 }
 
-#components-reconnect-modal.components-reconnect-show .components-reconnect-first-attempt-visible,
-#components-reconnect-modal.components-reconnect-show .components-rejoining-animation,
-#components-reconnect-modal.components-reconnect-paused .components-pause-visible,
-#components-reconnect-modal.components-reconnect-resume-failed .components-resume-failed-visible,
-#components-reconnect-modal.components-reconnect-retrying,
+#components-reconnect-modal.components-reconnect-show:not(.components-reconnect-retrying) .components-reconnect-first-attempt-visible,
 #components-reconnect-modal.components-reconnect-retrying .components-reconnect-repeated-attempt-visible,
-#components-reconnect-modal.components-reconnect-retrying .components-rejoining-animation,
-#components-reconnect-modal.components-reconnect-failed,
-#components-reconnect-modal.components-reconnect-failed .components-reconnect-failed-visible {
+#components-reconnect-modal.components-reconnect-failed .components-reconnect-failed-visible,
+#components-reconnect-modal.components-reconnect-paused .components-pause-visible,
+#components-reconnect-modal.components-reconnect-resume-failed .components-resume-failed-visible {
     display: block;
 }
 
-
-#components-reconnect-modal {
-    background-color: white;
-    width: 20rem;
-    margin: 20vh auto;
-    padding: 2rem;
-    border: 0;
-    border-radius: 0.5rem;
-    box-shadow: 0 3px 6px 2px rgba(0, 0, 0, 0.3);
-    opacity: 0;
-    transition: display 0.5s allow-discrete, overlay 0.5s allow-discrete;
-    animation: components-reconnect-modal-fadeOutOpacity 0.5s both;
-    &[open]
-
-{
-    animation: components-reconnect-modal-slideUp 1.5s cubic-bezier(.05, .89, .25, 1.02) 0.3s, components-reconnect-modal-fadeInOpacity 0.5s ease-in-out 0.3s;
-    animation-fill-mode: both;
-}
-
-}
-
-#components-reconnect-modal::backdrop {
-    background-color: rgba(0, 0, 0, 0.4);
-    animation: components-reconnect-modal-fadeInOpacity 0.5s ease-in-out;
-    opacity: 1;
-}
-
-@keyframes components-reconnect-modal-slideUp {
-    0% {
-        transform: translateY(30px) scale(0.95);
-    }
-
-    100% {
-        transform: translateY(0);
-    }
-}
-
-@keyframes components-reconnect-modal-fadeInOpacity {
-    0% {
-        opacity: 0;
-    }
-
-    100% {
-        opacity: 1;
-    }
-}
-
-@keyframes components-reconnect-modal-fadeOutOpacity {
-    0% {
-        opacity: 1;
-    }
-
-    100% {
-        opacity: 0;
-    }
-}
-
-.components-reconnect-container {
+#components-reconnect-modal.components-reconnect-show .components-reconnect-spinner,
+#components-reconnect-modal.components-reconnect-retrying .components-reconnect-spinner,
+#components-reconnect-modal.components-reconnect-paused .components-reconnect-spinner,
+#components-reconnect-modal.components-reconnect-failed .components-reconnect-problem,
+#components-reconnect-modal.components-reconnect-resume-failed .components-reconnect-problem {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1rem;
 }
 
-#components-reconnect-modal p {
-    margin: 0;
-    text-align: center;
-}
-
-#components-reconnect-modal button {
+/* A small card at the bottom of the screen rather than a box in the middle of it. */
+#components-reconnect-modal {
+    background: transparent;
     border: 0;
-    background-color: #6b9ed2;
-    color: white;
-    padding: 4px 24px;
-    border-radius: 4px;
+    color: var(--mud-palette-text-primary);
+    font-family: inherit;
+    inset: auto 0 1.5rem;
+    margin: 0 auto;
+    max-width: calc(100% - 2rem);
+    overflow: visible;
+    padding: 0;
+    width: 26rem;
 }
 
-    #components-reconnect-modal button:hover {
-        background-color: #3b6ea2;
-    }
-
-    #components-reconnect-modal button:active {
-        background-color: #6b9ed2;
-    }
-
-.components-rejoining-animation {
-    position: relative;
-    width: 80px;
-    height: 80px;
+#components-reconnect-modal[open] {
+    animation: reconnect-rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-    .components-rejoining-animation div {
-        position: absolute;
-        border: 3px solid #0087ff;
-        opacity: 1;
-        border-radius: 50%;
-        animation: components-rejoining-animation 1.5s cubic-bezier(0, 0.2, 0.8, 1) infinite;
+/* Light enough to keep the page readable, present enough to say clicks won't do anything right now. */
+#components-reconnect-modal::backdrop {
+    animation: reconnect-fade 0.4s ease both;
+    backdrop-filter: blur(2px) saturate(80%);
+    background-color: rgb(8 6 16 / 0.35);
+}
+
+.reconnect-card {
+    align-items: center;
+    backdrop-filter: blur(18px);
+    background: color-mix(in srgb, var(--mud-palette-surface) 92%, transparent);
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 18px;
+    box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.55);
+    display: flex;
+    gap: 0.9rem;
+    padding: 0.9rem 1rem;
+}
+
+.reconnect-spinner {
+    animation: reconnect-spin 0.9s linear infinite;
+    border: 3px solid color-mix(in srgb, var(--mud-palette-primary) 22%, transparent);
+    border-radius: 50%;
+    border-top-color: var(--mud-palette-primary);
+    flex-shrink: 0;
+    height: 28px;
+    width: 28px;
+}
+
+.reconnect-icon {
+    align-items: center;
+    background: color-mix(in srgb, var(--mud-palette-warning) 18%, transparent);
+    border-radius: 50%;
+    color: var(--mud-palette-warning);
+    flex-shrink: 0;
+    font-weight: 800;
+    height: 32px;
+    justify-content: center;
+    width: 32px;
+}
+
+.reconnect-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.reconnect-text p {
+    margin: 0;
+}
+
+.reconnect-title {
+    font-size: 0.95rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+}
+
+.reconnect-detail {
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.8rem;
+    margin-top: 0.1rem !important;
+}
+
+.reconnect-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: 0.4rem;
+}
+
+.reconnect-actions button {
+    border: 0;
+    border-radius: 10px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: normal;
+    padding: 0.45rem 0.9rem;
+    text-transform: none;
+    transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.reconnect-actions button:active {
+    transform: scale(0.97);
+}
+
+.reconnect-actions button:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}
+
+.reconnect-primary {
+    background: var(--mud-palette-primary);
+    color: var(--mud-palette-primary-text);
+}
+
+.reconnect-primary:hover {
+    background: var(--mud-palette-primary-darken);
+}
+
+.reconnect-secondary {
+    background: transparent;
+    color: var(--mud-palette-text-primary);
+}
+
+.reconnect-secondary:hover {
+    background: color-mix(in srgb, var(--mud-palette-text-primary) 8%, transparent);
+}
+
+@media (max-width: 480px) {
+    .reconnect-card { flex-wrap: wrap; }
+    .reconnect-actions { justify-content: flex-end; width: 100%; }
+}
+
+@keyframes reconnect-rise {
+    from { opacity: 0; transform: translateY(16px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+}
+
+@keyframes reconnect-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes reconnect-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #components-reconnect-modal[open],
+    #components-reconnect-modal::backdrop {
+        animation: none;
     }
 
-        .components-rejoining-animation div:nth-child(2) {
-            animation-delay: -0.5s;
-        }
-
-@keyframes components-rejoining-animation {
-    0% {
-        top: 40px;
-        left: 40px;
-        width: 0;
-        height: 0;
-        opacity: 0;
-    }
-
-    4.9% {
-        top: 40px;
-        left: 40px;
-        width: 0;
-        height: 0;
-        opacity: 0;
-    }
-
-    5% {
-        top: 40px;
-        left: 40px;
-        width: 0;
-        height: 0;
-        opacity: 1;
-    }
-
-    100% {
-        top: 0px;
-        left: 0px;
-        width: 80px;
-        height: 80px;
-        opacity: 0;
+    .reconnect-spinner {
+        animation-duration: 2.5s;
     }
 }
