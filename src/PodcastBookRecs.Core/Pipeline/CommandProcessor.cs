@@ -71,6 +71,14 @@ public sealed partial class CommandProcessor(
                 await ReextractEpisodeAsync(episodeId, cancellationToken);
                 break;
 
+            case WorkerCommandType.PrioritiseEpisode when command.EpisodeId is Guid episodeId:
+                await UpdateQueueAsync(episodeId, prioritise: true, cancellationToken);
+                break;
+
+            case WorkerCommandType.IncludeEpisode when command.EpisodeId is Guid episodeId:
+                await UpdateQueueAsync(episodeId, prioritise: false, cancellationToken);
+                break;
+
             default:
                 throw new InvalidOperationException($"Command {command.Type} is missing its target.");
         }
@@ -96,10 +104,62 @@ public sealed partial class CommandProcessor(
         episode.Attempts = 0;
         episode.NextAttemptAt = null;
         episode.LastError = null;
+        episode.PrioritisedAt = null;
         episode.UpdatedAt = time.GetUtcNow().UtcDateTime;
         await db.SaveChangesAsync(cancellationToken);
         workspace.Delete(episodeId);
     }
+
+    /// <summary>
+    /// Includes a skipped episode, and with <paramref name="prioritise"/> also moves it to the front of whichever queue
+    /// it's in, clearing any retry backoff. Including polls the episode's feed straight after, because a skipped
+    /// episode's audio and transcript links were never refreshed and signed links expire.
+    /// </summary>
+    private async Task UpdateQueueAsync(Guid episodeId, bool prioritise, CancellationToken cancellationToken)
+    {
+        bool included;
+        Guid podcastId;
+        using (await stateLock.AcquireAsync(cancellationToken))
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+            var episode = await db.Episodes.SingleOrDefaultAsync(e => e.Id == episodeId, cancellationToken)
+                ?? throw new InvalidOperationException($"Episode {episodeId} not found.");
+            included = episode.State == EpisodeState.Skipped;
+            if (!included && (!prioritise || !QueuedStates.Contains(episode.State)))
+            {
+                throw new InvalidOperationException(prioritise
+                    ? $"Episode {episodeId} can't be prioritised while it's {episode.State}."
+                    : $"Episode {episodeId} isn't skipped, so there's nothing to include.");
+            }
+
+            var now = time.GetUtcNow().UtcDateTime;
+            if (included)
+            {
+                episode.State = episode.TranscriptLinks.Count > 0 ? EpisodeState.New : EpisodeState.AwaitingTranscription;
+                episode.Attempts = 0;
+                episode.LastError = null;
+            }
+
+            if (prioritise)
+            {
+                episode.PrioritisedAt ??= now;
+                episode.NextAttemptAt = null;
+            }
+
+            episode.UpdatedAt = now;
+            podcastId = episode.PodcastFeedId;
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        if (included)
+        {
+            await poller.PollAsync(podcastId, cancellationToken);
+        }
+    }
+
+    /// <summary>States an episode waits in for its next step, where priority changes what runs next.</summary>
+    public static readonly EpisodeState[] QueuedStates =
+        [EpisodeState.New, EpisodeState.AwaitingTranscription, EpisodeState.TranscriptFetched, EpisodeState.Transcribed];
 
     /// <summary>
     /// Deletes an episode's mentions and queues it for extraction again from its stored transcript. Only for episodes

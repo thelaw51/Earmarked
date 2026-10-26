@@ -1,5 +1,6 @@
 @page "/episodes/{Id:guid}"
 @using PodcastBookRecs.Core.Backends
+@using PodcastBookRecs.Core.Pipeline
 @using PodcastBookRecs.Core.Transcripts
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject TimeProvider Time
@@ -25,6 +26,16 @@ else
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
         <MudText Typo="Typo.h4">@_episode.Title</MudText>
         <MudSpacer />
+        @if (_episode.State is EpisodeState.Skipped)
+        {
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AddCircleOutline"
+                       OnClick="@(() => QueueAsync(WorkerCommandType.IncludeEpisode, "Episode included. It joins the queue in its normal place."))">Include</MudButton>
+        }
+        @if (_episode.PrioritisedAt is null && (_episode.State is EpisodeState.Skipped || CommandProcessor.QueuedStates.Contains(_episode.State)))
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.KeyboardDoubleArrowUp"
+                       OnClick="@(() => QueueAsync(WorkerCommandType.PrioritiseEpisode, "Moved to the front of the queue. Anything already running finishes first."))">Do this next</MudButton>
+        }
         @if (_episode.State is EpisodeState.Extracted or EpisodeState.ExtractionFailed)
         {
             <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.MenuBook" OnClick="ReextractAsync">Re-run book extraction</MudButton>
@@ -34,6 +45,10 @@ else
 
     <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-4">
         <EpisodeStateChip State="_episode.State" />
+        @if (_episode.PrioritisedAt is not null)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.KeyboardDoubleArrowUp">Prioritised</MudChip>
+        }
         <MudText Typo="Typo.body2">Published @Display.LocalTime(_episode.PublishedAt)</MudText>
         @if (_episode.Duration is not null)
         {
@@ -55,6 +70,7 @@ else
                 EpisodeState.AwaitingTranscription => "No published transcript. It's queued for transcription.",
                 EpisodeState.Transcribing => "Transcribing now. Finished parts are kept, so it resumes after a restart.",
                 EpisodeState.Failed => "Transcription gave up. Use Reset and retry to start again.",
+                EpisodeState.Skipped => "Skipped: it was older than the backfill window when the podcast was added. Include it to process it.",
                 _ => "No transcript yet.",
             })
         </MudAlert>
@@ -176,33 +192,23 @@ else
         }
     }
 
-    private async Task ReextractAsync()
-    {
-        try
-        {
-            await using var db = await DbFactory.CreateDbContextAsync();
-            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.ReextractEpisode, EpisodeId = Id, CreatedAt = Time.GetUtcNow().UtcDateTime });
-            await db.SaveChangesAsync();
-            Snackbar.Add("Book extraction queued. The transcript is kept.", Severity.Info);
-        }
-        catch (Exception ex)
-        {
-            Snackbar.Add($"Couldn't queue book extraction: {ex.Message}", Severity.Error);
-        }
-    }
+    private Task ReextractAsync() => QueueAsync(WorkerCommandType.ReextractEpisode, "Book extraction queued. The transcript is kept.");
 
-    private async Task RetryAsync()
+    private Task RetryAsync() => QueueAsync(WorkerCommandType.RetryEpisode, "Retry queued. Any stored transcript will be fetched again.");
+
+    /// <summary>Asks the Worker to act on this episode. The Worker picks the command up within about 5 seconds.</summary>
+    private async Task QueueAsync(WorkerCommandType type, string done)
     {
         try
         {
             await using var db = await DbFactory.CreateDbContextAsync();
-            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.RetryEpisode, EpisodeId = Id, CreatedAt = Time.GetUtcNow().UtcDateTime });
+            db.WorkerCommands.Add(new WorkerCommand { Type = type, EpisodeId = Id, CreatedAt = Time.GetUtcNow().UtcDateTime });
             await db.SaveChangesAsync();
-            Snackbar.Add("Retry queued. Any stored transcript will be fetched again.", Severity.Info);
+            Snackbar.Add(done, Severity.Info);
         }
         catch (Exception ex)
         {
-            Snackbar.Add($"Couldn't queue the retry: {ex.Message}", Severity.Error);
+            Snackbar.Add($"Couldn't send that to the Worker: {ex.Message}", Severity.Error);
         }
     }
 }

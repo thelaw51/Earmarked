@@ -29,7 +29,9 @@ public sealed partial class TranscriptFetcher(
         var now = time.GetUtcNow().UtcDateTime;
         var episode = await db.Episodes
             .Where(e => e.State == EpisodeState.New && (e.NextAttemptAt == null || e.NextAttemptAt <= now))
-            .OrderByDescending(e => e.PublishedAt)
+            .OrderBy(e => e.PrioritisedAt == null)
+            .ThenBy(e => e.PrioritisedAt)
+            .ThenByDescending(e => e.PublishedAt)
             .FirstOrDefaultAsync(cancellationToken);
         if (episode is null)
         {

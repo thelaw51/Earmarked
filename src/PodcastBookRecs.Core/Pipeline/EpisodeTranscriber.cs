@@ -96,8 +96,9 @@ public sealed partial class EpisodeTranscriber(
     }
 
     /// <summary>
-    /// Picks the next due episode: one already being transcribed first (to resume), then the newest waiting one.
-    /// Shows that have published transcripts before get a grace period first. Claiming is a conditional update under
+    /// Picks the next due episode: one already being transcribed first (to resume), then prioritised ones in the order
+    /// they were asked for, then the newest waiting one. Shows that have published transcripts before get a grace
+    /// period first, unless the episode is prioritised. Claiming is a conditional update under
     /// the state lock, so a poll that just requeued the episode for a published transcript wins.
     /// </summary>
     internal async Task<Episode?> ClaimNextAsync(CancellationToken cancellationToken)
@@ -111,8 +112,10 @@ public sealed partial class EpisodeTranscriber(
             .Where(e => e.EnclosureUrl != null && (e.NextAttemptAt == null || e.NextAttemptAt <= now))
             .Where(e => e.State == EpisodeState.Transcribing
                 || (e.State == EpisodeState.AwaitingTranscription
-                    && (!e.PodcastFeed.PublishesTranscripts || e.PublishedAt == null || e.PublishedAt <= graceCutoff)))
+                    && (e.PrioritisedAt != null || !e.PodcastFeed.PublishesTranscripts || e.PublishedAt == null || e.PublishedAt <= graceCutoff)))
             .OrderBy(e => e.State == EpisodeState.Transcribing ? 0 : 1)
+            .ThenBy(e => e.PrioritisedAt == null)
+            .ThenBy(e => e.PrioritisedAt)
             .ThenByDescending(e => e.PublishedAt)
             .Select(e => new { e.Id, e.State })
             .FirstOrDefaultAsync(cancellationToken);
@@ -303,6 +306,7 @@ public sealed partial class EpisodeTranscriber(
         {
             tracked.State = EpisodeState.Failed;
             tracked.NextAttemptAt = null;
+            tracked.PrioritisedAt = null;
             tracked.LastError = $"Gave up after {tracked.Attempts} attempts: {error}";
             workspace.Delete(tracked.Id);
         }

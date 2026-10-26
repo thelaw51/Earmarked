@@ -51,8 +51,8 @@ public sealed partial class EpisodeExtractor(
     }
 
     /// <summary>
-    /// Picks an episode already being extracted first (to finish it after a restart), then the newest one with a
-    /// transcript. Claiming is a conditional update under the state lock.
+    /// Picks an episode already being extracted first (to finish it after a restart), then prioritised ones in the
+    /// order they were asked for, then the newest one with a transcript. Claiming is a conditional update under the state lock.
     /// </summary>
     internal async Task<Episode?> ClaimNextAsync(CancellationToken cancellationToken)
     {
@@ -64,6 +64,8 @@ public sealed partial class EpisodeExtractor(
             .Where(e => e.Transcript != null && (e.NextAttemptAt == null || e.NextAttemptAt <= now))
             .Where(e => e.State == EpisodeState.Extracting || ReadyStates.Contains(e.State))
             .OrderBy(e => e.State == EpisodeState.Extracting ? 0 : 1)
+            .ThenBy(e => e.PrioritisedAt == null)
+            .ThenBy(e => e.PrioritisedAt)
             .ThenByDescending(e => e.PublishedAt)
             .Select(e => new { e.Id, e.State })
             .FirstOrDefaultAsync(cancellationToken);
@@ -142,6 +144,7 @@ public sealed partial class EpisodeExtractor(
                 CreatedAt = now,
             }));
             tracked.State = EpisodeState.Extracted;
+            tracked.PrioritisedAt = null;
             tracked.Attempts = 0;
             tracked.NextAttemptAt = null;
             tracked.LastError = null;
@@ -172,6 +175,7 @@ public sealed partial class EpisodeExtractor(
         {
             tracked.State = EpisodeState.ExtractionFailed;
             tracked.NextAttemptAt = null;
+            tracked.PrioritisedAt = null;
             tracked.LastError = $"Extraction gave up after {tracked.Attempts} attempts: {error}";
         }
         else

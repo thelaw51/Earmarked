@@ -70,6 +70,41 @@ public sealed class EpisodeExtractorTests : IAsyncLifetime
             new TranscriptionWorkspace(Options.Create(new PathsOptions { Data = _root })), TimeProvider.System, NullLogger<CommandProcessor>.Instance);
     }
 
+    [Fact]
+    public async Task A_prioritised_episode_goes_first_and_its_priority_clears_when_done()
+    {
+        Guid newer;
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            var original = await db.Episodes.Include(e => e.Transcript).SingleAsync(e => e.Id == _episodeId, Ct);
+            var episode = new Episode
+            {
+                PodcastFeedId = original.PodcastFeedId,
+                IdentityKey = "ep-2",
+                Title = "A newer episode",
+                PublishedAt = DateTime.UtcNow,
+                State = EpisodeState.Transcribed,
+                Transcript = new Transcript
+                {
+                    Source = TranscriptSource.Transcribed,
+                    Format = TranscriptFormat.SpeechToText,
+                    Segments = [new(TimeSpan.Zero, null, null, "Nothing about books here.")],
+                },
+            };
+            db.Episodes.Add(episode);
+            original.PrioritisedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(Ct);
+            newer = episode.Id;
+        }
+
+        Assert.Equal(WorkOutcome.Worked, await _extractor.ProcessNextAsync(Ct));
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        var first = await check.Episodes.SingleAsync(e => e.Id == _episodeId, Ct);
+        Assert.Equal((EpisodeState.Extracted, (DateTime?)null), (first.State, first.PrioritisedAt));
+        Assert.Equal(EpisodeState.Transcribed, (await check.Episodes.SingleAsync(e => e.Id == newer, Ct)).State);
+    }
+
     public ValueTask DisposeAsync()
     {
         _lock.Dispose();
