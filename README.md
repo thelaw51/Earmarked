@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/thelaw51/PodcastBookRecs/actions/workflows/ci.yml/badge.svg)](https://github.com/thelaw51/PodcastBookRecs/actions/workflows/ci.yml)
 
-A self-hosted tracker for books mentioned on podcasts. It watches the feeds you choose, gets a transcript for each episode, and (from Phase 3) pulls out the books people mention and ranks them by how many different shows and episodes bring them up.
+A self-hosted tracker for books mentioned on podcasts. It watches the feeds you choose, gets a transcript for each episode, pulls out the books people mention, and (later in Phase 3) ranks them by how many different shows and episodes bring them up.
 
 It runs as two containers from one image: a **Worker** that polls feeds and processes episodes, and a **Blazor Server UI**. They share a SQLite database on the `/data` volume.
 
@@ -12,10 +12,10 @@ It runs as two containers from one image: a **Worker** that polls feeds and proc
 |---|---|---|
 | 1 | Feed polling, published `<podcast:transcript>` fetching and parsing, podcast and episode pages, CI/CD | **Done** |
 | 2 | Speech-to-text transcription (Whisper to start) for episodes without a published transcript, on a [Mac transcription server](#transcription-server-on-a-mac) | **Done** |
-| 3 | Book extraction with a local LLM, Open Library matching, ranked book list | Planned |
+| 3 | Book extraction with a local LLM (done), Open Library matching, ranked book list | In progress |
 | 4 | Review queue, filters, export | Planned |
 
-Most podcasts don't publish transcripts, so until Phase 2 lands those episodes sit in the *Awaiting transcription* state.
+Most podcasts don't publish transcripts, so most episodes go through speech-to-text.
 
 ## How an episode moves through the pipeline
 
@@ -24,6 +24,7 @@ Most podcasts don't publish transcripts, so until Phase 2 lands those episodes s
 3. The first time a feed is polled, only the newest `Polling:BackfillEpisodes` (10 by default) are queued. Older ones are stored as *Skipped* so later polls don't mistake them for new episodes.
 4. An episode with a `<podcast:transcript>` link is fetched in the best available format: VTT, then SRT, then JSON, then HTML, then plain text. A dead or unparseable link moves on to the next one. Network errors retry with exponential backoff, up to `Polling:MaxAttempts`.
 5. Episodes with no usable transcript are transcribed, one at a time, newest first, if `Transcription:Provider` is set (see [Transcription in the Worker](#transcription-in-the-worker)). Shows that have published transcripts before get a grace period first, in case one turns up late.
+6. Episodes with a transcript are searched for book mentions, one at a time, newest first, if `Extraction:Provider` is set (see [Book extraction](#book-extraction)). Extraction runs alongside transcription.
 
 ## Deploying with Portainer
 
@@ -155,6 +156,36 @@ The Status page shows each backend as reachable or not, checked every 30 seconds
 
 The Worker talks to OpenAI's `POST /v1/audio/transcriptions` and needs `verbose_json` with timed `segments`. Any server that speaks it works by changing `Transcription:BaseUrl` (and `Model`, if the server cares): whisper.cpp on another machine, an MLX server, or a hosted API. Hosted APIs often cap uploads around 25 MB; 15 minutes of the WAV the Worker sends is about 29 MB, so set `Transcription:ChunkMinutes` to 10 for those. A backend with a different API needs a new adapter under `src/PodcastBookRecs.Core/Providers/Transcription/`, selected by a new `Provider` name.
 
+## Book extraction
+
+With `Extraction:Provider` set, the Worker looks for books in every episode that has a transcript:
+
+1. The transcript is cut into windows of `Extraction:WindowWords` words, each repeating the last `Extraction:OverlapWords` of the one before, so a mention at a boundary isn't cut in half.
+2. Each window goes to the language model with the podcast and episode titles (the episode title usually names the guest) and the instructions in [`book-mentions-v1.txt`](src/PodcastBookRecs.Core/Extraction/Prompts/book-mentions-v1.txt). The model answers in JSON, held to a schema: title, author, a short quote, the kind of mention, and a confidence.
+3. Small models invent books, so a mention is kept only if its quote is really in the transcript. Matching ignores case and punctuation and allows small slips. The stored quote and timestamp come from the transcript, not the model.
+4. Repeats of the same title within an episode are merged, keeping the earliest mention.
+5. The mentions are stored with the provider, model and prompt version that produced them. *Re-run book extraction* on the episode page deletes them and extracts again from the stored transcript, without transcribing again.
+
+Mentions are unchecked against a book catalogue for now: expect the odd newspaper or vague title ("my second book"). Open Library matching, coming next, will filter those out.
+
+Pausing works as for transcription: an unreachable backend, or a model it doesn't have, pauses extraction without counting it against the episode; a failed or timed-out request uses up one of `Polling:MaxAttempts`, after which the episode shows *Book extraction failed* and keeps its transcript.
+
+### LM Studio on the Mac
+
+The default setup runs [LM Studio](https://lmstudio.ai) on the same Mac as the transcription server, with Qwen3 8B: about 5 GB of memory, so it fits next to Whisper on a 16 GB Mac, and roughly 20 to 50 seconds per window on an M4, so an hour-long episode takes about 3 minutes.
+
+1. Download the model: `lms get qwen/qwen3-8b`, or search for it in LM Studio.
+2. Start the server on your network: `lms server start --bind 0.0.0.0 --port 1234`, or in LM Studio's Developer tab turn on *Serve on Local Network*.
+3. Make it start by itself: in the Developer tab's server settings, turn on starting the server when the app launches, and add LM Studio to your login items.
+4. Leave *Just-in-Time model loading* on. The first request loads the model (allowed for by `Extraction:RequestTimeoutMinutes`), and LM Studio unloads it after an idle hour.
+5. Keep the default context length at 8,192 tokens or more. A 1,800-word window needs about 4,500 with the instructions and the answer. If you lower it, lower `Extraction:WindowWords` too.
+
+The Status page shows an *extraction* row, which turns red if LM Studio can't be reached or doesn't have the configured model. Requests go over plain HTTP on your LAN, like the transcription server's, so transcript text is visible to anything on that network.
+
+### Pointing at a different language model
+
+The Worker uses OpenAI's `POST /v1/chat/completions` with `response_format` set to a JSON schema. Ollama, llama.cpp's server, vLLM and hosted APIs speak it: change `Extraction:BaseUrl` and `Extraction:Model`. A server that can't hold its answer to a schema will produce more failed requests. A backend with a different API needs a new adapter under `src/PodcastBookRecs.Core/Providers/Extraction/`, selected by a new `Provider` name.
+
 ## Configuration
 
 Settings come from `/config/config.json`, then environment variables prefixed `PBR_` override them. Nested keys use a double underscore: `PBR_Polling__IntervalMinutes=30`.
@@ -178,6 +209,12 @@ Settings come from `/config/config.json`, then environment variables prefixed `P
 | `Transcription:MaxAudioHours` | `8` | Audio past this is ignored; also caps the work folder's size |
 | `Transcription:FfmpegTimeoutMinutes` | `30` | ffmpeg is stopped if splitting takes longer |
 | `Transcription:MinFreeDiskGb` | `3` | Transcription pauses below this much free space on `/data` |
+| `Extraction:Provider` | | `OpenAiCompatible`, or empty to turn book extraction off |
+| `Extraction:BaseUrl` | | The backend, e.g. `http://<mac-ip>:1234` |
+| `Extraction:Model` | `qwen/qwen3-8b` | The model name the backend knows; recorded on each mention |
+| `Extraction:WindowWords` | `1800` | Words of transcript per request |
+| `Extraction:OverlapWords` | `200` | Words each window repeats from the one before |
+| `Extraction:RequestTimeoutMinutes` | `10` | How long one request may take, including loading the model, before it counts as a failure |
 | `Http:AllowPrivateNetworkFeeds` | `false` | Feeds, transcripts and audio on private or local addresses are refused unless this is `true` |
 
 Private feed URLs (for example a Supporting Cast subscriber feed) contain an access token. The app stores them as entered, but logs and the UI only ever show the host. Their audio URLs often carry the token too, so those are never shown either.
@@ -225,12 +262,12 @@ Only the Worker applies migrations, at startup. The UI shows a waiting message u
 
 | Project | Contents |
 |---|---|
-| `src/PodcastBookRecs.Core` | EF Core model and migrations, feed and transcript parsing, pipeline services, the transcription interface and its providers, ffmpeg chunking |
-| `src/PodcastBookRecs.Worker` | Background loops: commands from the UI, feed polling, transcript fetching, transcription, heartbeat, backend status |
+| `src/PodcastBookRecs.Core` | EF Core model and migrations, feed and transcript parsing, pipeline services, the transcription and extraction interfaces and their providers, the extraction prompt, ffmpeg chunking |
+| `src/PodcastBookRecs.Worker` | Background loops: commands from the UI, feed polling, transcript fetching, transcription, book extraction, heartbeat, backend status |
 | `src/PodcastBookRecs.Web` | Blazor Server UI built with MudBlazor |
 | `tests/PodcastBookRecs.Tests` | xUnit v3 tests with small invented fixtures |
 
-The UI asks the Worker to do things ("poll now", "retry episode") by inserting rows into a `WorkerCommands` table, which the Worker checks every 5 seconds.
+The UI asks the Worker to do things ("poll now", "retry episode", "re-run book extraction") by inserting rows into a `WorkerCommands` table, which the Worker checks every 5 seconds.
 
 ## Licence
 

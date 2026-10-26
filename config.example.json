@@ -10,6 +10,11 @@
     "Model": "whisper",
     "Language": "en"
   },
+  "Extraction": {
+    "Provider": "OpenAiCompatible",
+    "BaseUrl": "http://mac-mini.example.lan:1234",
+    "Model": "qwen/qwen3-8b"
+  },
   "Feeds": [
     { "Url": "https://feeds.example.com/your-podcast.rss" }
   ],
