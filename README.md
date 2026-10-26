@@ -27,6 +27,12 @@ Most podcasts don't publish transcripts, so most episodes go through speech-to-t
 6. Episodes with a transcript are searched for book mentions, one at a time, newest first, if `Extraction:Provider` is set (see [Book extraction](#book-extraction)). Extraction runs alongside transcription.
 7. Each book mention is looked up in Open Library, and mentions of the same book from any episode point at one book (see [Matching books in Open Library](#matching-books-in-open-library)). The *Books* page ranks them.
 
+### Moving an episode up the queue
+
+Each queue takes the newest episode first. To have an older one done sooner, open it and click **Do this next**. It moves to the front of whichever queue it's in, and stays there through transcription and book extraction, without a second click. An episode already being worked on finishes first. Several prioritised episodes run in the order you asked for them. A prioritised episode also skips the grace period for shows that publish transcripts, and any wait before its next retry.
+
+Episodes skipped by the backfill window when a podcast was added have an **Include** button: the episode joins the queue in its normal place, and the Worker polls the feed straight away to refresh its audio link. **Do this next** on a skipped episode does both.
+
 ## Deploying with Portainer
 
 The image is public at `ghcr.io/thelaw51/podcastbookrecs`, so Portainer can pull it without logging in.
