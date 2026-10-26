@@ -169,6 +169,35 @@ public static class ExtractionProviders
     public static readonly IReadOnlyList<string> Known = [OpenAiCompatible];
 }
 
+/// <summary>
+/// Which book catalogue turns mention titles into real books. On by default with Open Library, which needs no local
+/// setup; an empty <see cref="Provider"/> turns lookup off. Each provider reads its own settings from its own section.
+/// </summary>
+public sealed class BookLookupOptions : IValidatableObject
+{
+    public const string Section = "BookLookup";
+
+    public string? Provider { get; set; } = BookLookupProviders.OpenLibrary;
+
+    public bool Enabled => !string.IsNullOrWhiteSpace(Provider);
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (Enabled && !BookLookupProviders.Known.Contains(Provider!, StringComparer.OrdinalIgnoreCase))
+        {
+            yield return new ValidationResult($"Unknown BookLookup:Provider '{Provider}'. Known: {string.Join(", ", BookLookupProviders.Known)}.");
+        }
+    }
+}
+
+/// <summary>Names accepted in <see cref="BookLookupOptions.Provider"/>.</summary>
+public static class BookLookupProviders
+{
+    public const string OpenLibrary = "OpenLibrary";
+
+    public static readonly IReadOnlyList<string> Known = [OpenLibrary];
+}
+
 /// <summary>Outbound HTTP settings for feed-supplied URLs.</summary>
 public sealed class HttpOptions
 {
