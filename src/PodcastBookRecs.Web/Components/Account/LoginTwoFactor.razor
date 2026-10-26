@@ -41,6 +41,10 @@
 
     private string? _error;
 
+    // NavigateTo doesn't throw here (BlazorDisableThrowNavigationException), so a POST still reaches VerifyAsync after
+    // the redirect is set. This stops it doing anything for a user that isn't there.
+    private bool _expired;
+
     protected override async Task OnInitializedAsync()
     {
         Input ??= new();
@@ -48,18 +52,24 @@
         // Missing or expired (Identity gives it 5 minutes): the password has to be entered again.
         if (await SignInManager.GetTwoFactorAuthenticationUserAsync() is null)
         {
+            _expired = true;
             Navigation.NavigateTo("account/login");
         }
     }
 
     private async Task VerifyAsync()
     {
+        if (_expired)
+        {
+            return;
+        }
+
         // Wrong app codes count towards the same lockout as wrong passwords. Identity doesn't count recovery codes, and
         // lets them through a lockout, because each is ten random characters. A recovery-code sign-in is never
         // persistent, whatever "Keep me signed in" said.
         var result = AuthenticatorCodes.IsAuthenticatorCode(Input.Code)
             ? await SignInManager.TwoFactorAuthenticatorSignInAsync(AuthenticatorCodes.Normalise(Input.Code), RememberMe, rememberClient: false)
-            : await SignInManager.TwoFactorRecoveryCodeSignInAsync(Input.Code.Trim());
+            : await SignInManager.TwoFactorRecoveryCodeSignInAsync(AuthenticatorCodes.NormaliseRecoveryCode(Input.Code));
 
         if (result.Succeeded)
         {

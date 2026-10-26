@@ -37,6 +37,7 @@ public static class IdentityExtensions
             })
             .AddEntityFrameworkStores<AppDbContext>()
             .AddSignInManager()
-            // Only the authenticator provider: the others (email and phone tokens) need Data Protection and are unused.
+            // Only the authenticator provider. Nothing here sends reset or confirmation tokens, and the default set's
+            // DataProtectorTokenProvider would need Data Protection registered wherever Identity is.
             .AddTokenProvider<AuthenticatorTokenProvider<AppUser>>(TokenOptions.DefaultAuthenticatorProvider);
 }

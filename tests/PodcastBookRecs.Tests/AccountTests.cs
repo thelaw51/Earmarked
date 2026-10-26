@@ -230,7 +230,7 @@ public sealed class AccountTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Disabling_two_factor_discards_the_key_and_signs_out_existing_sessions()
+    public async Task Disabling_two_factor_discards_the_key_and_recovery_codes_and_signs_out_existing_sessions()
     {
         await CreateUserAsync();
         await EnrolAsync();
@@ -245,6 +245,10 @@ public sealed class AccountTests : IAsyncLifetime
         Assert.False(await TwoFactorEnabledAsync());
         Assert.NotEqual(oldKey, newKey);
         Assert.NotEqual(oldStamp, newStamp);
+
+        await using var check = _services.CreateAsyncScope();
+        var users = check.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        Assert.Equal(0, await users.CountRecoveryCodesAsync((await users.FindByEmailAsync(Email))!));
     }
 
     [Fact]

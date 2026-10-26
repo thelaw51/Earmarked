@@ -15,6 +15,13 @@ public static class AuthenticatorCodes
     public static bool IsAuthenticatorCode(string code) => Normalise(code) is { Length: 6 } digits && digits.All(char.IsAsciiDigit);
 
     /// <summary>
+    /// Puts a recovery code in the form Identity stored it, <c>XXXXX-XXXXX</c> in capitals, because Identity only accepts
+    /// an exact match. Someone typing one in after losing their phone shouldn't fail on case or a missing hyphen.
+    /// </summary>
+    public static string NormaliseRecoveryCode(string code) =>
+        Normalise(code).ToUpperInvariant() is { Length: 10 } bare ? $"{bare[..5]}-{bare[5..]}" : Normalise(code).ToUpperInvariant();
+
+    /// <summary>
     /// The key in lowercase groups of four, for typing into an app by hand. Base32 ignores case and apps accept
     /// either, and lowercase is easier to read; Identity's own account pages show it the same way.
     /// </summary>

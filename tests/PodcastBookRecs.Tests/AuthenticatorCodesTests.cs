@@ -19,6 +19,18 @@ public class AuthenticatorCodesTests
     [InlineData("１２３４５６")]
     public void Anything_else_is_tried_as_a_recovery_code(string code) => Assert.False(AuthenticatorCodes.IsAuthenticatorCode(code));
 
+    [Theory]
+    [InlineData("BCDFG-HJKMN")]
+    [InlineData("bcdfg-hjkmn")]
+    [InlineData("bcdfghjkmn")]
+    [InlineData(" BCD FG-HJK MN ")]
+    public void Recovery_codes_are_put_back_in_the_stored_form(string typed) =>
+        Assert.Equal("BCDFG-HJKMN", AuthenticatorCodes.NormaliseRecoveryCode(typed));
+
+    [Fact]
+    public void A_recovery_code_of_the_wrong_length_is_left_to_fail() =>
+        Assert.Equal("BCDFGHJK", AuthenticatorCodes.NormaliseRecoveryCode("bcdf-ghjk"));
+
     [Fact]
     public void The_key_is_grouped_for_typing() =>
         Assert.Equal("abcd efgh ij", AuthenticatorCodes.FormatKey("ABCDEFGHIJ"));

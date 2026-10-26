@@ -69,7 +69,8 @@ public sealed class UserAdmin(UserManager<AppUser> users)
 
     /// <summary>
     /// Turns on two-factor sign-in if <paramref name="code"/> matches the user's authenticator key, and returns fresh
-    /// recovery codes, which replace any earlier ones.
+    /// recovery codes, which replace any earlier ones. The codes are saved first, so two-factor sign-in is never on
+    /// without a way back in.
     /// </summary>
     public async Task<(IdentityResult Result, IReadOnlyList<string> RecoveryCodes)> ConfirmAuthenticatorAsync(string email, string code)
     {
@@ -83,18 +84,19 @@ public sealed class UserAdmin(UserManager<AppUser> users)
             return (IdentityResult.Failed(new IdentityError { Code = "InvalidCode", Description = "That code doesn't match. Check the key and the time on your device." }), []);
         }
 
-        var result = await users.SetTwoFactorEnabledAsync(user, true);
-        if (!result.Succeeded)
+        // Null means the codes weren't saved.
+        if (await users.GenerateNewTwoFactorRecoveryCodesAsync(user, RecoveryCodeCount) is not { } recoveryCodes)
         {
-            return (result, []);
+            return (IdentityResult.Failed(new IdentityError { Code = "RecoveryCodesNotSaved", Description = "The recovery codes couldn't be saved. Two-factor sign-in is still off." }), []);
         }
 
-        return (result, [.. await users.GenerateNewTwoFactorRecoveryCodesAsync(user, RecoveryCodeCount) ?? []]);
+        var result = await users.SetTwoFactorEnabledAsync(user, true);
+        return result.Succeeded ? (result, [.. recoveryCodes]) : (result, []);
     }
 
     /// <summary>
-    /// Turns off two-factor sign-in and discards the authenticator key, for a lost or replaced device. Leftover recovery
-    /// codes can't be used without two-factor sign-in, and enrolling again replaces them. Existing sessions are signed out.
+    /// Turns off two-factor sign-in and discards the authenticator key and recovery codes, for a lost or replaced device.
+    /// Existing sessions are signed out.
     /// </summary>
     public async Task<IdentityResult> DisableTwoFactorAsync(string email)
     {
@@ -104,7 +106,15 @@ public sealed class UserAdmin(UserManager<AppUser> users)
         }
 
         var result = await users.SetTwoFactorEnabledAsync(user, false);
-        return result.Succeeded ? await users.ResetAuthenticatorKeyAsync(user) : result;
+        if (result.Succeeded)
+        {
+            result = await users.ResetAuthenticatorKeyAsync(user);
+        }
+
+        // Generating none stores an empty list, so codes from the old device can't come back into use later.
+        return result.Succeeded && await users.GenerateNewTwoFactorRecoveryCodesAsync(user, 0) is null
+            ? IdentityResult.Failed(new IdentityError { Code = "RecoveryCodesNotCleared", Description = "Two-factor sign-in is off, but the old recovery codes couldn't be cleared. Run 2fa-disable again." })
+            : result;
     }
 
     private static IdentityResult NotFound(string email) =>
