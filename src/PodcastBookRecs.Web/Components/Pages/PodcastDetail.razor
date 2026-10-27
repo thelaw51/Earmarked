@@ -1,12 +1,13 @@
 @page "/podcasts/{Id:guid}"
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject CommandFeedback Commands
+@inject ILogger<PodcastDetail> Logger
 
 <PageTitle>@(_podcast?.Title ?? "Podcast")</PageTitle>
 
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Couldn't load this podcast: @_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_error</MudAlert>
 }
 else if (_loading)
 {
@@ -147,7 +148,8 @@ else
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            Logger.ActionFailed(ex, "load podcast");
+            _error = "Couldn't load this podcast. The web app's log has the details.";
         }
         finally
         {

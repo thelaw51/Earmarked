@@ -1,5 +1,6 @@
 @implements IDisposable
 @inject SchemaStatus Schema
+@inject ILogger<SchemaGate> Logger
 
 @if (_ready)
 {
@@ -7,7 +8,7 @@
 }
 else if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error">Can't read the database: @_error</MudAlert>
+    <MudAlert Severity="Severity.Error">@_error</MudAlert>
 }
 else
 {
@@ -41,7 +42,8 @@ else
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            Logger.ActionFailed(ex, "check database schema");
+            _error = "Can't read the database. The web app's log has the details.";
         }
     }
 

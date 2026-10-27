@@ -3,6 +3,7 @@
 @inject TimeProvider Time
 @inject ISnackbar Snackbar
 @inject CommandFeedback Commands
+@inject ILogger<Podcasts> Logger
 
 <PageTitle>Podcasts</PageTitle>
 
@@ -26,7 +27,7 @@
 
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Couldn't load podcasts: @_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_error</MudAlert>
 }
 else if (_rows is null)
 {
@@ -129,7 +130,8 @@ else
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            Logger.ActionFailed(ex, "load podcasts");
+            _error = "Couldn't load podcasts. The web app's log has the details.";
         }
     }
 
@@ -172,9 +174,15 @@ else
             Snackbar.Add("Feed added. The Worker will poll it within a few seconds.", Severity.Success);
             await LoadAsync();
         }
+        // Someone else added the same feed between the check above and this save.
+        catch (DbUpdateException ex) when (ex.InnerException is Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19 })
+        {
+            Snackbar.Add("That feed is already in the list.", Severity.Info);
+        }
         catch (Exception ex)
         {
-            Snackbar.Add($"Couldn't add the feed: {ex.Message}", Severity.Error);
+            Logger.ActionFailed(ex, "add feed");
+            Snackbar.Add("Couldn't add the feed. The web app's log has the details.", Severity.Error);
         }
         finally
         {
@@ -196,7 +204,8 @@ else
         }
         catch (Exception ex)
         {
-            Snackbar.Add($"Couldn't update the feed: {ex.Message}", Severity.Error);
+            Logger.ActionFailed(ex, "enable or disable feed");
+            Snackbar.Add("Couldn't update the feed. The web app's log has the details.", Severity.Error);
         }
     }
 }
