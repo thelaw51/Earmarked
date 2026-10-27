@@ -264,6 +264,29 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_new_mention_copies_a_match_over_a_fresh_not_found_for_the_same_title()
+    {
+        var notFound = await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+        _catalog.Answer("Harbour Lights", HarbourLights);
+        await AddMentionAsync(1, "Harbour Lights", "Ines Calder");
+        await RunUntilIdleAsync();
+        // Leave one of each, as a decision-free mix can arise from older data.
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            await db.BookMentions.Where(m => m.Id == notFound).ExecuteUpdateAsync(
+                s => s.SetProperty(m => m.MatchState, MatchState.NoMatch).SetProperty(m => m.BookId, (Guid?)null), Ct);
+        }
+
+        var callsBefore = _catalog.Calls;
+        var third = await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+        await RunUntilIdleAsync();
+
+        await using var after = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(MatchState.Matched, (await after.BookMentions.SingleAsync(m => m.Id == third, Ct)).MatchState);
+        Assert.Equal(callsBefore, _catalog.Calls);
+    }
+
+    [Fact]
     public async Task A_retry_whose_lookup_fails_saves_and_waits_a_day()
     {
         var id = await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
@@ -276,6 +299,25 @@ public sealed class MentionMatcherTests : IAsyncLifetime
 
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
         Assert.Equal(MatchState.LookupFailed, (await db.BookMentions.SingleAsync(m => m.Id == id, Ct)).MatchState);
+    }
+
+    [Fact]
+    public async Task After_a_rules_change_a_not_found_mention_goes_ahead_of_retries()
+    {
+        var retry = await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+        var rematch = await AddMentionAsync(1, "Small Rivers", "Tomas Reyne");
+        await RunUntilIdleAsync();
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            await db.BookMentions.Where(m => m.Id == rematch).ExecuteUpdateAsync(s => s.SetProperty(m => m.MatcherVersion, "match-old"), Ct);
+        }
+
+        // Both are due: one because the rules changed, the older one because its "not found" is stale.
+        Assert.Equal(WorkOutcome.Worked, await Later(MentionMatcher.RetryNoMatchAfter + TimeSpan.FromMinutes(1)).ProcessNextAsync(Ct));
+
+        await using var after = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(CatalogMatcher.Version, (await after.BookMentions.SingleAsync(m => m.Id == rematch, Ct)).MatcherVersion);
+        Assert.True((await after.BookMentions.SingleAsync(m => m.Id == retry, Ct)).MatchedAt < DateTime.UtcNow + TimeSpan.FromDays(1));
     }
 
     private MentionMatcher Later(TimeSpan offset) =>

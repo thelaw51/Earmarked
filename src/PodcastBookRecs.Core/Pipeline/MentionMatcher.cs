@@ -47,7 +47,7 @@ public sealed partial class MentionMatcher(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var next = await db.BookMentions
             .Where(IsDue(now))
-            .OrderBy(m => m.MatchState == MatchState.LookupFailed || m.MatchState == MatchState.NoMatch).ThenBy(m => m.CreatedAt).ThenBy(m => m.Id)
+            .OrderBy(IsRetry).ThenBy(m => m.CreatedAt).ThenBy(m => m.Id)
             .Select(m => new { m.Id, m.Title, m.Author })
             .FirstOrDefaultAsync(cancellationToken);
         if (next is null)
@@ -70,6 +70,7 @@ public sealed partial class MentionMatcher(
         var known = await db.BookMentions
             .Where(m => m.LookupKey == key && m.MatcherVersion == CatalogMatcher.Version)
             .Where(m => (m.MatchState == MatchState.Matched && m.BookId != null) || (m.MatchState == MatchState.NoMatch && m.MatchedAt >= noMatchFreshAfter))
+            .OrderBy(m => m.MatchState != MatchState.Matched)
             .Select(m => new { m.MatchState, m.BookId, m.Doubts, m.MatchedAt })
             .FirstOrDefaultAsync(cancellationToken);
         if (known is not null)
@@ -272,6 +273,12 @@ public sealed partial class MentionMatcher(
         await db.SaveChangesAsync(cancellationToken);
         return book.Id;
     }
+
+    /// <summary>
+    /// A due mention already matched under the current rules is a retry (of a failed lookup or a title not found), which
+    /// waits behind new mentions and those due because the rules changed.
+    /// </summary>
+    private static readonly Expression<Func<BookMention, bool>> IsRetry = m => m.MatcherVersion == CatalogMatcher.Version;
 
     /// <summary>
     /// Mentions the matcher should (re)match: new or matched under older rules, a failed lookup after
