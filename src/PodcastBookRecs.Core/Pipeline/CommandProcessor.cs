@@ -84,6 +84,10 @@ public sealed partial class CommandProcessor(
                 await UpdateQueueAsync(episodeId, prioritise: false, cancellationToken);
                 break;
 
+            case WorkerCommandType.IncludeSkippedEpisodes when command.PodcastFeedId is Guid podcastId && command.Count is >= 1 and <= MaxIncludeCount:
+                await IncludeSkippedAsync(podcastId, command.Count.Value, cancellationToken);
+                break;
+
             case WorkerCommandType.ReviewDecided when command.LookupKey is { Length: > 0 and <= MaxLookupKeyLength } key:
                 await RematchKeyAsync(key, cancellationToken);
                 break;
@@ -164,6 +168,43 @@ public sealed partial class CommandProcessor(
         {
             await poller.PollAsync(podcastId, cancellationToken);
         }
+    }
+
+    /// <summary>The most skipped episodes one command includes, the same ceiling as <c>Polling:BackfillEpisodes</c>.</summary>
+    public const int MaxIncludeCount = 1000;
+
+    /// <summary>
+    /// Includes a podcast's newest <paramref name="count"/> skipped episodes in one go, then polls its feed once to
+    /// refresh their links, as <see cref="UpdateQueueAsync"/> does for one episode.
+    /// </summary>
+    private async Task IncludeSkippedAsync(Guid podcastId, int count, CancellationToken cancellationToken)
+    {
+        using (await stateLock.AcquireAsync(cancellationToken))
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+            var episodes = await db.Episodes
+                .Where(e => e.PodcastFeedId == podcastId && e.State == EpisodeState.Skipped)
+                .OrderByDescending(e => e.PublishedAt)
+                .Take(count)
+                .ToListAsync(cancellationToken);
+            if (episodes.Count == 0)
+            {
+                throw new CommandRefusedException("This podcast has no skipped episodes left to include.");
+            }
+
+            var now = time.GetUtcNow().UtcDateTime;
+            foreach (var episode in episodes)
+            {
+                episode.State = episode.TranscriptLinks.Count > 0 ? EpisodeState.New : EpisodeState.AwaitingTranscription;
+                episode.Attempts = 0;
+                episode.LastError = null;
+                episode.UpdatedAt = now;
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        await poller.PollAsync(podcastId, cancellationToken);
     }
 
     private const int MaxLookupKeyLength = BookMention.MaxTitleLength + BookMention.MaxAuthorLength;

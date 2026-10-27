@@ -260,6 +260,40 @@ public sealed class PipelineTests : IAsyncLifetime
         Assert.Contains("isn't skipped", await RunCommandAsync(WorkerCommandType.IncludeEpisode, "ep-002"), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Including_skipped_episodes_queues_the_newest_ones_and_polls_the_feed_once()
+    {
+        const string cover = "<itunes:image href=\"https://example.com/cover.jpg\"/>";
+        _http.Respond(FeedUrl, Fixtures.Read("feed.xml").Replace(
+            cover,
+            cover
+            + "<item><title>Episode 0</title><guid>ep-000</guid><pubDate>Mon, 12 Oct 2026 05:00:00 GMT</pubDate></item>"
+            + "<item><title>Episode -1</title><guid>ep-minus-1</guid><pubDate>Mon, 05 Oct 2026 05:00:00 GMT</pubDate></item>",
+            StringComparison.Ordinal));
+        await _poller.PollAsync(_podcastId, Ct);
+        var polledBefore = await LastPolledAsync();
+
+        Assert.Null(await RunPodcastCommandAsync(WorkerCommandType.IncludeSkippedEpisodes, 2));
+
+        var states = await EpisodeStatesAsync();
+        Assert.Equal(EpisodeState.AwaitingTranscription, states["https://cdn.example.com/ep1.mp3"]);
+        Assert.Equal(EpisodeState.AwaitingTranscription, states["ep-000"]);
+        Assert.Equal(EpisodeState.Skipped, states["ep-minus-1"]);
+        Assert.True(await LastPolledAsync() > polledBefore);
+    }
+
+    [Fact]
+    public async Task Including_skipped_episodes_is_refused_when_none_are_left_or_the_count_is_out_of_range()
+    {
+        _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
+        await _poller.PollAsync(_podcastId, Ct);
+
+        Assert.Contains("missing its target", await RunPodcastCommandAsync(WorkerCommandType.IncludeSkippedEpisodes, 0), StringComparison.Ordinal);
+        Assert.Contains("missing its target", await RunPodcastCommandAsync(WorkerCommandType.IncludeSkippedEpisodes, CommandProcessor.MaxIncludeCount + 1), StringComparison.Ordinal);
+        Assert.Null(await RunPodcastCommandAsync(WorkerCommandType.IncludeSkippedEpisodes, 50));
+        Assert.Contains("no skipped episodes", await RunPodcastCommandAsync(WorkerCommandType.IncludeSkippedEpisodes, 1), StringComparison.Ordinal);
+    }
+
     /// <summary>Queues a command for the episode with this identity key, runs it, and returns its error.</summary>
     [Fact]
     public async Task Without_extraction_priority_clears_once_an_episode_has_its_transcript()
@@ -294,6 +328,20 @@ public sealed class PipelineTests : IAsyncLifetime
         {
             var id = await db.Episodes.Where(e => e.IdentityKey == identityKey).Select(e => e.Id).SingleAsync(Ct);
             db.WorkerCommands.Add(new WorkerCommand { Type = type, EpisodeId = id, CreatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await _commands.ProcessPendingAsync(Ct);
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        return (await check.WorkerCommands.OrderByDescending(c => c.CreatedAt).FirstAsync(Ct)).Error;
+    }
+
+    /// <summary>Queues a command for the test podcast with this count, runs it, and returns its error.</summary>
+    private async Task<string?> RunPodcastCommandAsync(WorkerCommandType type, int count)
+    {
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            db.WorkerCommands.Add(new WorkerCommand { Type = type, PodcastFeedId = _podcastId, Count = count, CreatedAt = DateTime.UtcNow });
             await db.SaveChangesAsync(Ct);
         }
 
