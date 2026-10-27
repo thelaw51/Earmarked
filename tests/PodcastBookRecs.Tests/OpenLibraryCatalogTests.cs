@@ -6,6 +6,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using PodcastBookRecs.Core.Backends;
 using PodcastBookRecs.Core.BookLookup;
 using PodcastBookRecs.Core.Configuration;
+using PodcastBookRecs.Core.Providers.BookLookup;
 using PodcastBookRecs.Core.Providers.BookLookup.OpenLibrary;
 
 namespace PodcastBookRecs.Tests;
@@ -105,10 +106,10 @@ public class OpenLibraryCatalogTests
     {
         var handler = new Recorder(HttpStatusCode.OK, "");
         using var provider = Services([], handler);
-        var check = provider.GetRequiredService<OpenLibraryHealthCheck>();
+        var check = provider.GetRequiredKeyedService<CatalogHealthCheck>(BookLookupProviders.OpenLibrary);
 
         var first = await check.CheckHealthAsync(new HealthCheckContext(), Ct);
-        var second = await provider.GetRequiredService<OpenLibraryHealthCheck>().CheckHealthAsync(new HealthCheckContext(), Ct);
+        var second = await provider.GetRequiredKeyedService<CatalogHealthCheck>(BookLookupProviders.OpenLibrary).CheckHealthAsync(new HealthCheckContext(), Ct);
 
         Assert.Equal(HealthStatus.Healthy, first.Status);
         Assert.Equal(HealthStatus.Healthy, second.Status);
@@ -120,7 +121,7 @@ public class OpenLibraryCatalogTests
     {
         var handler = new Recorder(HttpStatusCode.TooManyRequests, "");
         using var provider = Services([], handler);
-        var check = provider.GetRequiredService<OpenLibraryHealthCheck>();
+        var check = provider.GetRequiredKeyedService<CatalogHealthCheck>(BookLookupProviders.OpenLibrary);
 
         Assert.Equal(HealthStatus.Unhealthy, (await check.CheckHealthAsync(new HealthCheckContext(), Ct)).Status);
         Assert.Equal(HealthStatus.Unhealthy, (await check.CheckHealthAsync(new HealthCheckContext(), Ct)).Status);

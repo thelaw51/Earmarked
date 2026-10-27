@@ -12,6 +12,7 @@ using PodcastBookRecs.Core.Data;
 using PodcastBookRecs.Core.Extraction;
 using PodcastBookRecs.Core.Net;
 using PodcastBookRecs.Core.Pipeline;
+using PodcastBookRecs.Core.Providers.BookLookup;
 using PodcastBookRecs.Core.Providers.BookLookup.OpenLibrary;
 using PodcastBookRecs.Core.Providers.Extraction.OpenAiCompatible;
 using PodcastBookRecs.Core.Providers.Transcription.OpenAiCompatible;
@@ -185,15 +186,25 @@ public static class ServiceCollectionExtensions
                         ConnectCallback = OutboundConnections.ConnectWithTimeout(TimeSpan.FromSeconds(10)),
                     });
                 services.AddSingleton<IBookCatalog, OpenLibraryCatalog>();
-                // A singleton, so the check's five-minute memory of its last answer survives between runs.
-                services.AddSingleton<OpenLibraryHealthCheck>();
-                services.AddHealthChecks().AddCheck<OpenLibraryHealthCheck>(BackendHealth.BookLookup, tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
+                AddCatalogHealthCheck(services, BookLookupProviders.OpenLibrary, OpenLibraryCatalog.HttpClientName, BackendHealth.BookLookup);
                 break;
         }
 
         services.AddSingleton<MentionMatcher>();
         services.AddSingleton<CatalogSearchRunner>();
         return services;
+    }
+
+    /// <summary>
+    /// Registers a catalogue's reachability check under <paramref name="healthName"/>. The check is a keyed singleton,
+    /// so its five-minute memory of a healthy answer survives between runs.
+    /// </summary>
+    private static void AddCatalogHealthCheck(IServiceCollection services, string provider, string httpClientName, string healthName)
+    {
+        services.AddKeyedSingleton(provider, (sp, _) => new CatalogHealthCheck(
+            sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<TimeProvider>(), httpClientName, provider));
+        services.AddHealthChecks().Add(new HealthCheckRegistration(
+            healthName, sp => sp.GetRequiredKeyedService<CatalogHealthCheck>(provider), null, [BackendHealth.Tag], BackendHealth.Timeout));
     }
 
     /// <summary>Handler for feed-supplied URLs: refuses private network addresses unless explicitly allowed.</summary>
