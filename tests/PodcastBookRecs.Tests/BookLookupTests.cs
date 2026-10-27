@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using PodcastBookRecs.Core.BookLookup;
 using PodcastBookRecs.Core.Configuration;
 using PodcastBookRecs.Core.Data;
+using PodcastBookRecs.Core.Providers.BookLookup;
 using PodcastBookRecs.Core.Providers.BookLookup.OpenLibrary;
 
 namespace PodcastBookRecs.Tests;
@@ -17,6 +18,21 @@ public class BookLookupTests
     [InlineData("The Lighthouse Keeper's Almanac: A Novel", "I. Calder")]
     public void Picks_the_same_title_ignoring_case_punctuation_articles_and_subtitles(string title, string? author) =>
         Assert.Equal("OL1W", CatalogMatcher.Pick(title, author, [Book("The Lighthouse Keeper's Almanac", "Ines Calder")])?.CatalogId);
+
+    [Theory]
+    [InlineData("abc", 5, "abc")]
+    [InlineData("abcdef", 3, "abc")]
+    [InlineData("ab\U0001F4DAcd", 3, "ab")]
+    [InlineData("ab\U0001F4DAcd", 4, "ab\U0001F4DA")]
+    [InlineData("\U0001F4DA", 1, "")]
+    [InlineData("", 0, "")]
+    public void Capping_text_never_splits_a_surrogate_pair(string value, int max, string expected)
+    {
+        var capped = CatalogText.Cap(value, max);
+
+        Assert.Equal(expected, capped);
+        Assert.False(capped.Length > 0 && char.IsHighSurrogate(capped[^1]));
+    }
 
     [Fact]
     public void A_link_is_checked_in_the_form_it_will_be_stored()

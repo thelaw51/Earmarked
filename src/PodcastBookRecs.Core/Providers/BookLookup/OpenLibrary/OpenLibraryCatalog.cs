@@ -62,13 +62,13 @@ public sealed partial class OpenLibraryCatalog(IHttpClientFactory httpFactory, T
                 var id = work.Groups[1].Value;
                 var authors = d.TryGetProperty("author_name", out var names) && names.ValueKind == JsonValueKind.Array
                     ? names.EnumerateArray().Where(n => n.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(n.GetString()))
-                        .Select(n => Cap(n.GetString()!.Trim(), 100)).Distinct().Take(MaxAuthorsPerBook).ToList()
+                        .Select(n => CatalogText.Cap(n.GetString()!.Trim(), 100)).Distinct().Take(MaxAuthorsPerBook).ToList()
                     : [];
                 var cover = Number(d, "cover_i") is > 0 and var c ? $"https://covers.openlibrary.org/b/id/{c.ToString(CultureInfo.InvariantCulture)}-M.jpg" : null;
                 books.Add(new CatalogBook(
                     id,
-                    Cap(title, Book.MaxTitleLength),
-                    String(d, "subtitle") is { } subtitle ? Cap(subtitle, Book.MaxTitleLength) : null,
+                    CatalogText.Cap(title, Book.MaxTitleLength),
+                    String(d, "subtitle") is { } subtitle ? CatalogText.Cap(subtitle, Book.MaxTitleLength) : null,
                     authors,
                     Number(d, "first_publish_year") is > 0 and < 10000 and var year ? (int)year : null,
                     Number(d, "edition_count") is > 0 and <= int.MaxValue and var editions ? (int)editions : 0,
@@ -91,9 +91,7 @@ public sealed partial class OpenLibraryCatalog(IHttpClientFactory httpFactory, T
             e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) ? n : null;
     }
 
-    private static string Escape(string value) => Uri.EscapeDataString(Cap(value.Trim(), MaxQueryLength));
-
-    private static string Cap(string value, int max) => value.Length <= max ? value : value[..max];
+    private static string Escape(string value) => Uri.EscapeDataString(CatalogText.Cap(value.Trim(), MaxQueryLength));
 
     [GeneratedRegex(@"^/works/(OL[0-9]{1,12}W)$")]
     private static partial Regex WorkKey();

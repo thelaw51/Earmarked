@@ -40,7 +40,7 @@ public sealed partial class AppleBooksCatalog(IHttpClientFactory httpFactory, IO
     {
         var country = options.Value.Country;
         var term = string.IsNullOrWhiteSpace(author) ? title.Trim() : $"{title.Trim()} {author.Trim()}";
-        var query = $"search?term={Uri.EscapeDataString(Cap(term, MaxQueryLength))}&media=ebook&entity=ebook&country={country}&limit={MaxCandidates}";
+        var query = $"search?term={Uri.EscapeDataString(CatalogText.Cap(term, MaxQueryLength))}&media=ebook&entity=ebook&country={country}&limit={MaxCandidates}";
 
         var body = await _pacer.RunAsync(
             () => CatalogHttp.SendAsync(
@@ -75,7 +75,7 @@ public sealed partial class AppleBooksCatalog(IHttpClientFactory httpFactory, IO
                 var authors = String(r, "artistName") is { } artist ? SplitAuthors(artist) : [];
                 books.Add(new CatalogBook(
                     trackId,
-                    Cap(title, Book.MaxTitleLength),
+                    CatalogText.Cap(title, Book.MaxTitleLength),
                     null,
                     authors,
                     String(r, "releaseDate") is { } released
@@ -101,8 +101,6 @@ public sealed partial class AppleBooksCatalog(IHttpClientFactory httpFactory, IO
     private static string? CoverOrNull(string? url) =>
         CatalogMatcher.SafeLinkOrNull(url, BookLookupProviders.CoverHost(BookLookupProviders.AppleBooks), allowSubdomains: true);
 
-    private static string Cap(string value, int max) => value.Length <= max ? value : value[..max];
-
     /// <summary>
     /// Apple lists co-authors in one string: "A & B", "A, B & C" or "A and B". A comma before a suffix ("Martin Luther
     /// King, Jr.") isn't a separator, so a piece that is only a suffix goes back onto the name before it; split off, it
@@ -123,7 +121,7 @@ public sealed partial class AppleBooksCatalog(IHttpClientFactory httpFactory, IO
             }
         }
 
-        return [.. names.Select(a => Cap(a, 100)).Distinct().Take(MaxAuthorsPerBook)];
+        return [.. names.Select(a => CatalogText.Cap(a, 100)).Distinct().Take(MaxAuthorsPerBook)];
     }
 
     private static readonly HashSet<string> NameSuffixes = new(StringComparer.OrdinalIgnoreCase) { "Jr", "Sr", "II", "III", "IV", "PhD", "MD" };

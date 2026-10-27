@@ -43,7 +43,7 @@ public sealed partial class HardcoverCatalog(IHttpClientFactory httpFactory, IOp
         var term = string.IsNullOrWhiteSpace(author) ? title.Trim() : $"{title.Trim()} {author.Trim()}";
         var body = await _pacer.RunAsync(
             () => CatalogHttp.SendAsync(
-                httpFactory.CreateClient(HttpClientName), SearchRequest(Cap(term, MaxQueryLength), MaxCandidates, options.Value.Token), "Hardcover", cancellationToken),
+                httpFactory.CreateClient(HttpClientName), SearchRequest(CatalogText.Cap(term, MaxQueryLength), MaxCandidates, options.Value.Token), "Hardcover", cancellationToken),
             cancellationToken);
         return Parse(body);
     }
@@ -101,8 +101,8 @@ public sealed partial class HardcoverCatalog(IHttpClientFactory httpFactory, IOp
 
                 books.Add(new CatalogBook(
                     id,
-                    Cap(title, Book.MaxTitleLength),
-                    subtitle is null ? null : Cap(subtitle, Book.MaxTitleLength),
+                    CatalogText.Cap(title, Book.MaxTitleLength),
+                    subtitle is null ? null : CatalogText.Cap(subtitle, Book.MaxTitleLength),
                     Authors(d),
                     d.TryGetProperty("release_year", out var year) && year.ValueKind == JsonValueKind.Number && year.TryGetInt32(out var y) && y is > 0 and < 10000 ? y : null,
                     null,
@@ -145,7 +145,7 @@ public sealed partial class HardcoverCatalog(IHttpClientFactory httpFactory, IOp
                 .Where(n => n.ValueKind == JsonValueKind.String)
                 .Select(n => n.GetString()!.Trim())
                 .Where(n => n.Length > 0)
-                .Select(n => Cap(n, 100))
+                .Select(n => CatalogText.Cap(n, 100))
                 .Distinct()
                 .Take(MaxAuthorsPerBook)]
             : [];
@@ -165,8 +165,6 @@ public sealed partial class HardcoverCatalog(IHttpClientFactory httpFactory, IOp
         && ErrorCodePattern().IsMatch(code.GetString()!)
             ? code.GetString()
             : null;
-
-    private static string Cap(string value, int max) => value.Length <= max ? value : value[..max];
 
     [GeneratedRegex("^[0-9]{1,12}$")]
     private static partial Regex IdPattern();
