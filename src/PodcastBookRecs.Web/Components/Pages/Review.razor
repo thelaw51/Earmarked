@@ -7,6 +7,7 @@
 @inject TimeProvider Time
 @inject ISnackbar Snackbar
 @inject CommandFeedback Commands
+@inject ILogger<Review> Logger
 
 <PageTitle>Review</PageTitle>
 
@@ -277,7 +278,7 @@ else
     }
 
     private Task ConfirmAsync(ReviewItem item) =>
-        DecideAsync(item.LookupKey, "Confirmed.", (db, now) => ReviewActions.ConfirmAsync(db, item.LookupKey, now, _closing.Token));
+        DecideAsync(item.LookupKey, "Confirmed.", (db, now) => ReviewActions.ConfirmAsync(db, item.LookupKey, _notes.GetValueOrDefault(item.LookupKey), now, _closing.Token));
 
     private Task RejectAsync(ReviewItem item, ReviewVerdict verdict) =>
         DecideAsync(item.LookupKey, verdict == ReviewVerdict.NotABook ? "Marked as not a book." : "Marked as the wrong book.",
@@ -307,6 +308,7 @@ else
             }
 
             Snackbar.Add(done, Severity.Success);
+            _notes.Remove(key);
             if (_search?.Key == key)
             {
                 _search = null;
@@ -322,13 +324,16 @@ else
         {
             Snackbar.Add(ex.Message, Severity.Warning);
         }
-        catch (DbUpdateException)
+        // Only the unique key (two decisions on one title at once) or undoing a row already gone means someone else got
+        // there first. Anything else, such as a lock timeout, saved nothing and gets the general message below.
+        catch (DbUpdateException ex) when (ex is DbUpdateConcurrencyException || ex.InnerException is Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19 })
         {
             Snackbar.Add("This title was decided somewhere else just now. Refresh and try again.", Severity.Warning);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Snackbar.Add($"Couldn't save that: {ex.Message}", Severity.Error);
+            Logger.ActionFailed(ex, "review decision");
+            Snackbar.Add("Couldn't save that. The web app's log has the details.", Severity.Error);
         }
         finally
         {
@@ -385,7 +390,8 @@ else
         }
         catch (Exception ex)
         {
-            search.Message = $"Couldn't search: {ex.Message}";
+            Logger.ActionFailed(ex, "catalogue search");
+            search.Message = "Couldn't search. The web app's log has the details.";
         }
         finally
         {

@@ -20,7 +20,7 @@ public static class ReviewActions
     public const int MaxOpenSearches = 5;
 
     /// <summary>Confirms the catalogue's match, using the book the title's mentions are matched to now.</summary>
-    public static async Task<WorkerCommand> ConfirmAsync(AppDbContext db, string key, DateTime now, CancellationToken cancellationToken)
+    public static async Task<WorkerCommand> ConfirmAsync(AppDbContext db, string key, string? note, DateTime now, CancellationToken cancellationToken)
     {
         var (title, author) = await MentionedAsync(db, key, cancellationToken);
         var bookId = await db.BookMentions
@@ -28,7 +28,7 @@ public static class ReviewActions
             .Select(m => m.BookId)
             .FirstOrDefaultAsync(cancellationToken)
             ?? throw new ReviewActionException("This title isn't matched to a book, so there's nothing to confirm.");
-        return await SaveAsync(db, key, title, author, ReviewVerdict.Confirmed, bookId, null, null, now, cancellationToken);
+        return await SaveAsync(db, key, title, author, ReviewVerdict.Confirmed, bookId, null, Clean(note, ReviewDecision.MaxNoteLength), now, cancellationToken);
     }
 
     /// <summary>Rules a title out: not a book at all, or not the book the catalogue found.</summary>

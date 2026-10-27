@@ -180,8 +180,8 @@ public sealed class ReviewTests : IAsyncLifetime
         await AddMentionAsync(1, "Small Rivers", null, MatchState.NoMatch);
 
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
-        await ReviewActions.ConfirmAsync(db, Key("The Lighthouse Keeper's Almanac", "Calder"), Now, Ct);
-        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.ConfirmAsync(db, Key("Small Rivers", null), Now, Ct));
+        await ReviewActions.ConfirmAsync(db, Key("The Lighthouse Keeper's Almanac", "Calder"), "  checked the cover ", Now, Ct);
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.ConfirmAsync(db, Key("Small Rivers", null), null, Now, Ct));
 
         Assert.Equal(_bookId, (await db.ReviewDecisions.SingleAsync(Ct)).BookId);
     }
@@ -194,9 +194,9 @@ public sealed class ReviewTests : IAsyncLifetime
         await ReviewActions.RejectAsync(db, Key("The Lighthouse Keeper's Almanac", "Calder"), ReviewVerdict.WrongBook, "not this one", Now, Ct);
         _time.Advance(TimeSpan.FromMinutes(1));
 
-        await ReviewActions.ConfirmAsync(db, Key("The Lighthouse Keeper's Almanac", "Calder"), Now, Ct);
+        await ReviewActions.ConfirmAsync(db, Key("The Lighthouse Keeper's Almanac", "Calder"), "  checked the cover ", Now, Ct);
         var decision = await db.ReviewDecisions.AsNoTracking().SingleAsync(Ct);
-        Assert.Equal((ReviewVerdict.Confirmed, (string?)null, Now), (decision.Verdict, decision.Note, decision.DecidedAt));
+        Assert.Equal((ReviewVerdict.Confirmed, "checked the cover", Now), (decision.Verdict, decision.Note, decision.DecidedAt));
 
         await ReviewActions.UndoAsync(db, decision.Id, Now, Ct);
         Assert.Empty(await db.ReviewDecisions.ToListAsync(Ct));

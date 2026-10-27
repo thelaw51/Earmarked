@@ -8,7 +8,8 @@ namespace PodcastBookRecs.Web.Services;
 /// Sends commands to the Worker and tells the person when the Worker refuses one, which would otherwise only reach the
 /// log. One per circuit: watching stops when the circuit closes.
 /// </summary>
-public sealed class CommandFeedback(IDbContextFactory<AppDbContext> dbFactory, ISnackbar snackbar, TimeProvider time) : IDisposable
+public sealed class CommandFeedback(
+    IDbContextFactory<AppDbContext> dbFactory, ISnackbar snackbar, TimeProvider time, ILogger<CommandFeedback> logger) : IDisposable
 {
     /// <summary>
     /// The Worker reads commands every 5 seconds, so most answer well inside this. A command still running after it
@@ -35,7 +36,9 @@ public sealed class CommandFeedback(IDbContextFactory<AppDbContext> dbFactory, I
         }
         catch (Exception ex)
         {
-            snackbar.Add($"Couldn't send that to the Worker: {ex.Message}", Severity.Error);
+            var action = command.Type.ToString();
+            logger.ActionFailed(ex, action);
+            snackbar.Add("Couldn't send that to the Worker. The web app's log has the details.", Severity.Error);
             return false;
         }
 
