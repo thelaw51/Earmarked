@@ -17,6 +17,7 @@ internal sealed partial class PipelineService(
     CommandProcessor commands,
     FeedPoller poller,
     TranscriptFetcher transcripts,
+    PriorityRelease priorities,
     IOptions<PollingOptions> polling,
     TimeProvider time,
     ILogger<PipelineService> logger,
@@ -46,6 +47,11 @@ internal sealed partial class PipelineService(
         if (extractor is not null)
         {
             loops.Add(BackendLoop("extraction", null, extractor.ProcessNextAsync, stoppingToken));
+        }
+        else
+        {
+            // With no extractor nothing clears "Do this next" once an episode has its transcript.
+            loops.Add(Loop("priority release", TimeSpan.FromSeconds(30), priorities.ReleaseAsync, stoppingToken));
         }
 
         if (matcher is not null)

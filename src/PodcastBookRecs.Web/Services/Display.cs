@@ -108,10 +108,11 @@ public static class Display
 
     /// <summary>
     /// How far an episode has got through the three pipeline stages (transcript, books, done), from 0 to 3, and whether
-    /// the current stage failed. Skipped episodes haven't started.
+    /// the current stage failed. Skipped episodes haven't started. With extraction off, a transcript is the end.
     /// </summary>
-    public static (int Completed, bool Failed) Progress(EpisodeState state) => state switch
+    public static (int Completed, bool Failed) Progress(EpisodeState state, bool extractionOn) => state switch
     {
+        EpisodeState.TranscriptFetched or EpisodeState.Transcribed when !extractionOn => (3, false),
         EpisodeState.TranscriptFetched or EpisodeState.Transcribed or EpisodeState.Extracting => (1, false),
         EpisodeState.Extracted => (3, false),
         EpisodeState.Failed => (0, true),

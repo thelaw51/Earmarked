@@ -143,7 +143,7 @@ public static class ServiceCollectionExtensions
         {
             case var p when string.Equals(p, ExtractionProviders.OpenAiCompatible, StringComparison.OrdinalIgnoreCase):
                 services.AddSingleton<IBookExtractor, OpenAiCompatibleBookExtractor>();
-                services.AddHealthChecks().AddCheck<OpenAiCompatibleExtractionHealthCheck>("extraction", tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
+                services.AddHealthChecks().AddCheck<OpenAiCompatibleExtractionHealthCheck>(BackendHealth.Extraction, tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
                 break;
         }
 

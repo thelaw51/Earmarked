@@ -42,6 +42,16 @@ public class DisplayTests
     [InlineData(EpisodeState.Skipped, 0, false)]
     public void Progress_marks_the_step_in_progress_or_failed(EpisodeState state, int completed, bool failed)
     {
-        Assert.Equal((completed, failed), Display.Progress(state));
+        Assert.Equal((completed, failed), Display.Progress(state, extractionOn: true));
+    }
+
+    [Theory]
+    [InlineData(EpisodeState.Transcribing, 0)]
+    [InlineData(EpisodeState.TranscriptFetched, 3)]
+    [InlineData(EpisodeState.Transcribed, 3)]
+    [InlineData(EpisodeState.Extracted, 3)]
+    public void Without_extraction_a_transcript_is_the_end(EpisodeState state, int completed)
+    {
+        Assert.Equal((completed, false), Display.Progress(state, extractionOn: false));
     }
 }

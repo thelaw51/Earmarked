@@ -23,6 +23,7 @@ builder.Services.AddSingleton<IHealthCheckPublisher, BackendStatusPublisher>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<FeedPoller>();
 builder.Services.AddSingleton<TranscriptFetcher>();
+builder.Services.AddSingleton<PriorityRelease>();
 builder.Services.AddSingleton<CommandProcessor>();
 builder.Services.AddSingleton<FeedSeeder>();
 

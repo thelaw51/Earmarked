@@ -47,10 +47,10 @@ else
                     }
                     <span><MudIcon Icon="@Icons.Material.Rounded.Subtitles" Size="Size.Small" /> @_episode.TranscriptLinks.Count published transcript link(s)</span>
                 </div>
-                <PipelineSteps State="_episode.State" />
+                <PipelineSteps State="_episode.State" ExtractionOn="_extractionOn" />
             </div>
             <div class="hero-actions">
-                @if (_episode.PrioritisedAt is null && (_episode.State is EpisodeState.Skipped || CommandProcessor.QueuedStates.Contains(_episode.State)))
+                @if (CanPrioritise)
                 {
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.KeyboardDoubleArrowUp" DropShadow="false"
                                OnClick="@(() => QueueAsync(WorkerCommandType.PrioritiseEpisode, "Moved to the front of the queue. Anything already running finishes first."))">Do this next</MudButton>
@@ -168,6 +168,7 @@ else
                     {
                         EpisodeState.Extracting => "Searching the transcript for books now.",
                         EpisodeState.ExtractionFailed => "Book extraction gave up. Use Re-run book extraction to try again.",
+                        _ when !_extractionOn => "Book extraction is off, so this transcript won't be searched for books.",
                         _ => "Queued for book extraction.",
                     })
                 </MudText>
@@ -204,11 +205,17 @@ else
 
     private Episode? _episode;
     private bool _lookupOn;
+    private bool _extractionOn;
     private List<BreadcrumbItem> _breadcrumbs = [];
     private bool _loading = true;
     private string? _error;
     private IJSObjectReference? _module;
     private bool _revealPending = true;
+
+    // With extraction off, an episode that has its transcript has nothing left to do, so there's nothing to put first.
+    private bool CanPrioritise => _episode is { PrioritisedAt: null } episode
+        && (episode.State is EpisodeState.Skipped || CommandProcessor.QueuedStates.Contains(episode.State))
+        && (_extractionOn || !PriorityRelease.FinishedWithoutExtraction.Contains(episode.State));
 
     protected override async Task OnParametersSetAsync()
     {
@@ -221,6 +228,7 @@ else
                 .Include(e => e.Mentions).ThenInclude(m => m.Book)
                 .SingleOrDefaultAsync(e => e.Id == Id);
             _lookupOn = await db.WorkerStatuses.AnyAsync(s => s.Name == BackendHealth.BookLookup);
+            _extractionOn = await db.WorkerStatuses.AnyAsync(s => s.Name == BackendHealth.Extraction);
             if (_episode is not null)
             {
                 _breadcrumbs =

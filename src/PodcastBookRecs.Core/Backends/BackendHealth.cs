@@ -12,6 +12,12 @@ public static class BackendHealth
     /// </summary>
     public const string BookLookup = "book lookup";
 
+    /// <summary>
+    /// The book extraction check's name and Status row. Like <see cref="BookLookup"/>, it exists only while extraction
+    /// is configured, which tells the UI whether an episode with a transcript has anything left to do.
+    /// </summary>
+    public const string Extraction = "extraction";
+
     /// <summary>How often backends are checked, and each check's own time limit.</summary>
     public static readonly TimeSpan Period = TimeSpan.FromSeconds(30);
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
