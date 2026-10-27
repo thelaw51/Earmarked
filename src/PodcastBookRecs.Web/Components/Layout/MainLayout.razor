@@ -1,5 +1,8 @@
 @inherits LayoutComponentBase
+@using PodcastBookRecs.Core.Books
+@implements IDisposable
 @inject NavigationManager Navigation
+@inject IDbContextFactory<AppDbContext> DbFactory
 
 <MudThemeProvider Theme="AppTheme.Theme" @bind-IsDarkMode="_darkMode" />
 <MudPopoverProvider />
@@ -34,6 +37,13 @@
         <MudNavMenu Class="app-nav">
             <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Rounded.Podcasts">Podcasts</MudNavLink>
             <MudNavLink Href="books" Icon="@Icons.Material.Rounded.MenuBook">Books</MudNavLink>
+            <MudNavLink Href="review" Icon="@Icons.Material.Rounded.FactCheck">
+                Review
+                @if (_reviewCount > 0)
+                {
+                    <span class="count-badge ml-2" aria-label="@($"{_reviewCount} to review")">@_reviewCount</span>
+                }
+            </MudNavLink>
         </MudNavMenu>
         <MudText Typo="Typo.overline" Class="nav-heading">System</MudText>
         <MudNavMenu Class="app-nav">
@@ -45,7 +55,9 @@
             <SchemaGate>
                 @* Keyed on the path so every navigation to another page mounts it fresh and replays the entrance
                    animation. The query string is left out, so a page that keeps filters there doesn't remount. *@
-                <div class="page-enter" @key="PagePath">@Body</div>
+                <CascadingValue Name="RefreshReviewCount" Value="_refreshReviewCount" IsFixed="true">
+                    <div class="page-enter" @key="PagePath">@Body</div>
+                </CascadingValue>
             </SchemaGate>
         </MudContainer>
     </MudMainContent>
@@ -59,6 +71,38 @@
 
 @code {
     private bool _drawerOpen = true;
+    private int? _reviewCount;
+    private Func<Task> _refreshReviewCount = null!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _refreshReviewCount = RefreshReviewCountAsync;
+        Navigation.LocationChanged += OnLocationChanged;
+        await RefreshReviewCountAsync();
+    }
+
+    /// <summary>
+    /// Counts the titles waiting for review. Runs on every navigation and when the review page saves a decision, so the
+    /// badge needs no polling. Before the Worker has created or migrated the database the count fails; the badge just stays hidden.
+    /// </summary>
+    private async Task RefreshReviewCountAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _reviewCount = await ReviewBacklog.CountAsync(db, CancellationToken.None);
+        }
+        catch (Exception)
+        {
+            _reviewCount = null;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e) => _ = InvokeAsync(RefreshReviewCountAsync);
+
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
 
     private string PagePath => new Uri(Navigation.Uri).AbsolutePath;
 

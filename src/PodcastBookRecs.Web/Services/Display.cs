@@ -1,5 +1,6 @@
 using System.Globalization;
 using MudBlazor;
+using PodcastBookRecs.Core.Books;
 using PodcastBookRecs.Core.Data;
 
 namespace PodcastBookRecs.Web.Services;
@@ -56,6 +57,33 @@ public static class Display
         MatchState.LookupFailed => "Catalogue lookup failed",
         MatchState.Rejected => "Ruled out in review",
         _ => null,
+    };
+
+    private static readonly (ReviewReasons Reason, string Label)[] ReasonText =
+    [
+        (ReviewReasons.NotFound, "Not in the catalogue"),
+        (ReviewReasons.LookupFailed, "Lookup failed"),
+        (ReviewReasons.LowConfidence, "Model unsure it's a book"),
+        (ReviewReasons.NoAuthor, "No author to check"),
+        (ReviewReasons.FuzzySurname, "Author's name differs"),
+        (ReviewReasons.FewEditions, "Few editions"),
+    ];
+
+    /// <summary>Why a title is in the review list, one short phrase per reason.</summary>
+    public static IEnumerable<string> ReasonLabels(ReviewReasons reasons) => ReasonText.Where(r => reasons.HasFlag(r.Reason)).Select(r => r.Label);
+
+    public static string VerdictLabel(ReviewVerdict verdict) => verdict switch
+    {
+        ReviewVerdict.Confirmed => "Confirmed",
+        ReviewVerdict.Corrected => "Corrected",
+        ReviewVerdict.NotABook => "Not a book",
+        _ => "Wrong book",
+    };
+
+    public static Color VerdictColor(ReviewVerdict verdict) => verdict switch
+    {
+        ReviewVerdict.Confirmed or ReviewVerdict.Corrected => Color.Success,
+        _ => Color.Warning,
     };
 
     public static string KindLabel(MentionKind kind) => kind switch

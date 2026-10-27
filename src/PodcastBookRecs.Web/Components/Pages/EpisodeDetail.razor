@@ -118,6 +118,10 @@ else
                                 {
                                     <a href="@($"books/{mention.Book.Id}")" class="card-title-link"><MudText Typo="Typo.subtitle2">@mention.Book.Title</MudText></a>
                                     <MudText Typo="Typo.caption" Class="muted d-block">@mention.Book.Authors</MudText>
+                                    @if (mention.Doubts != MatchDoubts.None)
+                                    {
+                                        <a href="review" class="card-title-link"><MudText Typo="Typo.caption">Match may be wrong · Review</MudText></a>
+                                    }
                                 }
                                 else
                                 {
@@ -127,6 +131,10 @@ else
                                         <MudText Typo="Typo.caption" Class="muted d-block">@mention.Author</MudText>
                                     }
                                     <MudText Typo="Typo.caption" Class="muted d-block" Style="font-style: italic;">@Display.MatchNote(mention.MatchState, _lookupOn)</MudText>
+                                    @if (mention.MatchState is MatchState.NoMatch or MatchState.LookupFailed or MatchState.Rejected)
+                                    {
+                                        <a href="review" class="card-title-link"><MudText Typo="Typo.caption">Review</MudText></a>
+                                    }
                                 }
                             </div>
                             <div class="mention-meta d-flex flex-column align-end gap-1">
