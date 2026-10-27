@@ -9,4 +9,18 @@ internal static partial class UiLog
 {
     [LoggerMessage(Level = LogLevel.Error, Message = "UI action {Action} failed")]
     public static partial void ActionFailed(this ILogger logger, Exception ex, string action);
+
+    /// <summary>
+    /// Logs a page load that failed and returns the message the page shows, such as "Couldn't load this book." A
+    /// cancellation means the person left the page, so it isn't logged.
+    /// </summary>
+    public static string LoadFailed(this ILogger logger, Exception ex, string what)
+    {
+        if (ex is not OperationCanceledException)
+        {
+            logger.ActionFailed(ex, "load " + what);
+        }
+
+        return $"Couldn't load {what}. The web app's log has the details.";
+    }
 }

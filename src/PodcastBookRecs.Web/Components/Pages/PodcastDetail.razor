@@ -148,8 +148,7 @@ else
         }
         catch (Exception ex)
         {
-            Logger.ActionFailed(ex, "load podcast");
-            _error = "Couldn't load this podcast. The web app's log has the details.";
+            _error = Logger.LoadFailed(ex, "this podcast");
         }
         finally
         {
