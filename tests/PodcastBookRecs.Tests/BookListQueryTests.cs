@@ -113,6 +113,20 @@ public sealed class BookListQueryTests : IAsyncLifetime
         Assert.Equal(title, Assert.Single(rows).Book.Title);
     }
 
+    [Fact]
+    public async Task An_exports_mentions_are_the_ones_that_counted()
+    {
+        var filter = new BookFilter([_feeds[0]], Text: "émile");
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var rows = await BookListQuery.LoadAsync(db, filter, Ct);
+
+        var mentions = await BookListQuery.LoadMentionsAsync(db, filter, rows, Ct);
+
+        // Émile's mention on show 2 is outside the podcast filter, and Small Rivers' on show 1 isn't a listed book.
+        var mention = Assert.Single(mentions);
+        Assert.Equal(("Show 1", "Episode 0", MentionKind.Discussed), (mention.Podcast, mention.Episode, mention.Kind));
+    }
+
     private async Task<IReadOnlyList<BookListRow>> LoadAsync(BookFilter filter)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
