@@ -121,13 +121,10 @@ public sealed partial class AppleBooksCatalog(IHttpClientFactory httpFactory, IO
             e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(v.GetString()) ? v.GetString()!.Trim() : null;
     }
 
-    /// <summary>A cover link kept only if it's https on Apple's image host (<c>mzstatic.com</c>), with no user info or odd port.</summary>
+    /// <summary>A cover link kept only if <see cref="CatalogMatcher.IsUsable"/> would accept it: https on Apple's image host.</summary>
     private static string? CoverOrNull(string? url) =>
-        url is not null && url.Length <= Book.MaxUrlLength
-        && Uri.TryCreate(url, UriKind.Absolute, out var uri)
-        && uri.Scheme == Uri.UriSchemeHttps && uri.IsDefaultPort && uri.UserInfo.Length == 0
-        && (uri.Host == "mzstatic.com" || uri.Host.EndsWith(".mzstatic.com", StringComparison.OrdinalIgnoreCase))
-            ? uri.AbsoluteUri
+        CatalogMatcher.IsSafeLink(url, BookLookupProviders.CoverHost(BookLookupProviders.AppleBooks), allowSubdomains: true)
+            ? new Uri(url!).AbsoluteUri
             : null;
 
     private static string Cap(string value, int max) => value.Length <= max ? value : value[..max];

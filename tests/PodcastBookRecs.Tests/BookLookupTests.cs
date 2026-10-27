@@ -190,8 +190,27 @@ public class BookLookupTests
     [InlineData("AppleBooks", "https://openlibrary.org/works/OL1W", false)]
     [InlineData("OpenLibrary", "https://books.apple.com/us/book/id900000001", false)]
     [InlineData("OpenLibrary", "https://evil.example/openlibrary.org", false)]
+    [InlineData("OpenLibrary", "https://reader@openlibrary.org/works/OL1W", false)]
+    [InlineData("OpenLibrary", "https://openlibrary.org:8443/works/OL1W", false)]
+    [InlineData("OpenLibrary", "https://openlibrary.org.evil.example/works/OL1W", false)]
     public void A_pick_links_to_its_own_catalogues_host(string provider, string infoUrl, bool usable) =>
         Assert.Equal(usable, CatalogMatcher.IsUsable(Book("Small Rivers", "Tomas Reyne") with { Provider = provider, InfoUrl = infoUrl }));
+
+    [Theory]
+    [InlineData(null, "https://covers.openlibrary.org/b/id/12-M.jpg", true)]
+    [InlineData("OpenLibrary", "https://attacker.example/x.jpg", false)]
+    [InlineData("OpenLibrary", "https://is1-ssl.mzstatic.com/a.jpg", false)]
+    [InlineData("AppleBooks", "https://is1-ssl.mzstatic.com/a.jpg", true)]
+    [InlineData("AppleBooks", "https://mzstatic.com/a.jpg", true)]
+    [InlineData("AppleBooks", "https://evilmzstatic.com/a.jpg", false)]
+    [InlineData("AppleBooks", "https://mzstatic.com.evil.example/a.jpg", false)]
+    [InlineData("AppleBooks", "http://is1-ssl.mzstatic.com/a.jpg", false)]
+    [InlineData("AppleBooks", "https://is1-ssl.mzstatic.com:444/a.jpg", false)]
+    public void A_picks_cover_comes_from_its_own_catalogues_image_host(string? provider, string coverUrl, bool usable)
+    {
+        var infoUrl = provider == "AppleBooks" ? "https://books.apple.com/us/book/id900000001" : "https://openlibrary.org/works/OL1W";
+        Assert.Equal(usable, CatalogMatcher.IsUsable(Book("Small Rivers", "Tomas Reyne") with { Provider = provider, InfoUrl = infoUrl, CoverUrl = coverUrl }));
+    }
 
     [Fact]
     public void Without_an_edition_count_a_book_needs_an_author_and_has_no_few_editions_doubt()

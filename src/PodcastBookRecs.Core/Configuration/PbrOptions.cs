@@ -237,6 +237,17 @@ public static class BookLookupProviders
         _ => null,
     };
 
+    /// <summary>
+    /// The host each catalogue's covers come from; a subdomain of it also counts, since Apple spreads covers over
+    /// several (<c>is1-ssl.mzstatic.com</c> and so on).
+    /// </summary>
+    public static string? CoverHost(string provider) => provider switch
+    {
+        OpenLibrary => "covers.openlibrary.org",
+        AppleBooks => "mzstatic.com",
+        _ => null,
+    };
+
     /// <summary>The name to show people, e.g. "Apple Books".</summary>
     public static string Label(string provider) => provider switch
     {

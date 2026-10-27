@@ -176,8 +176,9 @@ public static class CatalogMatcher
     /// <summary>
     /// A picked book was copied from a search result or built from what a person typed, and it sat in the database in
     /// between. Before it becomes a <see cref="Book"/>, check what every entry must have: a known provider, an ID, a
-    /// title, and https links, the book's own on that catalogue's host. A <see cref="BookLookupProviders.Manual"/> entry
-    /// is the one kind with no link, and its ID must be a GUID (its decision's). The review page checks a pick with this when it's made, and the matcher again
+    /// title, a link on that catalogue's own host and, if it has a cover, a cover from that catalogue's image host
+    /// (see <see cref="IsSafeLink"/>). A <see cref="BookLookupProviders.Manual"/> entry is the one kind with no links,
+    /// and its ID must be a GUID (its decision's). The review page checks a pick with this when it's made, and the matcher again
     /// before adding it. The record's types say most of these aren't null, but JSON read back from the database can
     /// still hold nulls.
     /// </summary>
@@ -186,16 +187,26 @@ public static class CatalogMatcher
         && !string.IsNullOrWhiteSpace(pick.CatalogId) && pick.CatalogId.Length <= MaxCatalogIdLength
         && !string.IsNullOrWhiteSpace(pick.Title)
         && pick.Authors is not null && pick.Authors.All(a => a is not null)
-        && (pick.CoverUrl is null || IsHttps(pick.CoverUrl))
         && pick.ProviderOrDefault switch
         {
             BookLookupProviders.Manual => pick.InfoUrl is null && pick.CoverUrl is null && Guid.TryParseExact(pick.CatalogId, "N", out _),
-            var provider => BookLookupProviders.Known.Contains(provider) && IsHttps(pick.InfoUrl)
-                && new Uri(pick.InfoUrl!).Host == BookLookupProviders.InfoHost(provider),
+            var provider => BookLookupProviders.Known.Contains(provider)
+                && IsSafeLink(pick.InfoUrl, BookLookupProviders.InfoHost(provider))
+                && (pick.CoverUrl is null || IsSafeLink(pick.CoverUrl, BookLookupProviders.CoverHost(provider), allowSubdomains: true)),
         };
 
-    private const int MaxCatalogIdLength = 40;
+    /// <summary>
+    /// True for an https link of a storable length on <paramref name="host"/> (or, with <paramref name="allowSubdomains"/>,
+    /// a subdomain of it), on the default port and with no user info. The parsed host is compared, so
+    /// <c>evilmzstatic.com</c> and <c>mzstatic.com.example</c> don't pass for <c>mzstatic.com</c>. Adapters use it too, so
+    /// what they keep and what this accepts can't drift apart.
+    /// </summary>
+    public static bool IsSafeLink(string? url, string? host, bool allowSubdomains = false) =>
+        url is not null && host is not null && url.Length <= Book.MaxUrlLength
+        && Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && uri.Scheme == Uri.UriSchemeHttps && uri.IsDefaultPort && uri.UserInfo.Length == 0
+        && (string.Equals(uri.Host, host, StringComparison.OrdinalIgnoreCase)
+            || (allowSubdomains && uri.Host.EndsWith("." + host, StringComparison.OrdinalIgnoreCase)));
 
-    private static bool IsHttps(string? url) =>
-        url is not null && url.Length <= Book.MaxUrlLength && Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
+    private const int MaxCatalogIdLength = 40;
 }
