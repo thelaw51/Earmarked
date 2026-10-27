@@ -226,8 +226,10 @@ public static class BookLookupProviders
 
     public const string AppleBooks = "AppleBooks";
 
+    public const string Hardcover = "Hardcover";
+
     /// <summary>Catalogues that have an adapter. <see cref="Manual"/> isn't one.</summary>
-    public static readonly IReadOnlyList<string> Known = [OpenLibrary, AppleBooks];
+    public static readonly IReadOnlyList<string> Known = [OpenLibrary, AppleBooks, Hardcover];
 
     /// <summary>
     /// The host every book link from each catalogue is on. The adapters build these links themselves; a stored pick is
@@ -237,6 +239,7 @@ public static class BookLookupProviders
     {
         OpenLibrary => "openlibrary.org",
         AppleBooks => "books.apple.com",
+        Hardcover => "hardcover.app",
         _ => null,
     };
 
@@ -248,6 +251,7 @@ public static class BookLookupProviders
     {
         OpenLibrary => "covers.openlibrary.org",
         AppleBooks => "mzstatic.com",
+        Hardcover => "assets.hardcover.app",
         _ => null,
     };
 
@@ -256,6 +260,7 @@ public static class BookLookupProviders
     {
         OpenLibrary => "Open Library",
         AppleBooks => "Apple Books",
+        Hardcover => "Hardcover",
         Manual => "No catalogue",
         _ => provider,
     };

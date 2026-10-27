@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using PodcastBookRecs.Core.BookLookup;
 using PodcastBookRecs.Core.Configuration;
 using PodcastBookRecs.Core.Data;
+using PodcastBookRecs.Core.Providers.BookLookup;
 using PodcastBookRecs.Core.Providers.BookLookup.OpenLibrary;
 
 namespace PodcastBookRecs.Tests;
@@ -17,6 +18,34 @@ public class BookLookupTests
     [InlineData("The Lighthouse Keeper's Almanac: A Novel", "I. Calder")]
     public void Picks_the_same_title_ignoring_case_punctuation_articles_and_subtitles(string title, string? author) =>
         Assert.Equal("OL1W", CatalogMatcher.Pick(title, author, [Book("The Lighthouse Keeper's Almanac", "Ines Calder")])?.CatalogId);
+
+    [Theory]
+    [InlineData("abc", 5, "abc")]
+    [InlineData("abcdef", 3, "abc")]
+    [InlineData("ab\U0001F4DAcd", 3, "ab")]
+    [InlineData("ab\U0001F4DAcd", 4, "ab\U0001F4DA")]
+    [InlineData("\U0001F4DA", 1, "")]
+    [InlineData("", 0, "")]
+    public void Capping_text_never_splits_a_surrogate_pair(string value, int max, string expected)
+    {
+        var capped = CatalogText.Cap(value, max);
+
+        Assert.Equal(expected, capped);
+        Assert.False(capped.Length > 0 && char.IsHighSurrogate(capped[^1]));
+    }
+
+    [Fact]
+    public void A_link_is_checked_in_the_form_it_will_be_stored()
+    {
+        // 250 characters as written, but each "é" becomes "%C3%A9" when escaped, taking it past the 300 limit.
+        var lengthened = "https://assets.hardcover.app/" + new string('é', 221);
+        Assert.True(lengthened.Length <= PodcastBookRecs.Core.Data.Book.MaxUrlLength);
+
+        Assert.Null(CatalogMatcher.SafeLinkOrNull(lengthened, "hardcover.app", allowSubdomains: true));
+        Assert.Equal("https://assets.hardcover.app/caf%C3%A9.jpg", CatalogMatcher.SafeLinkOrNull("https://assets.hardcover.app/café.jpg", "hardcover.app", allowSubdomains: true));
+        Assert.Null(CatalogMatcher.SafeLinkOrNull("https://evilhardcover.app/a.jpg", "hardcover.app", allowSubdomains: true));
+        Assert.Null(CatalogMatcher.SafeLinkOrNull("not a link", "hardcover.app"));
+    }
 
     [Fact]
     public void A_candidate_with_a_subtitle_matches_the_full_title_too() =>
@@ -187,6 +216,9 @@ public class BookLookupTests
 
     [Theory]
     [InlineData("AppleBooks", "https://books.apple.com/us/book/id900000001", true)]
+    [InlineData("Hardcover", "https://hardcover.app/books/harbour-lights", true)]
+    [InlineData("Hardcover", "https://hardcover.app.evil.example/books/harbour-lights", false)]
+    [InlineData("Hardcover", "https://openlibrary.org/works/OL1W", false)]
     [InlineData("AppleBooks", "https://openlibrary.org/works/OL1W", false)]
     [InlineData("OpenLibrary", "https://books.apple.com/us/book/id900000001", false)]
     [InlineData("OpenLibrary", "https://evil.example/openlibrary.org", false)]

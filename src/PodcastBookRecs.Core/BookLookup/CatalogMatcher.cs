@@ -208,5 +208,15 @@ public static class CatalogMatcher
         && (string.Equals(uri.Host, host, StringComparison.OrdinalIgnoreCase)
             || (allowSubdomains && uri.Host.EndsWith("." + host, StringComparison.OrdinalIgnoreCase)));
 
+    /// <summary>
+    /// The link in the form it will be stored (<see cref="Uri.AbsoluteUri"/>, with non-ASCII characters escaped) if
+    /// <see cref="IsSafeLink"/> accepts that form, else null. Adapters keep covers through this, because escaping can
+    /// lengthen a link past <see cref="Book.MaxUrlLength"/> after the raw text passed the check.
+    /// </summary>
+    public static string? SafeLinkOrNull(string? url, string? host, bool allowSubdomains = false) =>
+        url is not null && Uri.TryCreate(url, UriKind.Absolute, out var uri) && IsSafeLink(uri.AbsoluteUri, host, allowSubdomains)
+            ? uri.AbsoluteUri
+            : null;
+
     private const int MaxCatalogIdLength = 40;
 }

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using PodcastBookRecs.Core.Backends;
@@ -26,6 +27,9 @@ public sealed partial class MentionMatcher(
     ILogger<MentionMatcher> logger)
 {
     public static readonly TimeSpan RetryFailedAfter = TimeSpan.FromDays(1);
+
+    /// <summary>Fallbacks whose last answer was a failure, so the log warns once per outage, not once per title.</summary>
+    private readonly ConcurrentDictionary<string, bool> _failingFallbacks = new(StringComparer.Ordinal);
 
     public async Task<WorkOutcome> ProcessNextAsync(CancellationToken cancellationToken)
     {
@@ -146,9 +150,12 @@ public sealed partial class MentionMatcher(
     /// <summary>
     /// Asks the primary catalogue, then each fallback in turn while nothing is found. Fallbacks are asked only when the
     /// model named an author: they don't count editions, so without a surname to check no answer of theirs could be
-    /// accepted. A primary that can't be reached pauses matching. A fallback that can't be reached fails only this
-    /// title, which is tried again after <see cref="RetryFailedAfter"/>, because an optional catalogue being down
-    /// mustn't stop the mentions behind this one, most of which the primary can match.
+    /// accepted. A primary that can't be reached pauses matching. A fallback that fails, unreachable or with a bad
+    /// answer, is skipped and the next one asked, so one optional catalogue being down (or its token expiring) can't
+    /// stop the others or the mentions behind this one. If nothing matched and some fallback couldn't be reached, the
+    /// title fails and is tried again after <see cref="RetryFailedAfter"/>, since that catalogue might have had it. A
+    /// fallback that answered with an error (a rejected token, a bad answer) counts as not having the book: retrying
+    /// every such title daily would only spend requests on an error the Status page already shows.
     /// </summary>
     private async Task<Found?> FindAsync(string title, string? author, CancellationToken cancellationToken)
     {
@@ -158,22 +165,42 @@ public sealed partial class MentionMatcher(
             return null;
         }
 
+        CatalogLookupFailedException? fallbackUnreachable = null;
         foreach (var catalog in CatalogMatcher.HasSurname(author) ? catalogs.All : [catalogs.Primary])
         {
             try
             {
-                if (await SearchAsync(catalog, title, author, cancellationToken) is { } book)
+                var book = await SearchAsync(catalog, title, author, cancellationToken);
+                if (_failingFallbacks.TryRemove(catalog.Provider, out _))
+                {
+                    LogFallbackRecovered(catalog.Provider);
+                }
+
+                if (book is not null)
                 {
                     return new Found(book, catalog);
                 }
             }
-            catch (BackendUnavailableException ex) when (catalog != catalogs.Primary)
+            catch (Exception ex) when (catalog != catalogs.Primary && ex is BackendUnavailableException or CatalogLookupFailedException)
             {
-                throw new CatalogLookupFailedException($"Fallback {catalog.Provider} unavailable: {ex.Message}", ex);
+                // Once per outage at Warning; per title it would repeat for every mention in the queue.
+                if (_failingFallbacks.TryAdd(catalog.Provider, true))
+                {
+                    LogFallbackFailing(catalog.Provider, ex.Message);
+                }
+                else
+                {
+                    LogFallbackSkipped(catalog.Provider, ex.Message);
+                }
+
+                if (ex is BackendUnavailableException)
+                {
+                    fallbackUnreachable ??= new CatalogLookupFailedException($"Fallback {catalog.Provider} couldn't be reached: {ex.Message}", ex);
+                }
             }
         }
 
-        return null;
+        return fallbackUnreachable is null ? null : throw fallbackUnreachable;
     }
 
     /// <summary>
@@ -268,6 +295,15 @@ public sealed partial class MentionMatcher(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Couldn't apply the {Verdict} review decision for \"{Title}\"")]
     private partial void LogDecisionUnusable(string title, ReviewVerdict verdict);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Fallback catalogue {Catalogue} is failing, so titles skip it until it answers again: {Reason}")]
+    private partial void LogFallbackFailing(string catalogue, string reason);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Fallback catalogue {Catalogue} failed, trying the next: {Reason}")]
+    private partial void LogFallbackSkipped(string catalogue, string reason);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Fallback catalogue {Catalogue} is answering again")]
+    private partial void LogFallbackRecovered(string catalogue);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Book matching paused: {Reason}")]
     private partial void LogPaused(string reason);

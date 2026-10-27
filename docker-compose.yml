@@ -6,6 +6,8 @@
 # Stack environment variables (optional):
 #   PBR_TAG   image tag to run. Default "latest". Set to a build tag such as "sha-1a2b3c4" to roll back.
 #   PBR_PORT  host port for the UI. Default 8742.
+#   PBR_HARDCOVER_TOKEN  Hardcover API token, only if Hardcover is in BookLookup:Fallbacks. Keep it in the stack
+#             variables, not in this file or config.json, and uncomment the line under the worker below.
 
 services:
   worker:
@@ -14,6 +16,9 @@ services:
     restart: unless-stopped
     environment:
       TZ: Europe/London
+      # Only the Worker searches catalogues. No default on purpose: with Hardcover listed and the variable unset, the
+      # Worker refuses to start with "Hardcover:Token is needed" instead of sending an empty token.
+      # PBR_Hardcover__Token: ${PBR_HARDCOVER_TOKEN}
     volumes:
       - /path/to/podcastbookrecs/config:/config:ro
       - /path/to/podcastbookrecs/data:/data
