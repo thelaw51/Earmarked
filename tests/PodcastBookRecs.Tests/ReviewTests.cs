@@ -245,7 +245,7 @@ public sealed class ReviewTests : IAsyncLifetime
         await AddMentionAsync(0, "Harbor Lights", "Calder", MatchState.NoMatch);
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
 
-        await ReviewActions.KeepAsIsAsync(db, Key("Harbor Lights", "Calder"), " Harbour\r\nLights" + new string('x', 400), "Ines\u0000Calder ", "  self-published ", Now, Ct);
+        await ReviewActions.KeepAsIsAsync(db, Key("Harbor Lights", "Calder"), " Harbour\r\nLights" + new string('x', 400), "Ines\u0000Calder\u202E\u2028", "  self-published ", Now, Ct);
 
         var decision = await db.ReviewDecisions.SingleAsync(Ct);
         Assert.Equal((ReviewVerdict.KeptAsIs, "Harbor Lights", "Calder", "self-published", (Guid?)null),
@@ -262,6 +262,7 @@ public sealed class ReviewTests : IAsyncLifetime
     [Theory]
     [InlineData("Harbor Lights", "   ")]
     [InlineData("Harbor Lights", "\r\n\t")]
+    [InlineData("Harbor Lights", "\u202E\u2029\u200B")]
     [InlineData("made up", "A Real Title")]
     public async Task Keeping_as_is_needs_a_title_and_a_stored_key(string mentioned, string typed)
     {

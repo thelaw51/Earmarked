@@ -122,6 +122,7 @@ else
                                    Disabled="busy" OnClick="@(() => RejectAsync(item, ReviewVerdict.NotABook))">Not a book</MudButton>
                         <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.ManageSearch"
                                    Disabled="@(busy || !_lookupOn)" OnClick="@(() => OpenSearch(item))">Find the book</MudButton>
+                        @* Opens the same panel as "Find the book", where the text can be fixed before "Save as a book". *@
                         <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.BookmarkAdd"
                                    Disabled="busy" OnClick="@(() => OpenSearch(item))">Keep as is</MudButton>
                         <MudTextField T="string" @bind-Value="_notes[item.LookupKey]" Placeholder="Note (optional)" Variant="Variant.Outlined" Margin="Margin.Dense"

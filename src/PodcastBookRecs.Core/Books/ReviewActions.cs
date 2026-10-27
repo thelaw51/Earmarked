@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using PodcastBookRecs.Core.BookLookup;
 using PodcastBookRecs.Core.Configuration;
@@ -165,9 +166,15 @@ public static class ReviewActions
         return (mention.Title, mention.Author);
     }
 
-    /// <summary>Text a person typed becomes a stored book, so line breaks and other control characters become spaces.</summary>
+    /// <summary>
+    /// Text a person typed becomes a stored book, so control characters, line and paragraph separators and invisible
+    /// format characters (such as the bidi overrides that make text display reversed) become spaces.
+    /// </summary>
     private static string? Typed(string? text) =>
-        text is null ? null : string.Concat(text.Select(c => char.IsControl(c) ? ' ' : c));
+        text is null ? null : string.Concat(text.Select(c => char.IsControl(c) || IsInvisible(c) ? ' ' : c));
+
+    private static bool IsInvisible(char c) =>
+        char.GetUnicodeCategory(c) is UnicodeCategory.Format or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator;
 
     private static string? Clean(string? text, int maxLength)
     {
