@@ -5,6 +5,10 @@ using PodcastBookRecs.Core.Data;
 namespace PodcastBookRecs.Core.Books;
 
 /// <summary>A review action the page asked for can't be done. The message is written for the person.</summary>
+/// <summary>
+/// A review action refused for a reason the person can act on. The review page shows the message as it is, so it must
+/// be written for them and never carry another exception's text.
+/// </summary>
 public sealed class ReviewActionException(string message) : Exception(message);
 
 /// <summary>
