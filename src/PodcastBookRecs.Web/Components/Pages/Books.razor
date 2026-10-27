@@ -3,6 +3,7 @@
 @using PodcastBookRecs.Core.Books
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject NavigationManager Navigation
+@inject ILogger<Books> Logger
 
 <PageTitle>Books</PageTitle>
 
@@ -17,7 +18,7 @@
 
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Couldn't load books: @_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_error</MudAlert>
 }
 else if (_rows is null)
 {
@@ -218,9 +219,10 @@ else
         }
         catch (Exception ex)
         {
+            Logger.ActionFailed(ex, "load books");
             if (request == _loadRequest)
             {
-                _error = ex.Message;
+                _error = "Couldn't load books. The web app's log has the details.";
             }
         }
     }
