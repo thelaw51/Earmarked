@@ -16,6 +16,7 @@ public enum ReviewReasons
     FuzzySurname = 16,
     FewEditions = 32,
     OtherCatalogue = 64,
+    ShortTitle = 128,
 }
 
 /// <summary>A passage where the title came up, with the episode it's from.</summary>
@@ -111,7 +112,8 @@ public static class ReviewBacklog
                     reasons |= (doubts.HasFlag(MatchDoubts.NoAuthor) ? ReviewReasons.NoAuthor : 0)
                         | (doubts.HasFlag(MatchDoubts.FuzzySurname) ? ReviewReasons.FuzzySurname : 0)
                         | (doubts.HasFlag(MatchDoubts.FewEditions) ? ReviewReasons.FewEditions : 0)
-                        | (doubts.HasFlag(MatchDoubts.OtherCatalogue) ? ReviewReasons.OtherCatalogue : 0);
+                        | (doubts.HasFlag(MatchDoubts.OtherCatalogue) ? ReviewReasons.OtherCatalogue : 0)
+                        | (doubts.HasFlag(MatchDoubts.ShortTitle) ? ReviewReasons.ShortTitle : 0);
                 }
 
                 return new ReviewItem(

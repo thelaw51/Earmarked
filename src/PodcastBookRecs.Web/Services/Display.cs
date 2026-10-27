@@ -68,6 +68,7 @@ public static class Display
         (ReviewReasons.FuzzySurname, "Author's name differs"),
         (ReviewReasons.FewEditions, "Few editions"),
         (ReviewReasons.OtherCatalogue, "Found in a fallback catalogue"),
+        (ReviewReasons.ShortTitle, "Matched the title before the comma"),
     ];
 
     /// <summary>Why a title is in the review list, one short phrase per reason.</summary>

@@ -97,6 +97,12 @@ public enum MatchDoubts
     /// the title and the author's surname backs the match, and a person confirms it.
     /// </summary>
     OtherCatalogue = 8,
+
+    /// <summary>
+    /// Matched only on the part of the title before a comma ("For the Love of Men, From Toxic…" to "For the Love of
+    /// Men"), so the rest of what the model wrote was never checked against the book.
+    /// </summary>
+    ShortTitle = 16,
 }
 
 /// <summary>How a book came up. Values are stored, so never renumber them.</summary>
