@@ -29,13 +29,12 @@ public sealed partial class AppleBooksCatalog(IHttpClientFactory httpFactory, IO
     private const int MaxQueryLength = 200;
     private const int MaxAuthorsPerBook = 5;
 
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private DateTimeOffset _nextRequestAt = DateTimeOffset.MinValue;
+    private readonly CatalogPacer _pacer = new(time, TimeSpan.FromSeconds(3));
 
     public string Provider => BookLookupProviders.AppleBooks;
 
     /// <summary>The minimum gap between requests. Tests set it to zero.</summary>
-    internal TimeSpan RequestGap { get; set; } = TimeSpan.FromSeconds(3);
+    internal TimeSpan RequestGap { get => _pacer.Gap; set => _pacer.Gap = value; }
 
     public async Task<IReadOnlyList<CatalogBook>> SearchAsync(string title, string? author, CancellationToken cancellationToken)
     {
@@ -43,35 +42,14 @@ public sealed partial class AppleBooksCatalog(IHttpClientFactory httpFactory, IO
         var term = string.IsNullOrWhiteSpace(author) ? title.Trim() : $"{title.Trim()} {author.Trim()}";
         var query = $"search?term={Uri.EscapeDataString(Cap(term, MaxQueryLength))}&media=ebook&entity=ebook&country={country}&limit={MaxCandidates}";
 
-        string body;
-        await _gate.WaitAsync(cancellationToken);
-        try
-        {
-            var wait = _nextRequestAt - time.GetUtcNow();
-            if (wait > TimeSpan.Zero)
-            {
-                await Task.Delay(wait, time, cancellationToken);
-            }
-
-            try
-            {
-                body = await CatalogHttp.SendAsync(
-                    httpFactory.CreateClient(HttpClientName), new HttpRequestMessage(HttpMethod.Get, query), "Apple Books", cancellationToken, SlowDownStatuses);
-            }
-            finally
-            {
-                _nextRequestAt = time.GetUtcNow() + RequestGap;
-            }
-        }
-        finally
-        {
-            _gate.Release();
-        }
-
+        var body = await _pacer.RunAsync(
+            () => CatalogHttp.SendAsync(
+                httpFactory.CreateClient(HttpClientName), new HttpRequestMessage(HttpMethod.Get, query), "Apple Books", cancellationToken, SlowDownStatuses),
+            cancellationToken);
         return Parse(body, country);
     }
 
-    public void Dispose() => _gate.Dispose();
+    public void Dispose() => _pacer.Dispose();
 
     /// <summary>
     /// Reads candidates out of a search response. Entries without a numeric <c>trackId</c> or a title are skipped. The

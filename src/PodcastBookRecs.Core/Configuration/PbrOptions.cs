@@ -186,7 +186,10 @@ public sealed class BookLookupOptions : IValidatableObject
     public bool Enabled => !string.IsNullOrWhiteSpace(Provider);
 
     /// <summary>The primary catalogue and then the fallbacks, each in its canonical spelling.</summary>
-    public IReadOnlyList<string> Chain => [.. new[] { Provider! }.Concat(Fallbacks).Select(BookLookupProviders.Canonical)];
+    public IReadOnlyList<string> Chain => [.. Names.Select(BookLookupProviders.Canonical)];
+
+    /// <summary>The primary and the fallbacks as config spells them.</summary>
+    private IEnumerable<string> Names => new[] { Provider! }.Concat(Fallbacks);
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
@@ -195,7 +198,7 @@ public sealed class BookLookupOptions : IValidatableObject
             yield break;
         }
 
-        foreach (var name in new[] { Provider! }.Concat(Fallbacks))
+        foreach (var name in Names)
         {
             if (!BookLookupProviders.Known.Contains(name, StringComparer.OrdinalIgnoreCase))
             {
@@ -203,7 +206,7 @@ public sealed class BookLookupOptions : IValidatableObject
             }
         }
 
-        if (new[] { Provider! }.Concat(Fallbacks).Distinct(StringComparer.OrdinalIgnoreCase).Count() != Fallbacks.Length + 1)
+        if (Names.Distinct(StringComparer.OrdinalIgnoreCase).Count() != Fallbacks.Length + 1)
         {
             yield return new ValidationResult("BookLookup:Fallbacks must not repeat a catalogue or name the primary BookLookup:Provider.");
         }

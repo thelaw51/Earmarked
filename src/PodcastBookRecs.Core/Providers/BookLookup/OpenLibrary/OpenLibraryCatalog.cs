@@ -22,47 +22,22 @@ public sealed partial class OpenLibraryCatalog(IHttpClientFactory httpFactory, T
     private const int MaxAuthorsPerBook = 5;
     private const string Fields = "key,title,subtitle,author_name,first_publish_year,cover_i,edition_count";
 
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private DateTimeOffset _nextRequestAt = DateTimeOffset.MinValue;
+    private readonly CatalogPacer _pacer = new(time, TimeSpan.FromSeconds(1));
 
     public string Provider => BookLookupProviders.OpenLibrary;
 
     /// <summary>The minimum gap between requests. Tests set it to zero.</summary>
-    internal TimeSpan RequestGap { get; set; } = TimeSpan.FromSeconds(1);
+    internal TimeSpan RequestGap { get => _pacer.Gap; set => _pacer.Gap = value; }
 
     public async Task<IReadOnlyList<CatalogBook>> SearchAsync(string title, string? author, CancellationToken cancellationToken)
     {
         var query = $"search.json?title={Escape(title)}" + (string.IsNullOrWhiteSpace(author) ? "" : $"&author={Escape(author)}")
             + $"&fields={Fields}&limit={MaxCandidates}";
 
-        string body;
-        await _gate.WaitAsync(cancellationToken);
-        try
-        {
-            var wait = _nextRequestAt - time.GetUtcNow();
-            if (wait > TimeSpan.Zero)
-            {
-                await Task.Delay(wait, time, cancellationToken);
-            }
-
-            try
-            {
-                body = await SendAsync(query, cancellationToken);
-            }
-            finally
-            {
-                _nextRequestAt = time.GetUtcNow() + RequestGap;
-            }
-        }
-        finally
-        {
-            _gate.Release();
-        }
-
-        return Parse(body);
+        return Parse(await _pacer.RunAsync(() => SendAsync(query, cancellationToken), cancellationToken));
     }
 
-    public void Dispose() => _gate.Dispose();
+    public void Dispose() => _pacer.Dispose();
 
     private Task<string> SendAsync(string query, CancellationToken cancellationToken) =>
         CatalogHttp.SendAsync(httpFactory.CreateClient(HttpClientName), new HttpRequestMessage(HttpMethod.Get, query), "Open Library", cancellationToken);
