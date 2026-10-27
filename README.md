@@ -223,13 +223,25 @@ The Worker checks each book mention against [Open Library](https://openlibrary.o
 
 1. It searches Open Library's title and author fields for the mention's title, and the author if the model gave one. If that finds nothing, it tries the title alone, because catalogues write authors differently ("J.R.R." against "JRR").
 2. A result only counts if its title is the same as the mention's, ignoring case, punctuation, a leading "The" and any subtitle. When the model named an author, the result must also have an author with the same surname, give or take one letter ("Elliot" for "Eliot"). Without an author, the result needs at least two editions: an exact title alone matches too many obscure one-off books ("my second book" is one). And a title made only of generic words ("the book", "his new memoir") isn't looked up at all without an author, because the model has turned a passing reference into a title; Open Library really does have books called "The Book". Summaries and study guides are skipped. Of the results left, the one with the most editions wins, so mentions with different spellings land on the same book.
-3. A matched mention points at one stored book, shared by every episode that mentions it. Anything without a match stays on its episode page marked *Not found in the catalogue*, and off the book list. Phase 4's review queue is where those get sorted out.
+3. A matched mention points at one stored book, shared by every episode that mentions it. Anything without a match stays on its episode page marked *Not found in the catalogue*, and off the book list, until someone settles it on the *Review* page.
 4. A title already looked up isn't asked about again: the next mention with the same title and author surname reuses the answer.
-5. Each match records why it might be wrong: no author named, an author matched only with one letter out, or a book with two editions or fewer. The review queue shows those matches, and low-confidence ones, to a person.
+5. Each match records why it might be wrong: no author named, an author matched only with one letter out, or a book with two editions or fewer. The *Review* page lists those matches too, and ones where the model was unsure the title is a book at all.
 
 ### Review decisions
 
 A person's ruling on a title and author (the match is right, it isn't a book, it's the wrong book, or it's this other book) is stored on its own, keyed on the same title-and-surname key the matcher uses, and applies to every mention with that key on every podcast. The matcher reads it before anything else, so it holds when the rules change and every mention is matched again, when an episode's books are extracted again, and when an episode is reset or gets a new transcript: the new mentions get the same ruling. Mentions ruled out leave the book list. Undoing a decision matches its mentions normally again. Decisions are applied by the matcher, so with book lookup turned off they wait until it's back on.
+
+### The review page
+
+*Review* (under Library, with a count of open titles) lists one entry per title and author surname that has no decision yet and where the catalogue found nothing, the lookup failed, a match has one of the doubts above, or even the most confident mention scored below 0.6 on the model's own "is this a real book" scale. Each entry shows the matched book if any, why it's listed, how many mentions, episodes and podcasts it covers, and up to three quotes linking to their episodes. You can:
+
+- **Confirm** a match. It leaves the list for good.
+- Mark it **Not a book** (a newspaper, "my last book") or the **Wrong book**, with an optional note. Its mentions leave the book list.
+- **Find the book**: search the catalogue with the title and author, both editable, and pick the right result.
+
+Decided titles are listed underneath, each with an *Undo*.
+
+The Worker runs these searches, not the web app, so the one-request-a-second pace holds across both: the page saves the search, the Worker answers within a few seconds, and the page waits up to 30 seconds. Five searches can wait at once; the Worker drops one nobody has collected after two minutes and deletes them all after a day. A pick is copied from the Worker's stored results, never from the page.
 
 Requests go out at most one a second, Open Library's limit for anonymous clients, so a few hundred mentions take a few minutes. Set `OpenLibrary:ContactEmail` and it goes in the User-Agent, as Open Library asks of regular clients. If Open Library is down or asks the Worker to slow down, matching pauses and tries again later; the Status page has a *book lookup* row.
 

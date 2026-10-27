@@ -152,8 +152,8 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers book lookup for the Worker: the configured catalogue's adapter and health check, and the mention
-    /// matcher. Does nothing beyond binding options when lookup is turned off.
+    /// Registers book lookup for the Worker: the configured catalogue's adapter and health check, the mention matcher
+    /// and the runner for review-page searches. Does nothing beyond binding options when lookup is turned off.
     /// </summary>
     public static IServiceCollection AddPbrBookLookup(this IServiceCollection services, IConfiguration configuration)
     {
@@ -192,6 +192,7 @@ public static class ServiceCollectionExtensions
         }
 
         services.AddSingleton<MentionMatcher>();
+        services.AddSingleton<CatalogSearchRunner>();
         return services;
     }
 

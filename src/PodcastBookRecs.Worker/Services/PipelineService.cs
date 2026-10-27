@@ -8,7 +8,7 @@ namespace PodcastBookRecs.Worker.Services;
 
 /// <summary>
 /// Runs the Worker's loops side by side: UI commands, scheduled feed polls, transcript fetching, the heartbeat and,
-/// when their providers are configured, transcription, book extraction and book matching.
+/// when their providers are configured, transcription, book extraction, book matching and review-page searches.
 /// A loop that throws logs the error and carries on after its delay, so one bad feed or a locked database
 /// doesn't stop the others.
 /// </summary>
@@ -22,7 +22,8 @@ internal sealed partial class PipelineService(
     ILogger<PipelineService> logger,
     EpisodeTranscriber? transcriber = null,
     EpisodeExtractor? extractor = null,
-    MentionMatcher? matcher = null) : BackgroundService
+    MentionMatcher? matcher = null,
+    CatalogSearchRunner? searches = null) : BackgroundService
 {
     private static readonly TimeSpan IdleDelay = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MinPause = TimeSpan.FromSeconds(30);
@@ -50,6 +51,12 @@ internal sealed partial class PipelineService(
         if (matcher is not null)
         {
             loops.Add(BackendLoop("book matching", null, matcher.ProcessNextAsync, stoppingToken));
+        }
+
+        // Its own loop, not a command: someone is waiting, and the command loop can be busy polling feeds for minutes.
+        if (searches is not null)
+        {
+            loops.Add(Loop("catalogue search", TimeSpan.FromSeconds(1), searches.RunPendingAsync, stoppingToken));
         }
 
         return Task.WhenAll(loops);

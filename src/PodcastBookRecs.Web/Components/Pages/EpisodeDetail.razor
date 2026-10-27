@@ -3,8 +3,7 @@
 @using PodcastBookRecs.Core.Pipeline
 @using PodcastBookRecs.Core.Transcripts
 @inject IDbContextFactory<AppDbContext> DbFactory
-@inject TimeProvider Time
-@inject ISnackbar Snackbar
+@inject CommandFeedback Commands
 
 <PageTitle>@(_episode?.Title ?? "Episode")</PageTitle>
 
@@ -119,6 +118,10 @@ else
                                 {
                                     <a href="@($"books/{mention.Book.Id}")" class="card-title-link"><MudText Typo="Typo.subtitle2">@mention.Book.Title</MudText></a>
                                     <MudText Typo="Typo.caption" Class="muted d-block">@mention.Book.Authors</MudText>
+                                    @if (mention.Doubts != MatchDoubts.None)
+                                    {
+                                        <a href="review" class="card-title-link"><MudText Typo="Typo.caption">Match may be wrong · Review</MudText></a>
+                                    }
                                 }
                                 else
                                 {
@@ -128,6 +131,10 @@ else
                                         <MudText Typo="Typo.caption" Class="muted d-block">@mention.Author</MudText>
                                     }
                                     <MudText Typo="Typo.caption" Class="muted d-block" Style="font-style: italic;">@Display.MatchNote(mention.MatchState, _lookupOn)</MudText>
+                                    @if (mention.MatchState is MatchState.NoMatch or MatchState.LookupFailed or MatchState.Rejected)
+                                    {
+                                        <a href="review" class="card-title-link"><MudText Typo="Typo.caption">Review</MudText></a>
+                                    }
                                 }
                             </div>
                             <div class="mention-meta d-flex flex-column align-end gap-1">
@@ -232,18 +239,5 @@ else
     private Task RetryAsync() => QueueAsync(WorkerCommandType.RetryEpisode, "Retry queued. Any stored transcript will be fetched again.");
 
     /// <summary>Asks the Worker to act on this episode. The Worker picks the command up within about 5 seconds.</summary>
-    private async Task QueueAsync(WorkerCommandType type, string done)
-    {
-        try
-        {
-            await using var db = await DbFactory.CreateDbContextAsync();
-            db.WorkerCommands.Add(new WorkerCommand { Type = type, EpisodeId = Id, CreatedAt = Time.GetUtcNow().UtcDateTime });
-            await db.SaveChangesAsync();
-            Snackbar.Add(done, Severity.Info);
-        }
-        catch (Exception ex)
-        {
-            Snackbar.Add($"Couldn't send that to the Worker: {ex.Message}", Severity.Error);
-        }
-    }
+    private Task QueueAsync(WorkerCommandType type, string queued) => Commands.QueueAsync(new WorkerCommand { Type = type, EpisodeId = Id }, queued);
 }

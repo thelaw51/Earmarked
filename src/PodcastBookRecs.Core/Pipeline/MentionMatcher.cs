@@ -26,8 +26,6 @@ public sealed partial class MentionMatcher(
 {
     public static readonly TimeSpan RetryFailedAfter = TimeSpan.FromDays(1);
 
-    private const int MaxCatalogIdLength = 40;
-
     public async Task<WorkOutcome> ProcessNextAsync(CancellationToken cancellationToken)
     {
         var retryBefore = time.GetUtcNow().UtcDateTime - RetryFailedAfter;
@@ -108,7 +106,7 @@ public sealed partial class MentionMatcher(
             ReviewVerdict.NotABook or ReviewVerdict.WrongBook => new Answer(MatchState.Rejected, null, MatchDoubts.None),
             ReviewVerdict.Confirmed when decision.BookId is { } id => new Answer(MatchState.Matched, id, MatchDoubts.None),
             ReviewVerdict.Corrected when decision.BookId is { } id => new Answer(MatchState.Matched, id, MatchDoubts.None),
-            ReviewVerdict.Corrected when IsUsable(decision.Pick) => new Answer(MatchState.Matched, await AddPickAsync(db, decision, cancellationToken), MatchDoubts.None),
+            ReviewVerdict.Corrected when CatalogMatcher.IsUsable(decision.Pick) => new Answer(MatchState.Matched, await AddPickAsync(db, decision, cancellationToken), MatchDoubts.None),
             _ => failed,
         };
 
@@ -128,20 +126,6 @@ public sealed partial class MentionMatcher(
             .ExecuteUpdateAsync(s => s.SetProperty(d => d.BookId, bookId), cancellationToken);
         return bookId;
     }
-
-    /// <summary>
-    /// A picked book was copied from a search result, so it came from the adapter, but it sat in the database in
-    /// between. Before it becomes a <see cref="Book"/>, check what every catalogue entry must have: an ID, a title,
-    /// and https links.
-    /// </summary>
-    private static bool IsUsable(CatalogBook? pick) =>
-        pick is not null
-        && !string.IsNullOrWhiteSpace(pick.CatalogId) && pick.CatalogId.Length <= MaxCatalogIdLength
-        && !string.IsNullOrWhiteSpace(pick.Title)
-        && IsHttps(pick.InfoUrl) && (pick.CoverUrl is null || IsHttps(pick.CoverUrl));
-
-    private static bool IsHttps(string url) =>
-        url.Length <= Book.MaxUrlLength && Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
 
     /// <summary>
     /// Searches with the author when the model gave one, then by title alone, because catalogues file authors in ways

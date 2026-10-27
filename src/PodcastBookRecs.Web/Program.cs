@@ -17,6 +17,7 @@ builder.Logging.AddPbrLogging(builder.Environment);
 builder.Services.AddPbrCore(builder.Configuration);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<SchemaStatus>();
+builder.Services.AddScoped<CommandFeedback>();
 builder.Services.AddMudServices();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 

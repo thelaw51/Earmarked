@@ -28,9 +28,14 @@ public sealed partial class CommandProcessor(
             {
                 await RunAsync(command, cancellationToken);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (CommandRefusedException ex)
             {
                 error = ex.Message;
+                LogCommandRefused(command.Type, command.Id, ex.Message);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                error = FailedError;
                 LogCommandFailed(ex, command.Type, command.Id);
             }
 
@@ -84,7 +89,7 @@ public sealed partial class CommandProcessor(
                 break;
 
             default:
-                throw new InvalidOperationException($"Command {command.Type} is missing its target.");
+                throw new CommandRefusedException($"Command {command.Type} is missing its target.");
         }
     }
 
@@ -97,7 +102,7 @@ public sealed partial class CommandProcessor(
         using var _ = await stateLock.AcquireAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var episode = await db.Episodes.Include(e => e.Transcript).SingleOrDefaultAsync(e => e.Id == episodeId, cancellationToken)
-            ?? throw new InvalidOperationException($"Episode {episodeId} not found.");
+            ?? throw new CommandRefusedException("That episode no longer exists.");
 
         if (episode.Transcript is not null)
         {
@@ -127,13 +132,13 @@ public sealed partial class CommandProcessor(
         {
             await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
             var episode = await db.Episodes.SingleOrDefaultAsync(e => e.Id == episodeId, cancellationToken)
-                ?? throw new InvalidOperationException($"Episode {episodeId} not found.");
+                ?? throw new CommandRefusedException("That episode no longer exists.");
             included = episode.State == EpisodeState.Skipped;
             if (!included && (!prioritise || !QueuedStates.Contains(episode.State)))
             {
-                throw new InvalidOperationException(prioritise
-                    ? $"Episode {episodeId} can't be prioritised while it's {episode.State}."
-                    : $"Episode {episodeId} isn't skipped, so there's nothing to include.");
+                throw new CommandRefusedException(prioritise
+                    ? $"This episode can't be prioritised while it's {episode.State}."
+                    : "This episode isn't skipped, so there's nothing to include.");
             }
 
             var now = time.GetUtcNow().UtcDateTime;
@@ -164,6 +169,12 @@ public sealed partial class CommandProcessor(
     private const int MaxLookupKeyLength = BookMention.MaxTitleLength + BookMention.MaxAuthorLength;
 
     /// <summary>
+    /// Stored, and shown in the UI, when a command fails for a reason other than a refusal. The exception's own message
+    /// can carry a database path or a feed URL with its token, so it goes only to the log.
+    /// </summary>
+    public const string FailedError = "The Worker couldn't do this. Its log has the details.";
+
+    /// <summary>
     /// Makes every mention with this lookup key due for matching again, so the matcher applies whatever review decision
     /// is now stored for it, or matches normally if it was undone. Only invalidates: the matcher alone changes match
     /// state, and mentions keep their current answer until it does.
@@ -187,10 +198,10 @@ public sealed partial class CommandProcessor(
         using var _ = await stateLock.AcquireAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var episode = await db.Episodes.Include(e => e.Transcript).SingleOrDefaultAsync(e => e.Id == episodeId, cancellationToken)
-            ?? throw new InvalidOperationException($"Episode {episodeId} not found.");
+            ?? throw new CommandRefusedException("That episode no longer exists.");
         if (episode.Transcript is null || episode.State is not (EpisodeState.Extracted or EpisodeState.ExtractionFailed))
         {
-            throw new InvalidOperationException($"Episode {episodeId} can't be re-extracted while it's {episode.State}.");
+            throw new CommandRefusedException($"This episode can't be re-extracted while it's {episode.State}.");
         }
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -206,4 +217,13 @@ public sealed partial class CommandProcessor(
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Command {Type} ({Id}) failed")]
     private partial void LogCommandFailed(Exception ex, WorkerCommandType type, Guid id);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Command {Type} ({Id}) refused: {Reason}")]
+    private partial void LogCommandRefused(WorkerCommandType type, Guid id, string reason);
 }
+
+/// <summary>
+/// A command that can't apply to its target as it is now, e.g. prioritising an episode that's already finished. Not a
+/// fault: the message is written for the person who sent it and is shown to them.
+/// </summary>
+public sealed class CommandRefusedException(string message) : Exception(message);

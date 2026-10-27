@@ -2,6 +2,7 @@
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject TimeProvider Time
 @inject ISnackbar Snackbar
+@inject CommandFeedback Commands
 
 <PageTitle>Podcasts</PageTitle>
 
@@ -162,8 +163,10 @@ else
             var now = Time.GetUtcNow().UtcDateTime;
             var podcast = new PodcastFeed { FeedUrl = url!, AddedAt = now };
             db.PodcastFeeds.Add(podcast);
-            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastFeedId = podcast.Id, CreatedAt = now });
+            var poll = new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastFeedId = podcast.Id, CreatedAt = now };
+            db.WorkerCommands.Add(poll);
             await db.SaveChangesAsync();
+            Commands.Watch(poll.Id);
 
             _newFeedUrl = null;
             Snackbar.Add("Feed added. The Worker will poll it within a few seconds.", Severity.Success);
@@ -179,25 +182,9 @@ else
         }
     }
 
-    private Task PollAsync(Row row) => QueueAsync(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastFeedId = row.Id }, "Poll queued.");
+    private Task PollAsync(Row row) => Commands.QueueAsync(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastFeedId = row.Id }, "Poll queued.");
 
-    private Task PollAllAsync() => QueueAsync(new WorkerCommand { Type = WorkerCommandType.PollAllFeeds }, "Poll of all feeds queued.");
-
-    private async Task QueueAsync(WorkerCommand command, string message)
-    {
-        try
-        {
-            await using var db = await DbFactory.CreateDbContextAsync();
-            command.CreatedAt = Time.GetUtcNow().UtcDateTime;
-            db.WorkerCommands.Add(command);
-            await db.SaveChangesAsync();
-            Snackbar.Add(message, Severity.Info);
-        }
-        catch (Exception ex)
-        {
-            Snackbar.Add($"Couldn't queue the command: {ex.Message}", Severity.Error);
-        }
-    }
+    private Task PollAllAsync() => Commands.QueueAsync(new WorkerCommand { Type = WorkerCommandType.PollAllFeeds }, "Poll of all feeds queued.");
 
     private async Task SetEnabledAsync(Row row, bool enabled)
     {

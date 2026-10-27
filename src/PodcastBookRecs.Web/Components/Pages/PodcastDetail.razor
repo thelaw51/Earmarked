@@ -1,7 +1,6 @@
 @page "/podcasts/{Id:guid}"
 @inject IDbContextFactory<AppDbContext> DbFactory
-@inject TimeProvider Time
-@inject ISnackbar Snackbar
+@inject CommandFeedback Commands
 
 <PageTitle>@(_podcast?.Title ?? "Podcast")</PageTitle>
 
@@ -156,18 +155,5 @@ else
         }
     }
 
-    private async Task PollAsync()
-    {
-        try
-        {
-            await using var db = await DbFactory.CreateDbContextAsync();
-            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastFeedId = Id, CreatedAt = Time.GetUtcNow().UtcDateTime });
-            await db.SaveChangesAsync();
-            Snackbar.Add("Poll queued.", Severity.Info);
-        }
-        catch (Exception ex)
-        {
-            Snackbar.Add($"Couldn't queue the poll: {ex.Message}", Severity.Error);
-        }
-    }
+    private Task PollAsync() => Commands.QueueAsync(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastFeedId = Id }, "Poll queued.");
 }
