@@ -324,6 +324,32 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         new(_dbFactory, new BookCatalogChain([_catalog]), new ShiftedTime(offset), NullLogger<MentionMatcher>.Instance);
 
     [Fact]
+    public async Task A_comma_subtitle_is_searched_again_by_its_main_title_after_two_misses()
+    {
+        _catalog.Answer("Harbour Lights", HarbourLights);
+        await AddMentionAsync(0, "Harbour Lights, A Year on the Coast", "Ines Calder");
+
+        await RunUntilIdleAsync();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var mention = await db.BookMentions.SingleAsync(Ct);
+        Assert.Equal(MatchState.Matched, mention.MatchState);
+        Assert.Equal(MatchDoubts.ShortTitle, mention.Doubts);
+        // With the author, then the title alone, then the main title.
+        Assert.Equal(3, _catalog.Calls);
+    }
+
+    [Fact]
+    public async Task A_title_without_a_subtitle_costs_no_third_search()
+    {
+        await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+
+        await RunUntilIdleAsync();
+
+        Assert.Equal(2, _catalog.Calls);
+    }
+
+    [Fact]
     public async Task Doesnt_copy_a_match_whose_book_is_gone()
     {
         _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);

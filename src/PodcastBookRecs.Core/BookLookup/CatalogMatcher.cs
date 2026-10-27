@@ -16,7 +16,7 @@ namespace PodcastBookRecs.Core.BookLookup;
 public static class CatalogMatcher
 {
     /// <summary>Stored on every match. Bump it when these rules or <see cref="Doubts"/> change, and every mention is matched again.</summary>
-    public const string Version = "match-v4";
+    public const string Version = "match-v5";
 
     public const int MinEditionsWithoutAuthor = 2;
 
@@ -52,13 +52,32 @@ public static class CatalogMatcher
     public static bool HasSurname(string? author) => Surname(author).Length > 0;
 
     /// <summary>
+    /// The title without what looks like a subtitle, to search with when the whole title finds nothing: the part before
+    /// the first colon, or, when the mention has an author surname to check, before the first comma. The model often
+    /// writes "Title, Subtitle" where the catalogue has "Title: Subtitle" or only "Title", and a catalogue's title search
+    /// finds nothing for the long form. Commas count only with a surname, because "Eats, Shoots &amp; Leaves" without one
+    /// would be cut to a common word. Null when there is no such part.
+    /// </summary>
+    public static string? MainTitle(string title, string? author)
+    {
+        var cut = title.IndexOf(':', StringComparison.Ordinal);
+        if (cut <= 0 && HasSurname(author))
+        {
+            cut = title.IndexOf(", ", StringComparison.Ordinal);
+        }
+
+        return cut > 0 && MentionMerger.TitleKey(title[..cut]).Length > 0 ? title[..cut].Trim() : null;
+    }
+
+    /// <summary>
     /// The candidate that is this book, or null if none qualifies. One matching the whole title beats one matching only
     /// the part before a subtitle, so "Dune Messiah: A Novel" finds Dune Messiah, not the more popular Dune; after
-    /// that, most editions wins.
+    /// that, most editions wins. The part before a comma counts as in <see cref="MainTitle"/>, and a match on only that
+    /// part gets <see cref="MatchDoubts.ShortTitle"/>.
     /// </summary>
     public static CatalogBook? Pick(string title, string? author, IReadOnlyList<CatalogBook> candidates)
     {
-        var wanted = TitleKeys(title, null);
+        var wanted = MentionKeys(title, author);
         if (wanted.Count == 0 || IsTooVague(title, author))
         {
             return null;
@@ -79,9 +98,14 @@ public static class CatalogMatcher
     /// Why <paramref name="picked"/>, chosen by <see cref="Pick"/> for this title and author, might still be the wrong
     /// book. The review queue shows matches with any doubt to a person.
     /// </summary>
-    public static MatchDoubts Doubts(string? author, CatalogBook picked)
+    public static MatchDoubts Doubts(string title, string? author, CatalogBook picked)
     {
         var doubts = picked.EditionCount <= FewEditions ? MatchDoubts.FewEditions : MatchDoubts.None;
+        if (!TitleKeys(picked.Title, picked.Subtitle).Overlaps(TitleKeys(title, null)))
+        {
+            doubts |= MatchDoubts.ShortTitle;
+        }
+
         var surname = Surname(author);
         if (surname.Length == 0)
         {
@@ -101,6 +125,18 @@ public static class CatalogMatcher
         && title.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Select(QuoteLocator.Normalise).Where(w => w.Length > 0) is var words
         && words.Any()
         && words.All(GenericTitleWords.Contains);
+
+    /// <summary>A mention's <see cref="TitleKeys"/>, plus the part before a comma when <see cref="MainTitle"/> allows it.</summary>
+    private static HashSet<string> MentionKeys(string title, string? author)
+    {
+        var keys = TitleKeys(title, null);
+        if (MainTitle(title, author) is { } main)
+        {
+            keys.Add(MentionMerger.TitleKey(main));
+        }
+
+        return keys;
+    }
 
     /// <summary>The full title, the title before any subtitle, and (for a candidate) title plus subtitle, all as keys.</summary>
     private static HashSet<string> TitleKeys(string title, string? subtitle)

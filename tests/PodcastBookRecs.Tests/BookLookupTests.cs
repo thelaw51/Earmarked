@@ -47,6 +47,45 @@ public class BookLookupTests
         Assert.Null(CatalogMatcher.SafeLinkOrNull("not a link", "hardcover.app"));
     }
 
+    [Theory]
+    [InlineData("For the Love of Men, From Toxic to a More Mindful Masculinity", "Liz Plank", "For the Love of Men")]
+    [InlineData("Small Rivers, A Walking Year, Revised", "Tomas Reyne", "Small Rivers")]
+    [InlineData("Small Rivers: A Walking Year", null, "Small Rivers")]
+    [InlineData("Small Rivers: A Walking Year", "Tomas Reyne", "Small Rivers")]
+    [InlineData("Eats, Shoots & Leaves", null, null)]
+    [InlineData("Small Rivers", "Tomas Reyne", null)]
+    [InlineData(", A Walking Year", "Tomas Reyne", null)]
+    public void The_main_title_is_before_a_colon_or_with_an_author_a_comma(string title, string? author, string? expected) =>
+        Assert.Equal(expected, CatalogMatcher.MainTitle(title, author));
+
+    [Fact]
+    public void A_comma_subtitle_matches_the_short_title_with_an_author_and_is_flagged()
+    {
+        var book = Book("For the Love of Men", "Liz Plank", editions: 3);
+        const string title = "For the Love of Men, From Toxic to a More Mindful Masculinity";
+
+        Assert.Same(book, CatalogMatcher.Pick(title, "Liz Plank", [book]));
+        Assert.Equal(MatchDoubts.ShortTitle, CatalogMatcher.Doubts(title, "Liz Plank", book));
+        Assert.Null(CatalogMatcher.Pick(title, null, [book]));
+    }
+
+    [Fact]
+    public void A_book_with_the_whole_title_beats_one_matching_before_the_comma()
+    {
+        var shortOne = Book("Eats", "Lynne Truss", editions: 40, id: "OL2W");
+        var whole = Book("Eats, Shoots & Leaves", "Lynne Truss", editions: 5, id: "OL3W");
+
+        var picked = CatalogMatcher.Pick("Eats, Shoots & Leaves", "Lynne Truss", [shortOne, whole]);
+
+        Assert.Same(whole, picked);
+        Assert.Equal(MatchDoubts.None, CatalogMatcher.Doubts("Eats, Shoots & Leaves", "Lynne Truss", whole));
+    }
+
+    [Fact]
+    public void A_catalogue_subtitle_matching_the_comma_part_needs_no_flag() =>
+        Assert.Equal(MatchDoubts.None, CatalogMatcher.Doubts("Small Rivers, A Walking Year", "Tomas Reyne",
+            Book("Small Rivers", "Tomas Reyne", editions: 3, subtitle: "A Walking Year")));
+
     [Fact]
     public void A_candidate_with_a_subtitle_matches_the_full_title_too() =>
         Assert.NotNull(CatalogMatcher.Pick("Small Rivers: A Walking Year", null, [Book("Small Rivers", "Tomas Reyne", subtitle: "A Walking Year")]));
@@ -185,7 +224,7 @@ public class BookLookupTests
     [InlineData("I. Calder", 1, MatchDoubts.FewEditions)]
     [InlineData("Ines Caldor", 4, MatchDoubts.FuzzySurname)]
     public void Flags_why_a_match_might_be_wrong(string? author, int editions, MatchDoubts expected) =>
-        Assert.Equal(expected, CatalogMatcher.Doubts(author, Book("The Lighthouse Keeper's Almanac", "Ines Calder", editions)));
+        Assert.Equal(expected, CatalogMatcher.Doubts("The Lighthouse Keeper's Almanac", author, Book("The Lighthouse Keeper's Almanac", "Ines Calder", editions)));
 
     /// <summary>
     /// Review decisions are stored by lookup key. If this test fails, the key rules changed: stored decisions no longer
@@ -250,7 +289,7 @@ public class BookLookupTests
         var unknown = Book("Small Rivers", "Tomas Reyne") with { EditionCount = null };
 
         Assert.Null(CatalogMatcher.Pick("Small Rivers", null, [unknown]));
-        Assert.Equal(MatchDoubts.None, CatalogMatcher.Doubts("Tomas Reyne", unknown));
+        Assert.Equal(MatchDoubts.None, CatalogMatcher.Doubts("Small Rivers", "Tomas Reyne", unknown));
     }
 
     [Theory]

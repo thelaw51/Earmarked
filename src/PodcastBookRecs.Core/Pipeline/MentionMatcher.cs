@@ -109,7 +109,7 @@ public sealed partial class MentionMatcher(
             // Credit the catalogue that was asked, whatever the entry says, so a search result can never pass as Manual.
             var (book, catalog) = found;
             var bookId = await AddBookAsync(db, book with { Provider = catalog.Provider }, cancellationToken);
-            var doubts = CatalogMatcher.Doubts(next.Author, book) | (catalog == catalogs.Primary ? MatchDoubts.None : MatchDoubts.OtherCatalogue);
+            var doubts = CatalogMatcher.Doubts(next.Title, next.Author, book) | (catalog == catalogs.Primary ? MatchDoubts.None : MatchDoubts.OtherCatalogue);
             await SaveAsync(db, next.Id, key, new Answer(MatchState.Matched, bookId, doubts), null, cancellationToken);
             LogMatched(next.Title, book.Title);
         }
@@ -231,7 +231,15 @@ public sealed partial class MentionMatcher(
             return withAuthor;
         }
 
-        return CatalogMatcher.Pick(title, author, await catalog.SearchAsync(title, null, cancellationToken));
+        if (CatalogMatcher.Pick(title, author, await catalog.SearchAsync(title, null, cancellationToken)) is { } titleOnly)
+        {
+            return titleOnly;
+        }
+
+        // Catalogues' title search finds nothing for "Title, Long Subtitle" when they list only "Title".
+        return CatalogMatcher.MainTitle(title, author) is { } main
+            ? CatalogMatcher.Pick(title, author, await catalog.SearchAsync(main, string.IsNullOrWhiteSpace(author) ? null : author, cancellationToken))
+            : null;
     }
 
     /// <summary>
