@@ -122,6 +122,8 @@ else
                                    Disabled="busy" OnClick="@(() => RejectAsync(item, ReviewVerdict.NotABook))">Not a book</MudButton>
                         <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.ManageSearch"
                                    Disabled="@(busy || !_lookupOn)" OnClick="@(() => OpenSearch(item))">Find the book</MudButton>
+                        <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.BookmarkAdd"
+                                   Disabled="busy" OnClick="@(() => OpenSearch(item))">Keep as is</MudButton>
                         <MudTextField T="string" @bind-Value="_notes[item.LookupKey]" Placeholder="Note (optional)" Variant="Variant.Outlined" Margin="Margin.Dense"
                                       MaxLength="ReviewDecision.MaxNoteLength" Class="flex-grow-1" Style="min-width: 14rem;" />
                     </div>
@@ -134,9 +136,13 @@ else
                                               MaxLength="BookMention.MaxTitleLength" Style="min-width: 14rem;" Class="flex-grow-1" />
                                 <MudTextField T="string" @bind-Value="search.Author" Label="Author" Variant="Variant.Outlined" Margin="Margin.Dense"
                                               MaxLength="BookMention.MaxAuthorLength" Style="min-width: 10rem;" />
-                                <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" Disabled="search.Waiting" OnClick="@(() => SearchAsync(search))">
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" Disabled="@(search.Waiting || !_lookupOn)" OnClick="@(() => SearchAsync(search))">
                                     Search
                                 </MudButton>
+                                <MudTooltip Text="No catalogue has it: keep this title and author as a book without a link">
+                                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.BookmarkAdd"
+                                               Disabled="@(busy || search.Waiting)" OnClick="@(() => KeepAsIsAsync(item, search))">Save as a book</MudButton>
+                                </MudTooltip>
                                 <MudIconButton Icon="@Icons.Material.Rounded.Close" aria-label="Close search" OnClick="@(() => _search = null)" />
                             </div>
                             @if (search.Waiting)
@@ -288,6 +294,10 @@ else
         DecideAsync(item.LookupKey, "Book picked. It's added within a few seconds.",
             (db, now) => ReviewActions.CorrectAsync(db, item.LookupKey, search.SearchId!.Value, catalogId, _notes.GetValueOrDefault(item.LookupKey), now, _closing.Token));
 
+    private Task KeepAsIsAsync(ReviewItem item, SearchState search) =>
+        DecideAsync(item.LookupKey, _lookupOn ? "Kept as is. The book is added within a few seconds." : "Kept as is. The book is added once book lookup is back on.",
+            (db, now) => ReviewActions.KeepAsIsAsync(db, item.LookupKey, search.Title, search.Author, _notes.GetValueOrDefault(item.LookupKey), now, _closing.Token));
+
     private Task UndoAsync(ReviewDecision decision) =>
         DecideAsync(decision.LookupKey, "Decision undone. The title is matched normally again.",
             (db, now) => ReviewActions.UndoAsync(db, decision.Id, now, _closing.Token));
@@ -371,7 +381,7 @@ else
                 if (row?.CompletedAt is not null)
                 {
                     search.Results = row.Results;
-                    search.Message = row.Error ?? (row.Results is { Count: > 0 } ? null : "The catalogue has nothing under that title. Try a shorter title or no author.");
+                    search.Message = row.Error ?? (row.Results is { Count: > 0 } ? null : "The catalogue has nothing under that title. Try a shorter title or no author, or save it as a book.");
                     return;
                 }
 

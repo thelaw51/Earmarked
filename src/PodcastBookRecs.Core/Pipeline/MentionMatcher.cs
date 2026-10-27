@@ -110,6 +110,8 @@ public sealed partial class MentionMatcher(
             ReviewVerdict.Corrected when decision.BookId is { } id => new Answer(MatchState.Matched, id, MatchDoubts.None),
             ReviewVerdict.Corrected when CatalogMatcher.IsUsable(decision.Pick) && decision.Pick!.ProviderOrDefault != BookLookupProviders.Manual
                 => new Answer(MatchState.Matched, await AddPickAsync(db, decision, cancellationToken), MatchDoubts.None),
+            ReviewVerdict.KeptAsIs when decision.BookId is { } id => new Answer(MatchState.Matched, id, MatchDoubts.None),
+            ReviewVerdict.KeptAsIs when IsOwnManualPick(decision) => new Answer(MatchState.Matched, await AddPickAsync(db, decision, cancellationToken), MatchDoubts.None),
             _ => failed,
         };
 
@@ -120,6 +122,15 @@ public sealed partial class MentionMatcher(
 
         await SaveAsync(db, mentionId, key, answer, decision, cancellationToken);
     }
+
+    /// <summary>
+    /// A kept-as-is pick is a <see cref="BookLookupProviders.Manual"/> entry whose ID is its own decision's, so one
+    /// decision can never point its mentions at the book another decision added.
+    /// </summary>
+    private static bool IsOwnManualPick(ReviewDecision decision) =>
+        CatalogMatcher.IsUsable(decision.Pick)
+        && decision.Pick!.Provider == BookLookupProviders.Manual
+        && decision.Pick.CatalogId == decision.Id.ToString("N");
 
     /// <summary>Adds the picked book, records it on the decision so later mentions reuse it, and returns its ID.</summary>
     private async Task<Guid> AddPickAsync(AppDbContext db, ReviewDecision decision, CancellationToken cancellationToken)
@@ -151,7 +162,11 @@ public sealed partial class MentionMatcher(
         return CatalogMatcher.Pick(title, author, await catalog.SearchAsync(title, null, cancellationToken));
     }
 
-    /// <summary>Returns the stored book for this catalogue entry, adding it first if it's new. Only this loop adds books.</summary>
+    /// <summary>
+    /// Returns the stored book for this catalogue entry, adding it first if it's new. Only this loop adds books. A
+    /// <see cref="BookLookupProviders.Manual"/> book takes the entry's title and authors each time, because its ID is
+    /// its decision's and the person may have kept the same title again with corrected text.
+    /// </summary>
     private async Task<Guid> AddBookAsync(AppDbContext db, CatalogBook found, CancellationToken cancellationToken)
     {
         var provider = found.ProviderOrDefault;
@@ -161,6 +176,13 @@ public sealed partial class MentionMatcher(
             .Select(b => (Guid?)b.Id).FirstOrDefaultAsync(cancellationToken);
         if (existing is { } id)
         {
+            if (provider == BookLookupProviders.Manual)
+            {
+                await db.Books.Where(b => b.Id == id).ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Title, found.Title)
+                    .SetProperty(b => b.Authors, authors), cancellationToken);
+            }
+
             return id;
         }
 

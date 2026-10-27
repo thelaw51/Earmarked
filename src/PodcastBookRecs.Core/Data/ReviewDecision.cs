@@ -28,11 +28,15 @@ public class ReviewDecision
 
     /// <summary>
     /// For <see cref="ReviewVerdict.Corrected"/>: the catalogue entry the person picked, copied from a stored search
-    /// result. The matcher adds it as a <see cref="Book"/> and sets <see cref="BookId"/>.
+    /// result. For <see cref="ReviewVerdict.KeptAsIs"/>: the entry built from what the person typed. The matcher adds
+    /// it as a <see cref="Book"/> and sets <see cref="BookId"/>.
     /// </summary>
     public CatalogBook? Pick { get; set; }
 
-    /// <summary>The book mentions with this key point at, for <see cref="ReviewVerdict.Confirmed"/> and, once added, <see cref="ReviewVerdict.Corrected"/>.</summary>
+    /// <summary>
+    /// The book mentions with this key point at, for <see cref="ReviewVerdict.Confirmed"/> and, once added,
+    /// <see cref="ReviewVerdict.Corrected"/> and <see cref="ReviewVerdict.KeptAsIs"/>.
+    /// </summary>
     public Guid? BookId { get; set; }
     public Book? Book { get; set; }
 
@@ -55,4 +59,10 @@ public enum ReviewVerdict
 
     /// <summary>A book, but not the one the catalogue found, and no right one was picked.</summary>
     WrongBook = 3,
+
+    /// <summary>
+    /// A real book that no catalogue has. <see cref="ReviewDecision.Pick"/> holds the title and author the person
+    /// typed, as a <c>Manual</c> entry with no link, and the matcher adds it as a <see cref="Book"/>.
+    /// </summary>
+    KeptAsIs = 4,
 }
