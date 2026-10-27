@@ -637,6 +637,32 @@ html, body {
     background: var(--mud-palette-table-hover);
 }
 
+/* Linked moments (TranscriptLinks): clear the app bar when scrolled to, and flash once on arrival. */
+.transcript-row,
+#mentions {
+    scroll-margin-top: 5rem;
+}
+
+.transcript-row.revealed {
+    animation: transcript-reveal 2.4s var(--app-ease);
+}
+
+@keyframes transcript-reveal {
+    0%, 35% { background: color-mix(in srgb, var(--mud-palette-primary) 16%, transparent); }
+    100% { background: transparent; }
+}
+
+a.timestamp-link {
+    text-decoration: none;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+a.timestamp-link:hover,
+a.timestamp-link:focus-visible {
+    background: color-mix(in srgb, var(--mud-palette-primary) 14%, transparent);
+    color: var(--mud-palette-primary);
+}
+
 .transcript-speaker {
     color: var(--mud-palette-primary);
     font-size: 0.8rem;

@@ -71,14 +71,9 @@ else
                         @(mention.Episode.PodcastFeed.Title ?? "Podcast") · @Display.LocalDate(mention.Episode.PublishedAt)
                     </MudText>
                 </div>
-                @if (mention.StartTime is not null)
-                {
-                    <span class="timestamp">@Display.Timestamp(mention.StartTime)</span>
-                }
-                else
-                {
-                    <span></span>
-                }
+                @* Each moment links to its row in the episode's transcript; untimed transcripts link to the episode's books. *@
+                <a href="@TranscriptLinks.Href(mention.EpisodeId, mention.StartTime)" class="timestamp timestamp-link"
+                   title="Show this moment in the transcript">@(mention.StartTime is null ? "In episode" : Display.Timestamp(mention.StartTime))</a>
                 <blockquote class="quote mention-quote"><MudText Typo="Typo.body2">"@mention.Quote"</MudText></blockquote>
             </div>
         }
