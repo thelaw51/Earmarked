@@ -91,6 +91,12 @@ public enum MatchDoubts
 
     /// <summary>The book has few editions, so it may be an obscure title that happens to share the words.</summary>
     FewEditions = 4,
+
+    /// <summary>
+    /// Found in a fallback catalogue after the primary one had nothing. Fallbacks don't count editions, so nothing but
+    /// the title and the author's surname backs the match, and a person confirms it.
+    /// </summary>
+    OtherCatalogue = 8,
 }
 
 /// <summary>How a book came up. Values are stored, so never renumber them.</summary>

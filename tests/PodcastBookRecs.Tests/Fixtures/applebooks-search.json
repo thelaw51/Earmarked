@@ -1,0 +1,43 @@
+{
+  "resultCount": 6,
+  "results": [
+    {
+      "kind": "ebook",
+      "trackId": 900000001,
+      "trackName": "Harbour Lights: A Novel",
+      "artistName": "Ines Calder & Tomas Reyne",
+      "releaseDate": "2025-03-04T07:00:00Z",
+      "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/Publication/v4/aa/bb/cc/100x100bb.jpg",
+      "trackViewUrl": "https://books.apple.com/us/book/harbour-lights/id900000001?uo=4"
+    },
+    {
+      "kind": "ebook",
+      "trackId": 900000002,
+      "trackName": "Small Rivers",
+      "artistName": "Ada Okafor, Ines Calder and Tomas Reyne",
+      "releaseDate": "not a date",
+      "artworkUrl100": "https://evilmzstatic.com/cover.jpg"
+    },
+    {
+      "kind": "ebook",
+      "trackId": "900000003",
+      "trackName": "A String Id"
+    },
+    {
+      "kind": "ebook",
+      "trackId": 900000004
+    },
+    {
+      "kind": "ebook",
+      "trackId": 900000005,
+      "trackName": "Port Numbers",
+      "artworkUrl100": "https://a1.mzstatic.com:8443/cover.jpg"
+    },
+    {
+      "kind": "ebook",
+      "trackId": 900000006,
+      "trackName": "Plain Http Cover",
+      "artworkUrl100": "http://a1.mzstatic.com/cover.jpg"
+    }
+  ]
+}

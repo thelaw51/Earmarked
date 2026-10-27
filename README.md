@@ -237,16 +237,33 @@ A person's ruling on a title and author (the match is right, it isn't a book, it
 
 - **Confirm** a match. It leaves the list for good.
 - Mark it **Not a book** (a newspaper, "my last book") or the **Wrong book**, with an optional note. Its mentions leave the book list.
-- **Find the book**: search the catalogue with the title and author, both editable, and pick the right result.
+- **Find the book**: search the catalogue with the title and author, both editable, and pick the right result. With fallback catalogues turned on, the search asks all of them at once, and every result says which catalogue it's from. If one can't be reached, or hasn't answered after 25 seconds, the results that did come back show with a note that the list may be short.
 - **Keep as is**, for a real book the catalogue doesn't have, often because it's too new or self-published. Fix the title and author if the model got them slightly wrong, then *Save as a book*. The book ranks and exports like any other, with no catalogue link and no cover, and its page says it isn't in any catalogue. Keeping the same title again with different text changes that book; undoing it and keeping it again makes a new one. Like any decision, it's applied by the matcher, so with book lookup turned off it waits until lookup is back on.
 
 Decided titles are listed underneath, each with an *Undo*.
 
-The Worker runs these searches, not the web app, so the one-request-a-second pace holds across both: the page saves the search, the Worker answers within a few seconds, and the page waits up to 30 seconds. Five searches can wait at once; the Worker drops one nobody has collected after two minutes and deletes them all after a day. A pick is copied from the Worker's stored results, never from the page.
+The Worker runs these searches, not the web app, so the one-request-a-second pace holds across both: the page saves the search, the Worker answers within a few seconds, and the page waits up to 30 seconds. Five searches can wait at once. Each has 25 seconds from when you asked, counting any time spent queued behind another, so the page gets an answer before it gives up; the Worker deletes them all after a day. A pick is copied from the Worker's stored results, never from the page.
 
 Requests go out at most one a second, Open Library's limit for anonymous clients, so a few hundred mentions take a few minutes. Set `OpenLibrary:ContactEmail` and it goes in the User-Agent, as Open Library asks of regular clients. If Open Library is down or asks the Worker to slow down, matching pauses and tries again later; the Status page has a *book lookup* row.
 
 Matching sends book titles and author names, nothing else, to Open Library over HTTPS. If you'd rather not, set `BookLookup:Provider` to an empty string; mentions then stay on their episode pages and the book list stays empty.
+
+### Fallback catalogues
+
+Open Library is missing a lot of new and self-published books. List more catalogues in `BookLookup:Fallbacks` and the matcher asks them, in order, for titles Open Library can't place:
+
+```json
+"BookLookup": { "Fallbacks": [ "AppleBooks" ] },
+"AppleBooks": { "Country": "gb" }
+```
+
+- **Apple Books** searches the Apple Books store through Apple's public search API, with no key or account. `AppleBooks:Country` picks the store (`us` by default), because stores list different books. Requests go out at most one every 3 seconds, inside Apple's limit of about 20 a minute.
+- A fallback is asked only when the model named an author, because a store has one entry per edition and no edition count, so the author's surname is all that confirms the match. Every fallback match goes to the *Review* page as *Found in a fallback catalogue*, where one click confirms it.
+- Because a store lists each edition separately, two mentions of one book found only through a fallback can land on two different books (say, a paperback and an anniversary edition), and the *Books* page then ranks each on its own count. Confirming one and pointing the other at it with *Find the book* merges them.
+- Turning a fallback on sends book titles and author names to that catalogue too. If a fallback is down or asks the Worker to slow down (Apple says so with HTTP 403 as well as 429), matching doesn't wait for it: each title that needed it is marked *Lookup failed*, shows on the *Review* page, and is tried again a day later. Only an Open Library outage pauses matching. Each fallback has its own row on the Status page, such as *book lookup: Apple Books*.
+- Goodreads and Amazon aren't offered. Goodreads has no public API (other tools use a key lifted from its website), and Amazon would mean scraping its pages.
+
+A fallback only changes titles the primary catalogue can't place; titles that already have a book keep it. Adding one later doesn't re-ask titles already marked *Not in the catalogue*: they get the fallback the next time the matching rules change, or straight away through *Find the book*, which searches every catalogue. A rules change matches every mention again once, and until that finishes (a few minutes for a few hundred titles) the *Review* page and its count are short.
 
 ### The book list
 
@@ -266,7 +283,7 @@ The files are built from the same query as the page, at `/books/export.csv`, `/b
 
 ### Pointing at a different catalogue
 
-The matching rules live in `CatalogMatcher` and know nothing about Open Library. Another catalogue (Google Books, say) needs a new adapter under `src/PodcastBookRecs.Core/Providers/BookLookup/` that implements `IBookCatalog`, and a new `BookLookup:Provider` name. Each stored book records the catalogue it came from, and each match the version of the rules (`CatalogMatcher.Version`) that made it; changing the rules and bumping the version re-matches every mention.
+The matching rules live in `CatalogMatcher` and know nothing about Open Library. Another catalogue (Google Books, say) needs a new adapter under `src/PodcastBookRecs.Core/Providers/BookLookup/` that implements `IBookCatalog`, a new name in `BookLookupProviders`, and its registration in `AddPbrBookLookup`; it can then be the `BookLookup:Provider` or one of the `BookLookup:Fallbacks`. Each stored book records the catalogue it came from, and each match the version of the rules (`CatalogMatcher.Version`) that made it; changing the rules and bumping the version re-matches every mention.
 
 ## Configuration
 
@@ -279,6 +296,8 @@ Settings come from `/config/config.json`, then environment variables prefixed `P
 | `Polling:MaxAttempts` | `5` | Transient failures before an episode stops retrying a published transcript |
 | `Feeds` | `[]` | Feeds imported on Worker startup if missing. Feeds added in the UI live in the database. |
 | `BookLookup:Provider` | `OpenLibrary` | The book catalogue mentions are matched against; empty turns matching off |
+| `BookLookup:Fallbacks` | none | Catalogues to try, in order, when the first finds nothing, e.g. `["AppleBooks"]` |
+| `AppleBooks:Country` | `us` | The Apple Books store to search, as a two-letter country code |
 | `OpenLibrary:ContactEmail` | | Sent in the User-Agent so Open Library can get in touch about heavy use. Optional. |
 | `AllowedHosts` | `*` | Host names the web app answers, separated by semicolons. Anything else gets 400. Set it before exposing the app; see Cloudflare Tunnel above. |
 | `ForwardedHeaders:KnownNetworks` | private ranges | CIDR blocks allowed to send `X-Forwarded-Proto` and `X-Forwarded-For`, e.g. `["172.18.0.0/16"]`. Loopback is always trusted. |

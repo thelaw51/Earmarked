@@ -16,11 +16,14 @@ namespace PodcastBookRecs.Core.BookLookup;
 public static class CatalogMatcher
 {
     /// <summary>Stored on every match. Bump it when these rules or <see cref="Doubts"/> change, and every mention is matched again.</summary>
-    public const string Version = "match-v3";
+    public const string Version = "match-v4";
 
     public const int MinEditionsWithoutAuthor = 2;
 
-    /// <summary>A match to a book with this many editions or fewer is flagged <see cref="MatchDoubts.FewEditions"/>.</summary>
+    /// <summary>
+    /// A match to a book with this many editions or fewer is flagged <see cref="MatchDoubts.FewEditions"/>. A catalogue
+    /// that doesn't count editions sets no flag, and its books never pass <see cref="MinEditionsWithoutAuthor"/>.
+    /// </summary>
     public const int FewEditions = 2;
 
     private static readonly HashSet<string> NameSuffixes = new(StringComparer.Ordinal) { "jr", "sr", "ii", "iii", "iv", "phd", "md" };
@@ -44,6 +47,9 @@ public static class CatalogMatcher
     /// in <see cref="Surname"/>) needs a step that re-keys them from their stored title and author.
     /// </summary>
     public static string LookupKey(string title, string? author) => $"{MentionMerger.TitleKey(title)}|{Surname(author)}";
+
+    /// <summary>True when the author text yields a surname to check a candidate against.</summary>
+    public static bool HasSurname(string? author) => Surname(author).Length > 0;
 
     /// <summary>
     /// The candidate that is this book, or null if none qualifies. One matching the whole title beats one matching only
@@ -170,8 +176,9 @@ public static class CatalogMatcher
     /// <summary>
     /// A picked book was copied from a search result or built from what a person typed, and it sat in the database in
     /// between. Before it becomes a <see cref="Book"/>, check what every entry must have: a known provider, an ID, a
-    /// title, and https links. A <see cref="BookLookupProviders.Manual"/> entry is the one kind with no link, and its ID
-    /// must be a GUID (its decision's). The review page checks a pick with this when it's made, and the matcher again
+    /// title, a link on that catalogue's own host and, if it has a cover, a cover from that catalogue's image host
+    /// (see <see cref="IsSafeLink"/>). A <see cref="BookLookupProviders.Manual"/> entry is the one kind with no links,
+    /// and its ID must be a GUID (its decision's). The review page checks a pick with this when it's made, and the matcher again
     /// before adding it. The record's types say most of these aren't null, but JSON read back from the database can
     /// still hold nulls.
     /// </summary>
@@ -180,15 +187,26 @@ public static class CatalogMatcher
         && !string.IsNullOrWhiteSpace(pick.CatalogId) && pick.CatalogId.Length <= MaxCatalogIdLength
         && !string.IsNullOrWhiteSpace(pick.Title)
         && pick.Authors is not null && pick.Authors.All(a => a is not null)
-        && (pick.CoverUrl is null || IsHttps(pick.CoverUrl))
         && pick.ProviderOrDefault switch
         {
             BookLookupProviders.Manual => pick.InfoUrl is null && pick.CoverUrl is null && Guid.TryParseExact(pick.CatalogId, "N", out _),
-            var provider => BookLookupProviders.Known.Contains(provider) && IsHttps(pick.InfoUrl),
+            var provider => BookLookupProviders.Known.Contains(provider)
+                && IsSafeLink(pick.InfoUrl, BookLookupProviders.InfoHost(provider))
+                && (pick.CoverUrl is null || IsSafeLink(pick.CoverUrl, BookLookupProviders.CoverHost(provider), allowSubdomains: true)),
         };
 
-    private const int MaxCatalogIdLength = 40;
+    /// <summary>
+    /// True for an https link of a storable length on <paramref name="host"/> (or, with <paramref name="allowSubdomains"/>,
+    /// a subdomain of it), on the default port and with no user info. The parsed host is compared, so
+    /// <c>evilmzstatic.com</c> and <c>mzstatic.com.example</c> don't pass for <c>mzstatic.com</c>. Adapters use it too, so
+    /// what they keep and what this accepts can't drift apart.
+    /// </summary>
+    public static bool IsSafeLink(string? url, string? host, bool allowSubdomains = false) =>
+        url is not null && host is not null && url.Length <= Book.MaxUrlLength
+        && Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && uri.Scheme == Uri.UriSchemeHttps && uri.IsDefaultPort && uri.UserInfo.Length == 0
+        && (string.Equals(uri.Host, host, StringComparison.OrdinalIgnoreCase)
+            || (allowSubdomains && uri.Host.EndsWith("." + host, StringComparison.OrdinalIgnoreCase)));
 
-    private static bool IsHttps(string? url) =>
-        url is not null && url.Length <= Book.MaxUrlLength && Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
+    private const int MaxCatalogIdLength = 40;
 }

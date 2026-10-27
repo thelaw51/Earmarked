@@ -1,9 +1,6 @@
 using System.Globalization;
-using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
-using PodcastBookRecs.Core.Backends;
 using PodcastBookRecs.Core.BookLookup;
 using PodcastBookRecs.Core.Configuration;
 using PodcastBookRecs.Core.Data;
@@ -21,120 +18,29 @@ public sealed partial class OpenLibraryCatalog(IHttpClientFactory httpFactory, T
     public const string HttpClientName = "openlibrary";
 
     private const int MaxCandidates = 10;
-    private const int MaxResponseBytes = 1024 * 1024;
     private const int MaxQueryLength = 200;
     private const int MaxAuthorsPerBook = 5;
     private const string Fields = "key,title,subtitle,author_name,first_publish_year,cover_i,edition_count";
 
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private DateTimeOffset _nextRequestAt = DateTimeOffset.MinValue;
+    private readonly CatalogPacer _pacer = new(time, TimeSpan.FromSeconds(1));
 
     public string Provider => BookLookupProviders.OpenLibrary;
 
     /// <summary>The minimum gap between requests. Tests set it to zero.</summary>
-    internal TimeSpan RequestGap { get; set; } = TimeSpan.FromSeconds(1);
+    internal TimeSpan RequestGap { get => _pacer.Gap; set => _pacer.Gap = value; }
 
     public async Task<IReadOnlyList<CatalogBook>> SearchAsync(string title, string? author, CancellationToken cancellationToken)
     {
         var query = $"search.json?title={Escape(title)}" + (string.IsNullOrWhiteSpace(author) ? "" : $"&author={Escape(author)}")
             + $"&fields={Fields}&limit={MaxCandidates}";
 
-        string body;
-        await _gate.WaitAsync(cancellationToken);
-        try
-        {
-            var wait = _nextRequestAt - time.GetUtcNow();
-            if (wait > TimeSpan.Zero)
-            {
-                await Task.Delay(wait, time, cancellationToken);
-            }
-
-            try
-            {
-                body = await SendAsync(query, cancellationToken);
-            }
-            finally
-            {
-                _nextRequestAt = time.GetUtcNow() + RequestGap;
-            }
-        }
-        finally
-        {
-            _gate.Release();
-        }
-
-        return Parse(body);
+        return Parse(await _pacer.RunAsync(() => SendAsync(query, cancellationToken), cancellationToken));
     }
 
-    public void Dispose() => _gate.Dispose();
+    public void Dispose() => _pacer.Dispose();
 
-    private async Task<string> SendAsync(string query, CancellationToken cancellationToken)
-    {
-        HttpResponseMessage response;
-        try
-        {
-            response = await httpFactory.CreateClient(HttpClientName).GetAsync(query, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        }
-        catch (HttpRequestException ex)
-        {
-            throw new BackendUnavailableException($"Can't reach Open Library: {ex.Message}", ex);
-        }
-        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new BackendUnavailableException("Open Library didn't answer in time.", ex);
-        }
-
-        using (response)
-        {
-            // 429 means slow down, and 5xx means Open Library is struggling: either way, pause rather than give up on titles.
-            if (response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500)
-            {
-                throw new BackendUnavailableException($"Open Library returned HTTP {(int)response.StatusCode}.");
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new CatalogLookupFailedException($"Open Library returned HTTP {(int)response.StatusCode}.");
-            }
-
-            return await ReadCappedAsync(response.Content, cancellationToken);
-        }
-    }
-
-    /// <summary>
-    /// Reads the body, refusing one over <see cref="MaxResponseBytes"/>. Too big is about this answer, so it fails the
-    /// title; a connection that drops while reading is about Open Library, so it pauses.
-    /// </summary>
-    private static async Task<string> ReadCappedAsync(HttpContent content, CancellationToken cancellationToken)
-    {
-        if (content.Headers.ContentLength > MaxResponseBytes)
-        {
-            throw new CatalogLookupFailedException($"Open Library's answer is over {MaxResponseBytes / 1024} KB.");
-        }
-
-        using var buffer = new MemoryStream();
-        try
-        {
-            await using var stream = await content.ReadAsStreamAsync(cancellationToken);
-            var chunk = new byte[16 * 1024];
-            int read;
-            while ((read = await stream.ReadAsync(chunk, cancellationToken)) > 0)
-            {
-                if (buffer.Length + read > MaxResponseBytes)
-                {
-                    throw new CatalogLookupFailedException($"Open Library's answer is over {MaxResponseBytes / 1024} KB.");
-                }
-
-                buffer.Write(chunk, 0, read);
-            }
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException)
-        {
-            throw new BackendUnavailableException($"Open Library dropped the connection: {ex.Message}", ex);
-        }
-
-        return System.Text.Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
-    }
+    private Task<string> SendAsync(string query, CancellationToken cancellationToken) =>
+        CatalogHttp.SendAsync(httpFactory.CreateClient(HttpClientName), new HttpRequestMessage(HttpMethod.Get, query), "Open Library", cancellationToken);
 
     /// <summary>
     /// Reads candidates out of a search response. Entries without a work key in the expected form or without a title are
@@ -191,46 +97,4 @@ public sealed partial class OpenLibraryCatalog(IHttpClientFactory httpFactory, T
 
     [GeneratedRegex(@"^/works/(OL[0-9]{1,12}W)$")]
     private static partial Regex WorkKey();
-}
-
-/// <summary>
-/// Reports whether Open Library answers and isn't asking us to slow down. A healthy answer is reused for 5 minutes, so
-/// the Status page's 30-second schedule doesn't become a steady stream of requests; a problem is checked again every
-/// time, so recovery shows straight away. Sends no mention data.
-/// </summary>
-public sealed class OpenLibraryHealthCheck(IHttpClientFactory httpFactory, TimeProvider time) : IHealthCheck
-{
-    private static readonly TimeSpan RecheckAfter = TimeSpan.FromMinutes(5);
-    private static readonly HealthCheckResult Healthy = HealthCheckResult.Healthy(BookLookupProviders.OpenLibrary);
-
-    private DateTimeOffset? _healthyAt;
-
-    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
-    {
-        if (_healthyAt is { } at && time.GetUtcNow() - at < RecheckAfter)
-        {
-            return Healthy;
-        }
-
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(BackendHealth.Timeout);
-        try
-        {
-            using var response = await httpFactory.CreateClient(OpenLibraryCatalog.HttpClientName)
-                .GetAsync("", HttpCompletionOption.ResponseHeadersRead, cts.Token);
-            if (response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500)
-            {
-                _healthyAt = null;
-                return HealthCheckResult.Unhealthy($"Reachable, but answering HTTP {(int)response.StatusCode}.");
-            }
-        }
-        catch (Exception ex) when (ex is HttpRequestException || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
-        {
-            _healthyAt = null;
-            return HealthCheckResult.Unhealthy(ex is OperationCanceledException ? "Unreachable: no answer within 5 seconds." : $"Unreachable: {ex.Message}");
-        }
-
-        _healthyAt = time.GetUtcNow();
-        return Healthy;
-    }
 }

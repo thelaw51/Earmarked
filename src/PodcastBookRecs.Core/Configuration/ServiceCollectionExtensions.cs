@@ -12,6 +12,8 @@ using PodcastBookRecs.Core.Data;
 using PodcastBookRecs.Core.Extraction;
 using PodcastBookRecs.Core.Net;
 using PodcastBookRecs.Core.Pipeline;
+using PodcastBookRecs.Core.Providers.BookLookup;
+using PodcastBookRecs.Core.Providers.BookLookup.AppleBooks;
 using PodcastBookRecs.Core.Providers.BookLookup.OpenLibrary;
 using PodcastBookRecs.Core.Providers.Extraction.OpenAiCompatible;
 using PodcastBookRecs.Core.Providers.Transcription.OpenAiCompatible;
@@ -152,8 +154,9 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers book lookup for the Worker: the configured catalogue's adapter and health check, the mention matcher
-    /// and the runner for review-page searches. Does nothing beyond binding options when lookup is turned off.
+    /// Registers book lookup for the Worker: each configured catalogue's adapter (keyed by its provider name) and health
+    /// check, the chain that orders them, the mention matcher and the runner for review-page searches. Does nothing
+    /// beyond binding options when lookup is turned off.
     /// </summary>
     public static IServiceCollection AddPbrBookLookup(this IServiceCollection services, IConfiguration configuration)
     {
@@ -164,37 +167,80 @@ public static class ServiceCollectionExtensions
             return services;
         }
 
-        switch (lookup.Provider)
+        var chain = lookup.Chain;
+        foreach (var name in chain.Distinct())
         {
-            case var p when string.Equals(p, BookLookupProviders.OpenLibrary, StringComparison.OrdinalIgnoreCase):
-                services.AddOptions<OpenLibraryOptions>().Bind(configuration.GetSection(OpenLibraryOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
-                var openLibrary = configuration.GetSection(OpenLibraryOptions.Section).Get<OpenLibraryOptions>() ?? new OpenLibraryOptions();
-                services.AddHttpClient(OpenLibraryCatalog.HttpClientName, client =>
-                    {
-                        client.BaseAddress = new Uri(openLibrary.BaseUrl.TrimEnd('/') + "/");
-                        client.Timeout = TimeSpan.FromSeconds(30);
-                        // The contact address is validated as a plain email address before it gets here (OpenLibraryOptions).
-                        client.DefaultRequestHeaders.UserAgent.ParseAdd(string.IsNullOrEmpty(openLibrary.ContactEmail)
-                            ? UserAgent
-                            : UserAgent.Replace(")", $"; {openLibrary.ContactEmail})", StringComparison.Ordinal));
-                    })
-                    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-                    {
-                        AllowAutoRedirect = false,
-                        AutomaticDecompression = DecompressionMethods.All,
-                        ConnectCallback = OutboundConnections.ConnectWithTimeout(TimeSpan.FromSeconds(10)),
-                    });
-                services.AddSingleton<IBookCatalog, OpenLibraryCatalog>();
-                // A singleton, so the check's five-minute memory of its last answer survives between runs.
-                services.AddSingleton<OpenLibraryHealthCheck>();
-                services.AddHealthChecks().AddCheck<OpenLibraryHealthCheck>(BackendHealth.BookLookup, tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
-                break;
+            var healthName = name == chain[0] ? BackendHealth.BookLookup : BackendHealth.BookLookupFallback(BookLookupProviders.Label(name));
+            switch (name)
+            {
+                case BookLookupProviders.OpenLibrary:
+                    AddOpenLibrary(services, configuration);
+                    AddCatalogHealthCheck(services, name, OpenLibraryCatalog.HttpClientName, healthName);
+                    break;
+                case BookLookupProviders.AppleBooks:
+                    AddAppleBooks(services, configuration);
+                    AddCatalogHealthCheck(services, name, AppleBooksCatalog.HttpClientName, healthName, AppleBooksCatalog.SlowDownStatuses);
+                    break;
+            }
         }
 
+        // Unknown names fail options validation at start-up, so every name here has an adapter.
+        services.AddSingleton(sp => new BookCatalogChain([.. chain.Select(sp.GetRequiredKeyedService<IBookCatalog>)]));
         services.AddSingleton<MentionMatcher>();
         services.AddSingleton<CatalogSearchRunner>();
         return services;
     }
+
+    private static void AddOpenLibrary(IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddOptions<OpenLibraryOptions>().Bind(configuration.GetSection(OpenLibraryOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+        var openLibrary = configuration.GetSection(OpenLibraryOptions.Section).Get<OpenLibraryOptions>() ?? new OpenLibraryOptions();
+        services.AddHttpClient(OpenLibraryCatalog.HttpClientName, client =>
+            {
+                client.BaseAddress = new Uri(openLibrary.BaseUrl.TrimEnd('/') + "/");
+                client.Timeout = TimeSpan.FromSeconds(30);
+                // The contact address is validated as a plain email address before it gets here (OpenLibraryOptions).
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(string.IsNullOrEmpty(openLibrary.ContactEmail)
+                    ? UserAgent
+                    : UserAgent.Replace(")", $"; {openLibrary.ContactEmail})", StringComparison.Ordinal));
+            })
+            .ConfigurePrimaryHttpMessageHandler(CatalogHandler);
+        services.AddKeyedSingleton<IBookCatalog, OpenLibraryCatalog>(BookLookupProviders.OpenLibrary);
+    }
+
+    private static void AddAppleBooks(IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddOptions<AppleBooksOptions>().Bind(configuration.GetSection(AppleBooksOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+        services.AddHttpClient(AppleBooksCatalog.HttpClientName, client =>
+            {
+                client.BaseAddress = new Uri("https://itunes.apple.com/");
+                client.Timeout = TimeSpan.FromSeconds(30);
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+            })
+            .ConfigurePrimaryHttpMessageHandler(CatalogHandler);
+        services.AddKeyedSingleton<IBookCatalog, AppleBooksCatalog>(BookLookupProviders.AppleBooks);
+    }
+
+    /// <summary>
+    /// Registers a catalogue's reachability check under <paramref name="healthName"/>. The check is a keyed singleton,
+    /// so its five-minute memory of a healthy answer survives between runs.
+    /// </summary>
+    private static void AddCatalogHealthCheck(
+        IServiceCollection services, string provider, string httpClientName, string healthName, IReadOnlyCollection<HttpStatusCode>? alsoUnavailable = null)
+    {
+        services.AddKeyedSingleton(provider, (sp, _) => new CatalogHealthCheck(
+            sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<TimeProvider>(), httpClientName, BookLookupProviders.Label(provider), alsoUnavailable));
+        services.AddHealthChecks().Add(new HealthCheckRegistration(
+            healthName, sp => sp.GetRequiredKeyedService<CatalogHealthCheck>(provider), null, [BackendHealth.Tag], BackendHealth.Timeout));
+    }
+
+    /// <summary>Catalogue answers come from the internet: no redirects, and a connect that hangs fails fast.</summary>
+    private static SocketsHttpHandler CatalogHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        AutomaticDecompression = DecompressionMethods.All,
+        ConnectCallback = OutboundConnections.ConnectWithTimeout(TimeSpan.FromSeconds(10)),
+    };
 
     /// <summary>Handler for feed-supplied URLs: refuses private network addresses unless explicitly allowed.</summary>
     internal static SocketsHttpHandler CreateFeedHandler(HttpOptions http)

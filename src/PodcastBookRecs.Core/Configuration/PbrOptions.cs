@@ -170,8 +170,9 @@ public static class ExtractionProviders
 }
 
 /// <summary>
-/// Which book catalogue turns mention titles into real books. On by default with Open Library, which needs no local
-/// setup; an empty <see cref="Provider"/> turns lookup off. Each provider reads its own settings from its own section.
+/// Which book catalogues turn mention titles into real books. On by default with Open Library, which needs no local
+/// setup; an empty <see cref="Provider"/> turns lookup off. <see cref="Fallbacks"/> are asked, in order, only for
+/// titles the primary catalogue can't place. Each provider reads its own settings from its own section.
 /// </summary>
 public sealed class BookLookupOptions : IValidatableObject
 {
@@ -179,13 +180,35 @@ public sealed class BookLookupOptions : IValidatableObject
 
     public string? Provider { get; set; } = BookLookupProviders.OpenLibrary;
 
+    /// <summary>Catalogues to try after <see cref="Provider"/>, in order. Empty by default.</summary>
+    public string[] Fallbacks { get; set; } = [];
+
     public bool Enabled => !string.IsNullOrWhiteSpace(Provider);
+
+    /// <summary>The primary catalogue and then the fallbacks, each in its canonical spelling.</summary>
+    public IReadOnlyList<string> Chain => [.. Names.Select(BookLookupProviders.Canonical)];
+
+    /// <summary>The primary and the fallbacks as config spells them.</summary>
+    private IEnumerable<string> Names => new[] { Provider! }.Concat(Fallbacks);
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
-        if (Enabled && !BookLookupProviders.Known.Contains(Provider!, StringComparer.OrdinalIgnoreCase))
+        if (!Enabled)
         {
-            yield return new ValidationResult($"Unknown BookLookup:Provider '{Provider}'. Known: {string.Join(", ", BookLookupProviders.Known)}.");
+            yield break;
+        }
+
+        foreach (var name in Names)
+        {
+            if (!BookLookupProviders.Known.Contains(name, StringComparer.OrdinalIgnoreCase))
+            {
+                yield return new ValidationResult($"Unknown book catalogue '{name}' in BookLookup. Known: {string.Join(", ", BookLookupProviders.Known)}.");
+            }
+        }
+
+        if (Names.Distinct(StringComparer.OrdinalIgnoreCase).Count() != Fallbacks.Length + 1)
+        {
+            yield return new ValidationResult("BookLookup:Fallbacks must not repeat a catalogue or name the primary BookLookup:Provider.");
         }
     }
 }
@@ -201,7 +224,44 @@ public static class BookLookupProviders
     /// </summary>
     public const string Manual = "Manual";
 
-    public static readonly IReadOnlyList<string> Known = [OpenLibrary];
+    public const string AppleBooks = "AppleBooks";
+
+    /// <summary>Catalogues that have an adapter. <see cref="Manual"/> isn't one.</summary>
+    public static readonly IReadOnlyList<string> Known = [OpenLibrary, AppleBooks];
+
+    /// <summary>
+    /// The host every book link from each catalogue is on. The adapters build these links themselves; a stored pick is
+    /// checked against this again before it becomes a book.
+    /// </summary>
+    public static string? InfoHost(string provider) => provider switch
+    {
+        OpenLibrary => "openlibrary.org",
+        AppleBooks => "books.apple.com",
+        _ => null,
+    };
+
+    /// <summary>
+    /// The host each catalogue's covers come from; a subdomain of it also counts, since Apple spreads covers over
+    /// several (<c>is1-ssl.mzstatic.com</c> and so on).
+    /// </summary>
+    public static string? CoverHost(string provider) => provider switch
+    {
+        OpenLibrary => "covers.openlibrary.org",
+        AppleBooks => "mzstatic.com",
+        _ => null,
+    };
+
+    /// <summary>The name to show people, e.g. "Apple Books".</summary>
+    public static string Label(string provider) => provider switch
+    {
+        OpenLibrary => "Open Library",
+        AppleBooks => "Apple Books",
+        Manual => "No catalogue",
+        _ => provider,
+    };
+
+    /// <summary>The known name spelled as stored, for a name config gave in any case.</summary>
+    public static string Canonical(string name) => Known.FirstOrDefault(k => string.Equals(k, name, StringComparison.OrdinalIgnoreCase)) ?? name;
 }
 
 /// <summary>Outbound HTTP settings for feed-supplied URLs.</summary>

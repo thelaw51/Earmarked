@@ -15,6 +15,7 @@ public enum ReviewReasons
     NoAuthor = 8,
     FuzzySurname = 16,
     FewEditions = 32,
+    OtherCatalogue = 64,
 }
 
 /// <summary>A passage where the title came up, with the episode it's from.</summary>
@@ -109,7 +110,8 @@ public static class ReviewBacklog
                     var doubts = matched.Aggregate(MatchDoubts.None, (all, m) => all | m.Doubts);
                     reasons |= (doubts.HasFlag(MatchDoubts.NoAuthor) ? ReviewReasons.NoAuthor : 0)
                         | (doubts.HasFlag(MatchDoubts.FuzzySurname) ? ReviewReasons.FuzzySurname : 0)
-                        | (doubts.HasFlag(MatchDoubts.FewEditions) ? ReviewReasons.FewEditions : 0);
+                        | (doubts.HasFlag(MatchDoubts.FewEditions) ? ReviewReasons.FewEditions : 0)
+                        | (doubts.HasFlag(MatchDoubts.OtherCatalogue) ? ReviewReasons.OtherCatalogue : 0);
                 }
 
                 return new ReviewItem(

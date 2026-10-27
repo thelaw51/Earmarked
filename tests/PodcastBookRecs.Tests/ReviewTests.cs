@@ -17,7 +17,7 @@ namespace PodcastBookRecs.Tests;
 public sealed class ReviewTests : IAsyncLifetime
 {
     private static readonly CatalogBook Almanac =
-        new("OL1001W", "The Lighthouse Keeper's Almanac", null, ["Ines Calder"], 2019, 4, "https://catalog.test/OL1001W", null);
+        new("OL1001W", "The Lighthouse Keeper's Almanac", null, ["Ines Calder"], 2019, 4, "https://openlibrary.org/works/OL1001W", null);
 
     private readonly string _root = Directory.CreateTempSubdirectory("pbr-review-").FullName;
     private readonly ManualTime _time = new();
@@ -64,14 +64,14 @@ public sealed class ReviewTests : IAsyncLifetime
             CatalogId = "OL1001W",
             Title = "The Lighthouse Keeper's Almanac",
             Authors = "Ines Calder",
-            InfoUrl = "https://catalog.test/OL1001W",
+            InfoUrl = "https://openlibrary.org/works/OL1001W",
             CreatedAt = Now,
         };
         db.Books.Add(book);
         await db.SaveChangesAsync(Ct);
         _bookId = book.Id;
         _episodes = episodes.Select(e => (e.Id, e.Transcript!.Id)).ToList();
-        _runner = new CatalogSearchRunner(_dbFactory, _catalog, _time, NullLogger<CatalogSearchRunner>.Instance);
+        _runner = new CatalogSearchRunner(_dbFactory, new BookCatalogChain([_catalog]), _time, NullLogger<CatalogSearchRunner>.Instance);
     }
 
     public ValueTask DisposeAsync()
@@ -231,7 +231,7 @@ public sealed class ReviewTests : IAsyncLifetime
     [Fact]
     public async Task A_stored_result_without_https_links_cant_be_picked()
     {
-        _catalog.Answer("Harbor Lights", Almanac with { InfoUrl = "http://catalog.test/OL1001W" });
+        _catalog.Answer("Harbor Lights", Almanac with { InfoUrl = "http://openlibrary.org/works/OL1001W" });
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
         var searchId = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
         await _runner.RunPendingAsync(Ct);
@@ -324,11 +324,66 @@ public sealed class ReviewTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_search_asks_every_catalogue_and_marks_each_result_with_the_one_that_answered()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks);
+        var runner = new CatalogSearchRunner(_dbFactory, new BookCatalogChain([_catalog, apple]), _time, NullLogger<CatalogSearchRunner>.Instance);
+        _catalog.Answer("Harbor Lights", Almanac with { Provider = BookLookupProviders.AppleBooks });
+        apple.Answer("Harbor Lights", Almanac with { CatalogId = "900000001", Provider = BookLookupProviders.Manual, EditionCount = null });
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var id = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
+
+        await runner.RunPendingAsync(Ct);
+
+        var search = await db.CatalogSearches.AsNoTracking().SingleAsync(s => s.Id == id, Ct);
+        Assert.Null(search.Error);
+        Assert.Equal([(BookLookupProviders.OpenLibrary, "OL1001W"), (BookLookupProviders.AppleBooks, "900000001")],
+            search.Results!.Select(r => (r.Provider, r.CatalogId)));
+    }
+
+    [Fact]
+    public async Task A_catalogue_that_takes_too_long_is_left_out_and_the_others_answers_are_kept()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks) { Hang = true };
+        var runner = new CatalogSearchRunner(_dbFactory, new BookCatalogChain([_catalog, apple]), _time, NullLogger<CatalogSearchRunner>.Instance)
+        {
+            SearchTimeout = TimeSpan.FromMilliseconds(200),
+        };
+        _catalog.Answer("Harbor Lights", Almanac);
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var id = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
+
+        await runner.RunPendingAsync(Ct);
+
+        var search = await db.CatalogSearches.AsNoTracking().SingleAsync(s => s.Id == id, Ct);
+        Assert.Equal((CatalogSearchRunner.PartialError, "OL1001W"), (search.Error, Assert.Single(search.Results!).CatalogId));
+    }
+
+    [Fact]
+    public async Task A_search_fails_only_when_every_catalogue_fails()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks) { Throw = new BackendUnavailableException("down") };
+        var runner = new CatalogSearchRunner(_dbFactory, new BookCatalogChain([_catalog, apple]), _time, NullLogger<CatalogSearchRunner>.Instance);
+        _catalog.Answer("Harbor Lights", Almanac);
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var partly = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
+        await runner.RunPendingAsync(Ct);
+
+        _catalog.Throw = new CatalogLookupFailedException("odd");
+        var wholly = await ReviewActions.RequestSearchAsync(db, "Small Rivers", null, Now, Ct);
+        await runner.RunPendingAsync(Ct);
+
+        var searches = await db.CatalogSearches.AsNoTracking().ToDictionaryAsync(s => s.Id, Ct);
+        Assert.Equal((CatalogSearchRunner.PartialError, 1), (searches[partly].Error, searches[partly].Results?.Count));
+        Assert.Equal((CatalogSearchRunner.UnreadableError, (List<CatalogBook>?)null), (searches[wholly].Error, searches[wholly].Results));
+    }
+
+    [Fact]
     public async Task Old_searches_expire_unasked_and_are_deleted_after_a_day()
     {
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
         var stale = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
-        _time.Advance(CatalogSearchRunner.ExpireAfter + TimeSpan.FromSeconds(1));
+        _time.Advance(_runner.SearchTimeout + TimeSpan.FromSeconds(1));
 
         await _runner.RunPendingAsync(Ct);
         Assert.Equal(CatalogSearchRunner.ExpiredError, (await db.CatalogSearches.AsNoTracking().SingleAsync(Ct)).Error);
@@ -347,7 +402,7 @@ public sealed class ReviewTests : IAsyncLifetime
             .UseSqlite($"Data Source={Path.Combine(_root, "test.db")}")
             .AddInterceptors(new SqlitePragmaInterceptor(), writes)
             .Options;
-        var runner = new CatalogSearchRunner(new PooledDbContextFactory<AppDbContext>(options), _catalog, _time, NullLogger<CatalogSearchRunner>.Instance);
+        var runner = new CatalogSearchRunner(new PooledDbContextFactory<AppDbContext>(options), new BookCatalogChain([_catalog]), _time, NullLogger<CatalogSearchRunner>.Instance);
         await runner.RunPendingAsync(Ct);
         writes.Count = 0;
 
@@ -403,26 +458,33 @@ public sealed class ReviewTests : IAsyncLifetime
         _time.Advance(TimeSpan.FromMilliseconds(10));
     }
 
-    private sealed class FakeCatalog : IBookCatalog
+    private sealed class FakeCatalog(string provider = BookLookupProviders.OpenLibrary) : IBookCatalog
     {
         private readonly Dictionary<string, (CatalogBook Book, bool OnlyWithoutAuthor)> _answers = new(StringComparer.OrdinalIgnoreCase);
 
-        public string Provider => "Test";
+        public string Provider => provider;
         public int Calls { get; private set; }
         public Exception? Throw { get; set; }
 
+        /// <summary>Never answers: the search waits until it's cancelled.</summary>
+        public bool Hang { get; set; }
+
         public void Answer(string title, CatalogBook book, bool onlyWithoutAuthor = false) => _answers[title] = (book, onlyWithoutAuthor);
 
-        public Task<IReadOnlyList<CatalogBook>> SearchAsync(string title, string? author, CancellationToken cancellationToken)
+        public async Task<IReadOnlyList<CatalogBook>> SearchAsync(string title, string? author, CancellationToken cancellationToken)
         {
             Calls++;
+            if (Hang)
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+
             if (Throw is not null)
             {
                 throw Throw;
             }
 
-            IReadOnlyList<CatalogBook> found = _answers.TryGetValue(title, out var a) && (author is null || !a.OnlyWithoutAuthor) ? [a.Book] : [];
-            return Task.FromResult(found);
+            return _answers.TryGetValue(title, out var a) && (author is null || !a.OnlyWithoutAuthor) ? [a.Book] : [];
         }
     }
 

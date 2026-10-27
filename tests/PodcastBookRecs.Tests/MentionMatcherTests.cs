@@ -16,7 +16,7 @@ namespace PodcastBookRecs.Tests;
 public sealed class MentionMatcherTests : IAsyncLifetime
 {
     private static readonly CatalogBook Almanac =
-        new("OL1001W", "The Lighthouse Keeper's Almanac", null, ["Ines Calder"], 2019, 4, "https://catalog.test/OL1001W", null);
+        new("OL1001W", "The Lighthouse Keeper's Almanac", null, ["Ines Calder"], 2019, 4, "https://openlibrary.org/works/OL1001W", null);
 
     private readonly string _root = Directory.CreateTempSubdirectory("pbr-matcher-").FullName;
     private readonly FakeCatalog _catalog = new();
@@ -53,7 +53,7 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         db.Episodes.AddRange(episodes);
         await db.SaveChangesAsync(Ct);
         _episodes = episodes.Select(e => (e.Id, e.Transcript!.Id)).ToList();
-        _matcher = new MentionMatcher(_dbFactory, _catalog, TimeProvider.System, NullLogger<MentionMatcher>.Instance);
+        _matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
         _commands = new CommandProcessor(_dbFactory, null!, new EpisodeStateLock(),
             new TranscriptionWorkspace(Options.Create(new PathsOptions { Data = _root })), TimeProvider.System, NullLogger<CommandProcessor>.Instance);
     }
@@ -163,7 +163,7 @@ public sealed class MentionMatcherTests : IAsyncLifetime
 
         _catalog.Throw = null;
         _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
-        var later = new MentionMatcher(_dbFactory, _catalog, new ShiftedTime(MentionMatcher.RetryFailedAfter + TimeSpan.FromMinutes(1)),
+        var later = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog]), new ShiftedTime(MentionMatcher.RetryFailedAfter + TimeSpan.FromMinutes(1)),
             NullLogger<MentionMatcher>.Instance);
         Assert.Equal(WorkOutcome.Worked, await later.ProcessNextAsync(Ct));
 
@@ -294,7 +294,7 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     [Fact]
     public async Task Correcting_adds_the_picked_book_once_and_points_every_mention_at_it()
     {
-        var pick = new CatalogBook("OL2002W", "Harbour Lights", null, ["Ines Calder"], 2021, 3, "https://catalog.test/OL2002W", null);
+        var pick = new CatalogBook("OL2002W", "Harbour Lights", null, ["Ines Calder"], 2021, 3, "https://openlibrary.org/works/OL2002W", null);
         await AddMentionAsync(0, "Harbor Lights", "Calder");
         await RunUntilIdleAsync();
 
@@ -439,9 +439,87 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         Assert.Equal(BookLookupProviders.OpenLibrary, (await db.Books.SingleAsync(Ct)).Provider);
     }
 
+    [Fact]
+    public async Task A_fallback_is_asked_only_after_the_primary_finds_nothing()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks);
+        var matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog, apple]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
+        apple.Answer("Harbour Lights", AppleBook("Harbour Lights", "Ines Calder"));
+        await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", "Ines Calder");
+        await AddMentionAsync(1, "Harbour Lights", "I. Calder");
+
+        await RunUntilIdleAsync(matcher);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var mentions = await db.BookMentions.Include(m => m.Book).OrderBy(m => m.CreatedAt).ToListAsync(Ct);
+        Assert.Equal((BookLookupProviders.OpenLibrary, MatchDoubts.None), (mentions[0].Book!.Provider, mentions[0].Doubts));
+        Assert.Equal((BookLookupProviders.AppleBooks, "900000001", MatchDoubts.OtherCatalogue),
+            (mentions[1].Book!.Provider, mentions[1].Book!.CatalogId, mentions[1].Doubts));
+        // One search, by title and author, for the mention Open Library missed; none for the one it matched.
+        Assert.Equal(1, apple.Calls);
+    }
+
+    [Fact]
+    public async Task Without_an_author_no_fallback_is_asked()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks);
+        var matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog, apple]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
+        apple.Answer("Harbour Lights", AppleBook("Harbour Lights", "Ines Calder"));
+        await AddMentionAsync(0, "Harbour Lights", null);
+
+        await RunUntilIdleAsync(matcher);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(MatchState.NoMatch, (await db.BookMentions.SingleAsync(Ct)).MatchState);
+        Assert.Equal(0, apple.Calls);
+    }
+
+    [Fact]
+    public async Task A_fallback_that_cant_be_reached_fails_only_its_title_and_matching_carries_on()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks) { Throw = new BackendUnavailableException("down") };
+        var matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog, apple]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
+        await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+        await AddMentionAsync(1, "The Lighthouse Keeper's Almanac", "Ines Calder");
+
+        Assert.Equal(WorkOutcome.Worked, await matcher.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Worked, await matcher.ProcessNextAsync(Ct));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var states = await db.BookMentions.OrderBy(m => m.CreatedAt).Select(m => m.MatchState).ToListAsync(Ct);
+        Assert.Equal([MatchState.LookupFailed, MatchState.Matched], states);
+    }
+
+    [Fact]
+    public async Task A_fallback_that_answers_badly_fails_the_title()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks) { Throw = new CatalogLookupFailedException("odd") };
+        var matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog, apple]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
+        await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+
+        Assert.Equal(WorkOutcome.Worked, await matcher.ProcessNextAsync(Ct));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(MatchState.LookupFailed, (await db.BookMentions.SingleAsync(Ct)).MatchState);
+    }
+
+    [Fact]
+    public async Task A_primary_that_cant_be_reached_still_pauses_with_fallbacks_configured()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks);
+        var matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog, apple]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
+        _catalog.Throw = new BackendUnavailableException("down");
+        await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+
+        Assert.Equal(WorkOutcome.Paused, await matcher.ProcessNextAsync(Ct));
+        Assert.Equal(0, apple.Calls);
+    }
+
     [Theory]
     [InlineData("""{"catalogId":"OL2002W","title":"Harbour Lights","authors":[],"infoUrl":null}""")]
-    [InlineData("""{"catalogId":"OL2002W","title":"Harbour Lights","authors":null,"infoUrl":"https://catalog.test/OL2002W"}""")]
+    [InlineData("""{"catalogId":"OL2002W","title":"Harbour Lights","authors":null,"infoUrl":"https://openlibrary.org/works/OL2002W"}""")]
     public async Task A_stored_pick_with_missing_fields_fails_its_mention_without_blocking_the_queue(string pickJson)
     {
         _catalog.Answer("Small Rivers", Almanac with { Title = "Small Rivers" });
@@ -462,8 +540,8 @@ public sealed class MentionMatcherTests : IAsyncLifetime
 
     [Theory]
     [InlineData("javascript:alert(1)", null)]
-    [InlineData("http://catalog.test/OL2002W", null)]
-    [InlineData("https://catalog.test/OL2002W", "data:image/png;base64,AAAA")]
+    [InlineData("http://openlibrary.org/works/OL2002W", null)]
+    [InlineData("https://openlibrary.org/works/OL2002W", "data:image/png;base64,AAAA")]
     public async Task A_pick_without_https_links_isnt_turned_into_a_book(string infoUrl, string? coverUrl)
     {
         var pick = new CatalogBook("OL2002W", "Harbour Lights", null, [], null, 1, infoUrl, coverUrl);
@@ -593,12 +671,15 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         return (await db.Books.SingleAsync(Ct)).Id;
     }
 
-    private async Task RunUntilIdleAsync()
+    private async Task RunUntilIdleAsync(MentionMatcher? matcher = null)
     {
-        for (var i = 0; i < 20 && await _matcher.ProcessNextAsync(Ct) != WorkOutcome.Idle; i++)
+        for (var i = 0; i < 20 && await (matcher ?? _matcher).ProcessNextAsync(Ct) != WorkOutcome.Idle; i++)
         {
         }
     }
+
+    private static CatalogBook AppleBook(string title, string author) =>
+        new("900000001", title, null, [author], 2025, null, "https://books.apple.com/us/book/id900000001", null, BookLookupProviders.AppleBooks);
 
     private async Task<Guid> AddMentionAsync(int episode, string title, string? author)
     {
@@ -627,11 +708,11 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         public override DateTimeOffset GetUtcNow() => System.GetUtcNow() + offset;
     }
 
-    private sealed class FakeCatalog : IBookCatalog
+    private sealed class FakeCatalog(string provider = BookLookupProviders.OpenLibrary) : IBookCatalog
     {
         private readonly Dictionary<string, (CatalogBook Book, bool OnlyWithoutAuthor)> _answers = new(StringComparer.OrdinalIgnoreCase);
 
-        public string Provider => BookLookupProviders.OpenLibrary;
+        public string Provider => provider;
         public int Calls { get; private set; }
         public Exception? Throw { get; set; }
 

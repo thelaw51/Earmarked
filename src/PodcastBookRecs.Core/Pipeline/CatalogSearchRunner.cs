@@ -7,19 +7,19 @@ using PodcastBookRecs.Core.Data;
 namespace PodcastBookRecs.Core.Pipeline;
 
 /// <summary>
-/// Runs the catalogue searches people ask for on the review page (<see cref="CatalogSearch"/>), oldest first. It uses
-/// the same <see cref="IBookCatalog"/> as the matcher, so the adapter's pacing covers both. Someone is waiting for each
-/// answer, so a failure completes the search with a message instead of pausing and trying again.
+/// Runs the catalogue searches people ask for on the review page (<see cref="CatalogSearch"/>), oldest first. It asks
+/// every catalogue in the same <see cref="BookCatalogChain"/> as the matcher, so each adapter's pacing covers both.
+/// The catalogues are asked at once, since each paces only its own requests, and their answers are listed in chain
+/// order, each marked with the catalogue that gave it. Someone is waiting for each answer, so a failure completes the
+/// search with a message instead of pausing and trying again. A catalogue that fails or runs past
+/// <see cref="SearchTimeout"/> while another answers is left out, and <see cref="PartialError"/> says the list may be short.
 /// </summary>
 public sealed partial class CatalogSearchRunner(
     IDbContextFactory<AppDbContext> dbFactory,
-    IBookCatalog catalog,
+    BookCatalogChain catalogs,
     TimeProvider time,
     ILogger<CatalogSearchRunner> logger)
 {
-    /// <summary>The review page stops waiting after 30 seconds, so a search this old has nobody waiting for it.</summary>
-    public static readonly TimeSpan ExpireAfter = TimeSpan.FromMinutes(2);
-
     /// <summary>A pick copies its result into the decision, so searches are only needed while someone is choosing.</summary>
     public static readonly TimeSpan KeepFor = TimeSpan.FromDays(1);
 
@@ -27,9 +27,20 @@ public sealed partial class CatalogSearchRunner(
     public const string UnavailableError = "The catalogue can't be reached right now. Try again in a minute.";
     public const string UnreadableError = "The catalogue's answer couldn't be read.";
     public const string FailedError = "The search failed. The Worker's log has the details.";
+    public const string PartialError = "Not every catalogue could be searched, so this list may be short. Try again in a minute.";
+
+    /// <summary>Results kept from each catalogue, so one can't crowd out the others.</summary>
+    public const int MaxResultsPerCatalogue = 10;
 
     /// <summary>How often searches older than <see cref="KeepFor"/> are deleted.</summary>
     private static readonly TimeSpan CleanUpEvery = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// How long after it was asked for a search must be answered, kept under the review page's 30-second wait so the
+    /// page gets whatever did answer. It counts from the search's creation, so one queued behind another search gets
+    /// only what is left. Tests shorten it.
+    /// </summary>
+    internal TimeSpan SearchTimeout { get; set; } = TimeSpan.FromSeconds(25);
 
     private DateTime _nextCleanUp = DateTime.MinValue;
 
@@ -55,46 +66,71 @@ public sealed partial class CatalogSearchRunner(
 
         foreach (var search in open)
         {
-            if (search.CreatedAt < now - ExpireAfter)
+            // Earlier searches in this pass took time, so the clock is read again for each one.
+            var left = search.CreatedAt + SearchTimeout - time.GetUtcNow().UtcDateTime;
+            if (left <= TimeSpan.Zero)
             {
                 await CompleteAsync(search.Id, null, ExpiredError, cancellationToken);
             }
             else
             {
-                await RunAsync(search, cancellationToken);
+                await RunAsync(search, left, cancellationToken);
             }
         }
     }
 
-    private async Task RunAsync(CatalogSearch search, CancellationToken cancellationToken)
+    private async Task RunAsync(CatalogSearch search, TimeSpan timeLeft, CancellationToken cancellationToken)
     {
-        List<CatalogBook>? results = null;
-        string? error = null;
+        using var timeout = new CancellationTokenSource(timeLeft, time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        var answers = await Task.WhenAll(catalogs.All.Select(catalog => AskAsync(catalog, search, linked.Token, cancellationToken)));
+
+        var answered = answers.Where(a => a.Results is not null).ToList();
+        var error = answered.Count == answers.Length ? null
+            : answered.Count > 0 ? PartialError
+            : answers.Select(a => a.Error).First(e => e is not null);
+        await CompleteAsync(search.Id, answered.Count > 0 ? [.. answered.SelectMany(a => a.Results!)] : null, error, cancellationToken);
+    }
+
+    /// <summary>
+    /// One catalogue's answer, by title and author and then by title alone, or the fixed message for why it has none.
+    /// Only <paramref name="stopping"/> (the Worker shutting down) escapes as an exception; running past the search's
+    /// time limit counts as the catalogue being unavailable.
+    /// </summary>
+    private async Task<(List<CatalogBook>? Results, string? Error)> AskAsync(
+        IBookCatalog catalog, CatalogSearch search, CancellationToken cancellationToken, CancellationToken stopping)
+    {
         try
         {
-            results = [.. await catalog.SearchAsync(search.Title, search.Author, cancellationToken)];
-            if (results.Count == 0 && !string.IsNullOrEmpty(search.Author))
+            var found = await catalog.SearchAsync(search.Title, search.Author, cancellationToken);
+            if (found.Count == 0 && !string.IsNullOrEmpty(search.Author))
             {
-                results = [.. await catalog.SearchAsync(search.Title, null, cancellationToken)];
+                found = await catalog.SearchAsync(search.Title, null, cancellationToken);
             }
+
+            // Credit the catalogue that was asked, so a pick carries it into the decision and can never pass as Manual.
+            return ([.. found.Take(MaxResultsPerCatalogue).Select(b => b with { Provider = catalog.Provider })], null);
         }
         catch (BackendUnavailableException ex)
         {
-            LogSearchUnavailable(ex.Message);
-            error = UnavailableError;
+            LogSearchUnavailable(catalog.Provider, ex.Message);
+            return (null, UnavailableError);
         }
         catch (CatalogLookupFailedException ex)
         {
-            LogSearchUnreadable(ex.Message);
-            error = UnreadableError;
+            LogSearchUnreadable(catalog.Provider, ex.Message);
+            return (null, UnreadableError);
+        }
+        catch (OperationCanceledException) when (!stopping.IsCancellationRequested)
+        {
+            LogSearchTimedOut(catalog.Provider);
+            return (null, UnavailableError);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            LogSearchFailed(ex);
-            error = FailedError;
+            LogSearchFailed(ex, catalog.Provider);
+            return (null, FailedError);
         }
-
-        await CompleteAsync(search.Id, error == null ? results : null, error, cancellationToken);
     }
 
     private async Task CompleteAsync(Guid id, List<CatalogBook>? results, string? error, CancellationToken cancellationToken)
@@ -106,12 +142,15 @@ public sealed partial class CatalogSearchRunner(
             cancellationToken);
     }
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "A review search couldn't reach the catalogue: {Reason}")]
-    private partial void LogSearchUnavailable(string reason);
+    [LoggerMessage(Level = LogLevel.Information, Message = "A review search couldn't reach {Catalogue}: {Reason}")]
+    private partial void LogSearchUnavailable(string catalogue, string reason);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "A review search got an unusable answer from the catalogue: {Reason}")]
-    private partial void LogSearchUnreadable(string reason);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "A review search got an unusable answer from {Catalogue}: {Reason}")]
+    private partial void LogSearchUnreadable(string catalogue, string reason);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "A review search failed")]
-    private partial void LogSearchFailed(Exception ex);
+    [LoggerMessage(Level = LogLevel.Information, Message = "A review search ran out of time waiting for {Catalogue}")]
+    private partial void LogSearchTimedOut(string catalogue);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "A review search failed in {Catalogue}")]
+    private partial void LogSearchFailed(Exception ex, string catalogue);
 }

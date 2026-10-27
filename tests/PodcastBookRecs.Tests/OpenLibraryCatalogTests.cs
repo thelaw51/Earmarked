@@ -6,6 +6,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using PodcastBookRecs.Core.Backends;
 using PodcastBookRecs.Core.BookLookup;
 using PodcastBookRecs.Core.Configuration;
+using PodcastBookRecs.Core.Providers.BookLookup;
 using PodcastBookRecs.Core.Providers.BookLookup.OpenLibrary;
 
 namespace PodcastBookRecs.Tests;
@@ -56,9 +57,11 @@ public class OpenLibraryCatalogTests
     public async Task Slow_down_and_server_errors_pause(HttpStatusCode status) =>
         await Assert.ThrowsAsync<BackendUnavailableException>(() => Catalog(new Recorder(status, "")).SearchAsync("A Title", null, Ct));
 
-    [Fact]
-    public async Task Other_errors_fail_only_this_title() =>
-        await Assert.ThrowsAsync<CatalogLookupFailedException>(() => Catalog(new Recorder(HttpStatusCode.BadRequest, "")).SearchAsync("A Title", null, Ct));
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task Other_errors_fail_only_this_title(HttpStatusCode status) =>
+        await Assert.ThrowsAsync<CatalogLookupFailedException>(() => Catalog(new Recorder(status, "")).SearchAsync("A Title", null, Ct));
 
     [Fact]
     public async Task An_oversized_answer_fails_only_this_title()
@@ -87,7 +90,7 @@ public class OpenLibraryCatalogTests
         var handler = new Recorder(HttpStatusCode.OK, """{"docs":[]}""");
         using var provider = Services(new() { ["OpenLibrary:ContactEmail"] = "reader@example.com" }, handler);
 
-        await provider.GetRequiredService<IBookCatalog>().SearchAsync("A Title", null, Ct);
+        await provider.GetRequiredService<BookCatalogChain>().Primary.SearchAsync("A Title", null, Ct);
 
         Assert.EndsWith("; reader@example.com)", handler.UserAgents.Single(), StringComparison.Ordinal);
     }
@@ -97,7 +100,7 @@ public class OpenLibraryCatalogTests
     {
         using var provider = Services(new() { ["BookLookup:Provider"] = "" }, new Recorder(HttpStatusCode.OK, ""));
 
-        Assert.Null(provider.GetService<IBookCatalog>());
+        Assert.Null(provider.GetService<BookCatalogChain>());
     }
 
     [Fact]
@@ -105,10 +108,10 @@ public class OpenLibraryCatalogTests
     {
         var handler = new Recorder(HttpStatusCode.OK, "");
         using var provider = Services([], handler);
-        var check = provider.GetRequiredService<OpenLibraryHealthCheck>();
+        var check = provider.GetRequiredKeyedService<CatalogHealthCheck>(BookLookupProviders.OpenLibrary);
 
         var first = await check.CheckHealthAsync(new HealthCheckContext(), Ct);
-        var second = await provider.GetRequiredService<OpenLibraryHealthCheck>().CheckHealthAsync(new HealthCheckContext(), Ct);
+        var second = await provider.GetRequiredKeyedService<CatalogHealthCheck>(BookLookupProviders.OpenLibrary).CheckHealthAsync(new HealthCheckContext(), Ct);
 
         Assert.Equal(HealthStatus.Healthy, first.Status);
         Assert.Equal(HealthStatus.Healthy, second.Status);
@@ -120,7 +123,7 @@ public class OpenLibraryCatalogTests
     {
         var handler = new Recorder(HttpStatusCode.TooManyRequests, "");
         using var provider = Services([], handler);
-        var check = provider.GetRequiredService<OpenLibraryHealthCheck>();
+        var check = provider.GetRequiredKeyedService<CatalogHealthCheck>(BookLookupProviders.OpenLibrary);
 
         Assert.Equal(HealthStatus.Unhealthy, (await check.CheckHealthAsync(new HealthCheckContext(), Ct)).Status);
         Assert.Equal(HealthStatus.Unhealthy, (await check.CheckHealthAsync(new HealthCheckContext(), Ct)).Status);
