@@ -73,44 +73,62 @@
 @code {
     private bool _drawerOpen = true;
     private int? _reviewCount;
+    private int _reviewCountRequest;
     private Func<Task> _refreshReviewCount = null!;
+    private readonly CancellationTokenSource _closing = new();
 
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized()
     {
         _refreshReviewCount = RefreshReviewCountAsync;
         Navigation.LocationChanged += OnLocationChanged;
-        await RefreshReviewCountAsync();
+        // Not awaited: the shell renders straight away and the badge appears when the count arrives.
+        _ = RefreshReviewCountAsync();
     }
 
     /// <summary>
     /// Counts the titles waiting for review. Runs on every navigation and when the review page saves a decision, so the
-    /// badge needs no polling. The layout sits outside SchemaGate, so it asks SchemaStatus first: opening a database the
-    /// Worker hasn't created yet would create an empty file.
+    /// badge needs no polling. Only the newest request's answer is shown, since an older, slower count can finish last.
+    /// The layout sits outside SchemaGate, so it asks SchemaStatus first: opening a database the Worker hasn't created
+    /// yet would create an empty file.
     /// </summary>
     private async Task RefreshReviewCountAsync()
     {
+        var request = Interlocked.Increment(ref _reviewCountRequest);
+        int? count = null;
         try
         {
-            if (!await Schema.IsReadyAsync(CancellationToken.None))
+            if (await Schema.IsReadyAsync(_closing.Token))
             {
-                _reviewCount = null;
-                return;
+                await using var db = await DbFactory.CreateDbContextAsync(_closing.Token);
+                count = await ReviewBacklog.CountAsync(db, _closing.Token);
             }
-
-            await using var db = await DbFactory.CreateDbContextAsync();
-            _reviewCount = await ReviewBacklog.CountAsync(db, CancellationToken.None);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
         }
         catch (Exception)
         {
-            _reviewCount = null;
+            // A badge isn't worth an error: leave it hidden.
         }
 
+        if (request != _reviewCountRequest || _closing.IsCancellationRequested)
+        {
+            return;
+        }
+
+        _reviewCount = count;
         await InvokeAsync(StateHasChanged);
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e) => _ = InvokeAsync(RefreshReviewCountAsync);
 
-    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+        _closing.Cancel();
+        _closing.Dispose();
+    }
 
     private string PagePath => new Uri(Navigation.Uri).AbsolutePath;
 
