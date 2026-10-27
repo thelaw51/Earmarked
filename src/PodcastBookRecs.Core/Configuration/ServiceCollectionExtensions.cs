@@ -14,6 +14,7 @@ using PodcastBookRecs.Core.Net;
 using PodcastBookRecs.Core.Pipeline;
 using PodcastBookRecs.Core.Providers.BookLookup;
 using PodcastBookRecs.Core.Providers.BookLookup.AppleBooks;
+using PodcastBookRecs.Core.Providers.BookLookup.Hardcover;
 using PodcastBookRecs.Core.Providers.BookLookup.OpenLibrary;
 using PodcastBookRecs.Core.Providers.Extraction.OpenAiCompatible;
 using PodcastBookRecs.Core.Providers.Transcription.OpenAiCompatible;
@@ -181,6 +182,12 @@ public static class ServiceCollectionExtensions
                     AddAppleBooks(services, configuration);
                     AddCatalogHealthCheck(services, name, AppleBooksCatalog.HttpClientName, healthName, AppleBooksCatalog.SlowDownStatuses);
                     break;
+                case BookLookupProviders.Hardcover:
+                    AddHardcover(services, configuration);
+                    // Its own check, because a plain GET can't tell a rejected token. A singleton keeps its memory of the last answer.
+                    services.AddSingleton<HardcoverHealthCheck>();
+                    services.AddHealthChecks().AddCheck<HardcoverHealthCheck>(healthName, tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
+                    break;
             }
         }
 
@@ -219,6 +226,24 @@ public static class ServiceCollectionExtensions
             })
             .ConfigurePrimaryHttpMessageHandler(CatalogHandler);
         services.AddKeyedSingleton<IBookCatalog, AppleBooksCatalog>(BookLookupProviders.AppleBooks);
+    }
+
+    /// <summary>
+    /// Hardcover's client has a fixed https address, so the token can only ever go to Hardcover, and redacts the
+    /// Authorization header from HTTP logging on top of that logging being held at Warning.
+    /// </summary>
+    private static void AddHardcover(IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddOptions<HardcoverOptions>().Bind(configuration.GetSection(HardcoverOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+        services.AddHttpClient(HardcoverCatalog.HttpClientName, client =>
+            {
+                client.BaseAddress = new Uri("https://api.hardcover.app/");
+                client.Timeout = TimeSpan.FromSeconds(30);
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+            })
+            .ConfigurePrimaryHttpMessageHandler(CatalogHandler)
+            .RedactLoggedHeaders(["Authorization"]);
+        services.AddKeyedSingleton<IBookCatalog, HardcoverCatalog>(BookLookupProviders.Hardcover);
     }
 
     /// <summary>

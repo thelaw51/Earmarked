@@ -1,0 +1,48 @@
+{
+  "data": {
+    "search": {
+      "results": {
+        "found": 7,
+        "hits": [
+          {
+            "document": {
+              "id": "700001",
+              "slug": "harbour-lights",
+              "title": "Harbour Lights: A Novel",
+              "subtitle": "A Novel",
+              "author_names": ["Ines Calder", "Tomas Reyne"],
+              "release_year": 2025,
+              "users_count": 12,
+              "image": { "url": "https://assets.hardcover.app/edition/1/cover.jpeg" }
+            },
+            "text_match": 1
+          },
+          {
+            "document": {
+              "id": 700002,
+              "slug": "small-rivers-2019",
+              "title": "Small Rivers",
+              "subtitle": null,
+              "author_names": ["Ada Okafor"],
+              "release_year": null,
+              "image": { "url": "https://assets.hardcover.app.evil.example/cover.jpeg" }
+            }
+          },
+          { "document": { "id": "hc-700003", "slug": "a-string-id", "title": "A String Id", "author_names": [] } },
+          { "document": { "id": "700004", "slug": "no-title", "author_names": ["Ines Calder"] } },
+          { "document": { "id": "700005", "slug": "../escape", "title": "Odd Slug", "author_names": [] } },
+          {
+            "document": {
+              "id": "700006",
+              "slug": "port-numbers",
+              "title": "Port Numbers",
+              "author_names": ["Tomas Reyne"],
+              "image": { "url": "https://assets.hardcover.app:8443/cover.jpeg" }
+            }
+          },
+          "not an object"
+        ]
+      }
+    }
+  }
+}

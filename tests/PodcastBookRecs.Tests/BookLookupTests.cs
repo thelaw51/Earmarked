@@ -187,6 +187,9 @@ public class BookLookupTests
 
     [Theory]
     [InlineData("AppleBooks", "https://books.apple.com/us/book/id900000001", true)]
+    [InlineData("Hardcover", "https://hardcover.app/books/harbour-lights", true)]
+    [InlineData("Hardcover", "https://hardcover.app.evil.example/books/harbour-lights", false)]
+    [InlineData("Hardcover", "https://openlibrary.org/works/OL1W", false)]
     [InlineData("AppleBooks", "https://openlibrary.org/works/OL1W", false)]
     [InlineData("OpenLibrary", "https://books.apple.com/us/book/id900000001", false)]
     [InlineData("OpenLibrary", "https://evil.example/openlibrary.org", false)]
