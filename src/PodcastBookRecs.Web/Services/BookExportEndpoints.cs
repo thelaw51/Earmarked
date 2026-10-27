@@ -22,14 +22,14 @@ public static class BookExportEndpoints
         return app;
     }
 
-    private enum Format
+    internal enum Format
     {
         Csv,
         Goodreads,
         Json,
     }
 
-    private static async Task<IResult> ExportAsync(
+    internal static async Task<IResult> ExportAsync(
         HttpContext context, IDbContextFactory<AppDbContext> dbFactory, SchemaStatus schema, TimeProvider time, Format format)
     {
         var cancellationToken = context.RequestAborted;
