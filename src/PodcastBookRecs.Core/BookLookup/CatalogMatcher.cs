@@ -165,4 +165,20 @@ public static class CatalogMatcher
             .Select(QuoteLocator.Normalise)
             .LastOrDefault(w => w.Length > 0 && !NameSuffixes.Contains(w)) ?? "";
     }
+
+    /// <summary>
+    /// A picked book was copied from a search result, so it came from the adapter, but it sat in the database in
+    /// between. Before it becomes a <see cref="Book"/>, check what every catalogue entry must have: an ID, a title,
+    /// and https links. The review page checks a pick with this when it's made, and the matcher again before adding it.
+    /// </summary>
+    public static bool IsUsable(CatalogBook? pick) =>
+        pick is not null
+        && !string.IsNullOrWhiteSpace(pick.CatalogId) && pick.CatalogId.Length <= MaxCatalogIdLength
+        && !string.IsNullOrWhiteSpace(pick.Title)
+        && IsHttps(pick.InfoUrl) && (pick.CoverUrl is null || IsHttps(pick.CoverUrl));
+
+    private const int MaxCatalogIdLength = 40;
+
+    private static bool IsHttps(string url) =>
+        url.Length <= Book.MaxUrlLength && Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
 }

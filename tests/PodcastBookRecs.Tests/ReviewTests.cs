@@ -1,0 +1,347 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Logging.Abstractions;
+using PodcastBookRecs.Core.Backends;
+using PodcastBookRecs.Core.BookLookup;
+using PodcastBookRecs.Core.Books;
+using PodcastBookRecs.Core.Data;
+using PodcastBookRecs.Core.Pipeline;
+using PodcastBookRecs.Core.Transcripts;
+
+namespace PodcastBookRecs.Tests;
+
+/// <summary>The review backlog, the page's writes and the Worker's search runner, against a migrated SQLite file.</summary>
+public sealed class ReviewTests : IAsyncLifetime
+{
+    private static readonly CatalogBook Almanac =
+        new("OL1001W", "The Lighthouse Keeper's Almanac", null, ["Ines Calder"], 2019, 4, "https://catalog.test/OL1001W", null);
+
+    private readonly string _root = Directory.CreateTempSubdirectory("pbr-review-").FullName;
+    private readonly ManualTime _time = new();
+    private readonly FakeCatalog _catalog = new();
+    private IDbContextFactory<AppDbContext> _dbFactory = null!;
+    private CatalogSearchRunner _runner = null!;
+    private List<(Guid Episode, Guid Transcript)> _episodes = [];
+    private Guid _bookId;
+
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private DateTime Now => _time.GetUtcNow().UtcDateTime;
+
+    public async ValueTask InitializeAsync()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite($"Data Source={Path.Combine(_root, "test.db")}")
+            .AddInterceptors(new SqlitePragmaInterceptor())
+            .Options;
+        _dbFactory = new PooledDbContextFactory<AppDbContext>(options);
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        await db.Database.MigrateAsync(Ct);
+        var feeds = Enumerable.Range(1, 2)
+            .Select(i => new PodcastFeed { FeedUrl = $"https://feeds.test/show-{i}.xml", Title = $"Show {i}", AddedAt = Now })
+            .ToList();
+        var episodes = Enumerable.Range(0, 3).Select(i => new Episode
+        {
+            PodcastFeed = feeds[i % 2],
+            IdentityKey = $"ep-{i}",
+            Title = $"Episode {i}",
+            State = EpisodeState.Extracted,
+            PublishedAt = Now.AddDays(i),
+            Transcript = new Transcript
+            {
+                Source = TranscriptSource.Transcribed,
+                Format = TranscriptFormat.SpeechToText,
+                Segments = [new(TimeSpan.Zero, null, null, "Some words.")],
+            },
+        }).ToList();
+        db.Episodes.AddRange(episodes);
+        var book = new Book
+        {
+            Provider = "Test",
+            CatalogId = "OL1001W",
+            Title = "The Lighthouse Keeper's Almanac",
+            Authors = "Ines Calder",
+            InfoUrl = "https://catalog.test/OL1001W",
+            CreatedAt = Now,
+        };
+        db.Books.Add(book);
+        await db.SaveChangesAsync(Ct);
+        _bookId = book.Id;
+        _episodes = episodes.Select(e => (e.Id, e.Transcript!.Id)).ToList();
+        _runner = new CatalogSearchRunner(_dbFactory, _catalog, _time, NullLogger<CatalogSearchRunner>.Instance);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        Directory.Delete(_root, recursive: true);
+        return ValueTask.CompletedTask;
+    }
+
+    [Fact]
+    public async Task Unfound_failed_and_doubtful_titles_are_in_the_backlog_and_sound_matches_arent()
+    {
+        await AddMentionAsync(0, "Small Rivers", null, MatchState.NoMatch);
+        await AddMentionAsync(0, "Harbor Lights", null, MatchState.LookupFailed);
+        await AddMentionAsync(1, "The Lighthouse Keeper's Almanac", "Calder", MatchState.Matched, doubts: MatchDoubts.FewEditions);
+        await AddMentionAsync(1, "Quiet Water", "Ames", MatchState.Matched, confidence: 0.4);
+        await AddMentionAsync(2, "Sound Book", "Okafor", MatchState.Matched);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var items = await ReviewBacklog.LoadAsync(db, Ct);
+
+        Assert.Equal(4, await ReviewBacklog.CountAsync(db, Ct));
+        Assert.Equal(
+            new Dictionary<string, ReviewReasons>
+            {
+                ["Small Rivers"] = ReviewReasons.NotFound,
+                ["Harbor Lights"] = ReviewReasons.LookupFailed,
+                ["The Lighthouse Keeper's Almanac"] = ReviewReasons.FewEditions,
+                ["Quiet Water"] = ReviewReasons.LowConfidence,
+            },
+            items.ToDictionary(i => i.Title, i => i.Reasons));
+        Assert.Equal(_bookId, items.Single(i => i.Title == "Quiet Water").Book?.Id);
+    }
+
+    [Fact]
+    public async Task One_confident_mention_keeps_a_title_out_of_the_backlog()
+    {
+        await AddMentionAsync(0, "Quiet Water", "Ames", MatchState.Matched, confidence: 0.3);
+        await AddMentionAsync(1, "Quiet Water", "J. Ames", MatchState.Matched, confidence: 0.9);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(0, await ReviewBacklog.CountAsync(db, Ct));
+    }
+
+    [Fact]
+    public async Task An_item_counts_its_mentions_across_episodes_and_podcasts()
+    {
+        await AddMentionAsync(0, "Small Rivers", null, MatchState.NoMatch);
+        await AddMentionAsync(1, "Small Rivers", null, MatchState.NoMatch);
+        await AddMentionAsync(2, "Small Rivers", null, MatchState.NoMatch);
+        await AddMentionAsync(2, "Small Rivers", null, MatchState.NoMatch);
+        await AddMentionAsync(0, "Harbor Lights", null, MatchState.NoMatch);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var item = (await ReviewBacklog.LoadAsync(db, Ct))[0];
+
+        Assert.Equal(("Small Rivers", 4, 3, 2, ReviewBacklog.MaxQuotes), (item.Title, item.Mentions, item.Episodes, item.Podcasts, item.Quotes.Count));
+    }
+
+    [Fact]
+    public async Task Decided_titles_and_ones_waiting_to_be_matched_again_are_left_out()
+    {
+        await AddMentionAsync(0, "Small Rivers", null, MatchState.NoMatch);
+        await AddMentionAsync(1, "Harbor Lights", null, MatchState.NoMatch, matcherVersion: "match-v2");
+
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            await ReviewActions.RejectAsync(db, "Small Rivers", null, ReviewVerdict.NotABook, null, Now, Ct);
+        }
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Empty(await ReviewBacklog.LoadAsync(check, Ct));
+        Assert.Equal(0, await ReviewBacklog.CountAsync(check, Ct));
+    }
+
+    [Fact]
+    public async Task A_decision_is_saved_with_the_command_that_rematches_its_key()
+    {
+        await AddMentionAsync(0, "  Small Rivers ", null, MatchState.NoMatch);
+
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            await ReviewActions.RejectAsync(db, "  Small Rivers ", null, ReviewVerdict.NotABook, "  a  newspaper column ", Now, Ct);
+        }
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        var decision = await check.ReviewDecisions.SingleAsync(Ct);
+        var command = await check.WorkerCommands.SingleAsync(Ct);
+        Assert.Equal((CatalogMatcher.LookupKey("Small Rivers", null), "Small Rivers", "a  newspaper column"), (decision.LookupKey, decision.Title, decision.Note));
+        Assert.Equal((WorkerCommandType.ReviewDecided, decision.LookupKey), (command.Type, command.LookupKey));
+    }
+
+    [Fact]
+    public async Task Confirming_takes_the_book_from_the_mentions_and_needs_one()
+    {
+        await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", "Calder", MatchState.Matched, doubts: MatchDoubts.FewEditions);
+        await AddMentionAsync(1, "Small Rivers", null, MatchState.NoMatch);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        await ReviewActions.ConfirmAsync(db, "The Lighthouse Keeper's Almanac", "Calder", Now, Ct);
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.ConfirmAsync(db, "Small Rivers", null, Now, Ct));
+
+        Assert.Equal(_bookId, (await db.ReviewDecisions.SingleAsync(Ct)).BookId);
+    }
+
+    [Fact]
+    public async Task Deciding_again_replaces_the_decision_and_undoing_deletes_it()
+    {
+        await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", "Calder", MatchState.Matched, doubts: MatchDoubts.FewEditions);
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        await ReviewActions.RejectAsync(db, "The Lighthouse Keeper's Almanac", "Calder", ReviewVerdict.WrongBook, "not this one", Now, Ct);
+        _time.Advance(TimeSpan.FromMinutes(1));
+
+        await ReviewActions.ConfirmAsync(db, "The Lighthouse Keeper's Almanac", "Calder", Now, Ct);
+        var decision = await db.ReviewDecisions.AsNoTracking().SingleAsync(Ct);
+        Assert.Equal((ReviewVerdict.Confirmed, (string?)null, Now), (decision.Verdict, decision.Note, decision.DecidedAt));
+
+        await ReviewActions.UndoAsync(db, decision.Id, Now, Ct);
+        Assert.Empty(await db.ReviewDecisions.ToListAsync(Ct));
+        Assert.Equal(3, await db.WorkerCommands.CountAsync(c => c.LookupKey == decision.LookupKey, Ct));
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.UndoAsync(db, decision.Id, Now, Ct));
+    }
+
+    [Fact]
+    public async Task A_pick_is_copied_from_the_stored_search_never_from_the_page()
+    {
+        await AddMentionAsync(0, "Harbor Lights", null, MatchState.NoMatch);
+        _catalog.Answer("Harbor Lights", Almanac);
+        Guid searchId;
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            searchId = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
+        }
+
+        await _runner.RunPendingAsync(Ct);
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.CorrectAsync(check, "Harbor Lights", null, searchId, "OL6666W", null, Now, Ct));
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.CorrectAsync(check, "Harbor Lights", null, Guid.NewGuid(), "OL1001W", null, Now, Ct));
+        await ReviewActions.CorrectAsync(check, "Harbor Lights", null, searchId, "OL1001W", null, Now, Ct);
+        var decision = await check.ReviewDecisions.SingleAsync(Ct);
+        Assert.Equal((ReviewVerdict.Corrected, Almanac.CatalogId, Almanac.InfoUrl), (decision.Verdict, decision.Pick?.CatalogId, decision.Pick?.InfoUrl));
+    }
+
+    [Fact]
+    public async Task A_stored_result_without_https_links_cant_be_picked()
+    {
+        _catalog.Answer("Harbor Lights", Almanac with { InfoUrl = "http://catalog.test/OL1001W" });
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var searchId = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
+        await _runner.RunPendingAsync(Ct);
+
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.CorrectAsync(db, "Harbor Lights", null, searchId, "OL1001W", null, Now, Ct));
+    }
+
+    [Fact]
+    public async Task The_runner_falls_back_to_the_title_alone_and_stores_the_results()
+    {
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac, onlyWithoutAuthor: true);
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var id = await ReviewActions.RequestSearchAsync(db, "The Lighthouse Keeper's Almanac", "Somebody Else", Now, Ct);
+
+        await _runner.RunPendingAsync(Ct);
+
+        var search = await db.CatalogSearches.AsNoTracking().SingleAsync(s => s.Id == id, Ct);
+        Assert.Equal((Now, (string?)null, "OL1001W"), (search.CompletedAt, search.Error, Assert.Single(search.Results!).CatalogId));
+        Assert.Equal(2, _catalog.Calls);
+    }
+
+    [Theory]
+    [InlineData(true, CatalogSearchRunner.UnavailableError)]
+    [InlineData(false, CatalogSearchRunner.UnreadableError)]
+    public async Task A_failed_search_completes_with_our_own_message(bool unavailable, string expected)
+    {
+        _catalog.Throw = unavailable ? new BackendUnavailableException("secret detail") : new CatalogLookupFailedException("secret detail");
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
+
+        await _runner.RunPendingAsync(Ct);
+
+        var search = await db.CatalogSearches.AsNoTracking().SingleAsync(Ct);
+        Assert.Equal((expected, (List<CatalogBook>?)null), (search.Error, search.Results));
+    }
+
+    [Fact]
+    public async Task Old_searches_expire_unasked_and_are_deleted_after_a_day()
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var stale = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
+        _time.Advance(CatalogSearchRunner.ExpireAfter + TimeSpan.FromSeconds(1));
+
+        await _runner.RunPendingAsync(Ct);
+        Assert.Equal(CatalogSearchRunner.ExpiredError, (await db.CatalogSearches.AsNoTracking().SingleAsync(Ct)).Error);
+        Assert.Equal(0, _catalog.Calls);
+
+        _time.Advance(CatalogSearchRunner.KeepFor);
+        await _runner.RunPendingAsync(Ct);
+        Assert.False(await db.CatalogSearches.AnyAsync(s => s.Id == stale, Ct));
+    }
+
+    [Fact]
+    public async Task Repeating_a_search_reuses_it_and_too_many_open_ones_are_refused()
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var first = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
+        Assert.Equal(first, await ReviewActions.RequestSearchAsync(db, " Harbor Lights ", "", Now, Ct));
+
+        for (var i = 1; i < ReviewActions.MaxOpenSearches; i++)
+        {
+            await ReviewActions.RequestSearchAsync(db, $"Title {i}", null, Now, Ct);
+        }
+
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.RequestSearchAsync(db, "One too many", null, Now, Ct));
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.RequestSearchAsync(db, "   ", null, Now, Ct));
+    }
+
+    private async Task AddMentionAsync(
+        int episode, string title, string? author, MatchState state, double confidence = 0.9, MatchDoubts doubts = MatchDoubts.None,
+        string matcherVersion = CatalogMatcher.Version)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        db.BookMentions.Add(new BookMention
+        {
+            EpisodeId = _episodes[episode].Episode,
+            TranscriptId = _episodes[episode].Transcript,
+            Title = title,
+            Author = author,
+            Quote = "Some words.",
+            Kind = MentionKind.Discussed,
+            Confidence = confidence,
+            Provider = "Test",
+            Model = "test",
+            PromptVersion = "test",
+            CreatedAt = Now,
+            MatchState = state,
+            BookId = state == MatchState.Matched ? _bookId : null,
+            Doubts = doubts,
+            LookupKey = CatalogMatcher.LookupKey(title.Trim(), author),
+            MatcherVersion = matcherVersion,
+        });
+        await db.SaveChangesAsync(Ct);
+        _time.Advance(TimeSpan.FromMilliseconds(10));
+    }
+
+    private sealed class FakeCatalog : IBookCatalog
+    {
+        private readonly Dictionary<string, (CatalogBook Book, bool OnlyWithoutAuthor)> _answers = new(StringComparer.OrdinalIgnoreCase);
+
+        public string Provider => "Test";
+        public int Calls { get; private set; }
+        public Exception? Throw { get; set; }
+
+        public void Answer(string title, CatalogBook book, bool onlyWithoutAuthor = false) => _answers[title] = (book, onlyWithoutAuthor);
+
+        public Task<IReadOnlyList<CatalogBook>> SearchAsync(string title, string? author, CancellationToken cancellationToken)
+        {
+            Calls++;
+            if (Throw is not null)
+            {
+                throw Throw;
+            }
+
+            IReadOnlyList<CatalogBook> found = _answers.TryGetValue(title, out var a) && (author is null || !a.OnlyWithoutAuthor) ? [a.Book] : [];
+            return Task.FromResult(found);
+        }
+    }
+
+    private sealed class ManualTime : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan by) => _now += by;
+    }
+}
