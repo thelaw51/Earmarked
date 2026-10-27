@@ -197,7 +197,9 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     {
         await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
         await RunUntilIdleAsync();
-        var later = Later(MentionMatcher.RetryNoMatchAfter + TimeSpan.FromMinutes(1));
+        var clock = new ShiftedTime(MentionMatcher.RetryNoMatchAfter + TimeSpan.FromMinutes(1));
+        var later = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog]), clock, NullLogger<MentionMatcher>.Instance);
+        var retriedFrom = clock.GetUtcNow().UtcDateTime;
 
         // The retry's answer must save, or the mention would stay due and be searched on every pass.
         Assert.Equal(WorkOutcome.Worked, await later.ProcessNextAsync(Ct));
@@ -206,7 +208,7 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
         var mention = await db.BookMentions.SingleAsync(Ct);
         Assert.Equal(MatchState.NoMatch, mention.MatchState);
-        Assert.True(mention.MatchedAt > DateTime.UtcNow + MentionMatcher.RetryNoMatchAfter - TimeSpan.FromMinutes(1));
+        Assert.True(mention.MatchedAt >= retriedFrom);
     }
 
     [Fact]
@@ -235,6 +237,45 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         Assert.All(await after.BookMentions.ToListAsync(Ct), m => Assert.Equal(MatchState.Matched, m.MatchState));
         // The almanac's one search, then one for the two Harbour Lights mentions: the second reuses the first's answer.
         Assert.Equal(2, _catalog.Calls - callsBefore);
+    }
+
+    [Fact]
+    public async Task A_retry_settles_every_mention_of_the_title_whenever_each_was_last_looked_up()
+    {
+        var first = await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+        await RunUntilIdleAsync();
+        // Twenty days on, a second mention copies the first one's "not found".
+        var second = await AddMentionAsync(1, "Harbour Lights", "Ines Calder");
+        Assert.Equal(WorkOutcome.Worked, await Later(TimeSpan.FromDays(20)).ProcessNextAsync(Ct));
+        _catalog.Answer("Harbour Lights", HarbourLights);
+        var callsBefore = _catalog.Calls;
+
+        // Day 30: both come due, because the copy kept the first search's time. One search settles both.
+        var later = Later(MentionMatcher.RetryNoMatchAfter + TimeSpan.FromMinutes(1));
+        Assert.Equal(WorkOutcome.Worked, await later.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Worked, await later.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Idle, await later.ProcessNextAsync(Ct));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var mentions = await db.BookMentions.Where(m => m.Id == first || m.Id == second).ToListAsync(Ct);
+        Assert.All(mentions, m => Assert.Equal(MatchState.Matched, m.MatchState));
+        Assert.Single(mentions.Select(m => m.BookId).Distinct());
+        Assert.Equal(1, _catalog.Calls - callsBefore);
+    }
+
+    [Fact]
+    public async Task A_retry_whose_lookup_fails_saves_and_waits_a_day()
+    {
+        var id = await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+        await RunUntilIdleAsync();
+        _catalog.Throw = new CatalogLookupFailedException("garbled");
+
+        var later = Later(MentionMatcher.RetryNoMatchAfter + TimeSpan.FromMinutes(1));
+        Assert.Equal(WorkOutcome.Worked, await later.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Idle, await later.ProcessNextAsync(Ct));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(MatchState.LookupFailed, (await db.BookMentions.SingleAsync(m => m.Id == id, Ct)).MatchState);
     }
 
     private MentionMatcher Later(TimeSpan offset) =>

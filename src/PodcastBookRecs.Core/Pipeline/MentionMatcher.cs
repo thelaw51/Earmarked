@@ -15,7 +15,8 @@ namespace PodcastBookRecs.Core.Pipeline;
 /// mention whose title and author were already looked up under the current rules copies that answer instead of asking
 /// again. Mentions not yet matched by <see cref="CatalogMatcher.Version"/>, including every new one, are due, so
 /// changing the rules re-matches everything. A lookup that failed is tried again after <see cref="RetryFailedAfter"/>,
-/// at the back of the queue.
+/// and a title not found after <see cref="RetryNoMatchAfter"/>, both at the back of the queue. A copied "not found" keeps
+/// the time of the search it came from, so every mention of a title comes due together and costs one search.
 /// Mentions aren't episode state, so this doesn't take <see cref="EpisodeStateLock"/>: each update is conditional, and a
 /// mention deleted by re-extraction while it was being looked up simply updates nothing. A save from the catalogue also
 /// updates nothing once a decision exists for its key, and a save from a decision updates nothing once that decision
@@ -31,7 +32,9 @@ public sealed partial class MentionMatcher(
 
     /// <summary>
     /// How long "not in any catalogue" stands before the title is searched again: catalogues add books (a new release
-    /// listed next month, a fallback turned on later), and a search a month per title costs little.
+    /// listed next month, a fallback turned on later). A retry costs what the first search did, once per title: two
+    /// requests to each catalogue asked (with the author, then without), fallbacks only for titles with an author
+    /// surname, and nothing for a title too vague to match. The adapters' pacing spreads a large batch over time.
     /// </summary>
     public static readonly TimeSpan RetryNoMatchAfter = TimeSpan.FromDays(30);
 
@@ -67,11 +70,14 @@ public sealed partial class MentionMatcher(
         var known = await db.BookMentions
             .Where(m => m.LookupKey == key && m.MatcherVersion == CatalogMatcher.Version)
             .Where(m => (m.MatchState == MatchState.Matched && m.BookId != null) || (m.MatchState == MatchState.NoMatch && m.MatchedAt >= noMatchFreshAfter))
-            .Select(m => new { m.MatchState, m.BookId, m.Doubts })
+            .Select(m => new { m.MatchState, m.BookId, m.Doubts, m.MatchedAt })
             .FirstOrDefaultAsync(cancellationToken);
         if (known is not null)
         {
-            await SaveAsync(db, next.Id, key, new Answer(known.MatchState, known.BookId, known.Doubts), null, cancellationToken);
+            // A copied "not found" keeps the time of the search it came from. Stamped with now, two mentions of one title
+            // would keep each other fresh by copying in turn, and the title would never be searched again.
+            var answeredAt = known.MatchState == MatchState.NoMatch ? known.MatchedAt : null;
+            await SaveAsync(db, next.Id, key, new Answer(known.MatchState, known.BookId, known.Doubts, answeredAt), null, cancellationToken);
             return WorkOutcome.Worked;
         }
 
@@ -299,10 +305,11 @@ public sealed partial class MentionMatcher(
             .SetProperty(m => m.Doubts, answer.Doubts)
             .SetProperty(m => m.LookupKey, key)
             .SetProperty(m => m.MatcherVersion, CatalogMatcher.Version)
-            .SetProperty(m => m.MatchedAt, now), cancellationToken);
+            .SetProperty(m => m.MatchedAt, answer.AnsweredAt ?? now), cancellationToken);
     }
 
-    private sealed record Answer(MatchState State, Guid? BookId, MatchDoubts Doubts);
+    /// <summary>A match result to save. <paramref name="AnsweredAt"/> is when a copied answer was found, if not now.</summary>
+    private sealed record Answer(MatchState State, Guid? BookId, MatchDoubts Doubts, DateTime? AnsweredAt = null);
 
     private sealed record Found(CatalogBook Book, IBookCatalog Catalog);
 
