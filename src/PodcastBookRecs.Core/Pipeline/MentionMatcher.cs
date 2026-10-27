@@ -50,6 +50,8 @@ public sealed partial class MentionMatcher(
             return WorkOutcome.Worked;
         }
 
+        // Mentions settled by a decision share this key, so this can reuse their answer. That is safe only because the
+        // decision check above runs first. After an undo, anything reused before ReviewDecided runs is cleared when it does.
         var known = await db.BookMentions
             .Where(m => m.LookupKey == key && m.MatcherVersion == CatalogMatcher.Version)
             .Where(m => (m.MatchState == MatchState.Matched && m.BookId != null) || m.MatchState == MatchState.NoMatch)

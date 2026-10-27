@@ -308,6 +308,21 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         Assert.Equal(book.Id, (await db.ReviewDecisions.SingleAsync(Ct)).BookId);
     }
 
+    [Fact]
+    public async Task Picking_a_book_the_catalogue_already_matched_reuses_it()
+    {
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
+        await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", null);
+        await AddMentionAsync(1, "Keeper of the Lighthouse", null);
+        await RunUntilIdleAsync();
+
+        await DecideAsync("Keeper of the Lighthouse", null, ReviewVerdict.Corrected, pick: Almanac);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var book = await db.Books.SingleAsync(Ct);
+        Assert.All(await db.BookMentions.ToListAsync(Ct), m => Assert.Equal((Guid?)book.Id, m.BookId));
+    }
+
     [Theory]
     [InlineData("javascript:alert(1)", null)]
     [InlineData("http://catalog.test/OL2002W", null)]
