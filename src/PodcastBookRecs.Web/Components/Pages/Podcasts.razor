@@ -173,10 +173,13 @@ else
             Snackbar.Add("Feed added. The Worker will poll it within a few seconds.", Severity.Success);
             await LoadAsync();
         }
-        // Someone else added the same feed between the check above and this save.
-        catch (DbUpdateException ex) when (ex.InnerException is Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19 })
+        // Someone else added the same feed between the check above and this save. 2067 is SQLITE_CONSTRAINT_UNIQUE; any
+        // other constraint failure is a real error and goes to the log below.
+        catch (DbUpdateException ex) when (ex.InnerException is Microsoft.Data.Sqlite.SqliteException { SqliteExtendedErrorCode: 2067 })
         {
+            _newFeedUrl = null;
             Snackbar.Add("That feed is already in the list.", Severity.Info);
+            await LoadAsync();
         }
         catch (Exception ex)
         {
