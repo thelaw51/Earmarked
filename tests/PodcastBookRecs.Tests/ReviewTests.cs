@@ -136,7 +136,7 @@ public sealed class ReviewTests : IAsyncLifetime
 
         await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
         {
-            await ReviewActions.RejectAsync(db, "Small Rivers", null, ReviewVerdict.NotABook, null, Now, Ct);
+            await ReviewActions.RejectAsync(db, Key("Small Rivers", null), ReviewVerdict.NotABook, null, Now, Ct);
         }
 
         await using var check = await _dbFactory.CreateDbContextAsync(Ct);
@@ -147,18 +147,30 @@ public sealed class ReviewTests : IAsyncLifetime
     [Fact]
     public async Task A_decision_is_saved_with_the_command_that_rematches_its_key()
     {
-        await AddMentionAsync(0, "  Small Rivers ", null, MatchState.NoMatch);
+        await AddMentionAsync(0, "Small Rivers", null, MatchState.NoMatch);
 
         await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
         {
-            await ReviewActions.RejectAsync(db, "  Small Rivers ", null, ReviewVerdict.NotABook, "  a  newspaper column ", Now, Ct);
+            await ReviewActions.RejectAsync(db, Key("Small Rivers", null), ReviewVerdict.NotABook, "  a  newspaper column ", Now, Ct);
         }
 
         await using var check = await _dbFactory.CreateDbContextAsync(Ct);
         var decision = await check.ReviewDecisions.SingleAsync(Ct);
         var command = await check.WorkerCommands.SingleAsync(Ct);
-        Assert.Equal((CatalogMatcher.LookupKey("Small Rivers", null), "Small Rivers", "a  newspaper column"), (decision.LookupKey, decision.Title, decision.Note));
+        Assert.Equal((Key("Small Rivers", null), "Small Rivers", "a  newspaper column"), (decision.LookupKey, decision.Title, decision.Note));
         Assert.Equal((WorkerCommandType.ReviewDecided, decision.LookupKey), (command.Type, command.LookupKey));
+    }
+
+    [Fact]
+    public async Task A_key_no_mention_has_is_refused()
+    {
+        await AddMentionAsync(0, "Small Rivers", null, MatchState.NoMatch);
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.RejectAsync(db, "made up|key", ReviewVerdict.NotABook, null, Now, Ct));
+
+        Assert.Empty(await db.ReviewDecisions.ToListAsync(Ct));
+        Assert.Empty(await db.WorkerCommands.ToListAsync(Ct));
     }
 
     [Fact]
@@ -168,8 +180,8 @@ public sealed class ReviewTests : IAsyncLifetime
         await AddMentionAsync(1, "Small Rivers", null, MatchState.NoMatch);
 
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
-        await ReviewActions.ConfirmAsync(db, "The Lighthouse Keeper's Almanac", "Calder", Now, Ct);
-        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.ConfirmAsync(db, "Small Rivers", null, Now, Ct));
+        await ReviewActions.ConfirmAsync(db, Key("The Lighthouse Keeper's Almanac", "Calder"), Now, Ct);
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.ConfirmAsync(db, Key("Small Rivers", null), Now, Ct));
 
         Assert.Equal(_bookId, (await db.ReviewDecisions.SingleAsync(Ct)).BookId);
     }
@@ -179,10 +191,10 @@ public sealed class ReviewTests : IAsyncLifetime
     {
         await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", "Calder", MatchState.Matched, doubts: MatchDoubts.FewEditions);
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
-        await ReviewActions.RejectAsync(db, "The Lighthouse Keeper's Almanac", "Calder", ReviewVerdict.WrongBook, "not this one", Now, Ct);
+        await ReviewActions.RejectAsync(db, Key("The Lighthouse Keeper's Almanac", "Calder"), ReviewVerdict.WrongBook, "not this one", Now, Ct);
         _time.Advance(TimeSpan.FromMinutes(1));
 
-        await ReviewActions.ConfirmAsync(db, "The Lighthouse Keeper's Almanac", "Calder", Now, Ct);
+        await ReviewActions.ConfirmAsync(db, Key("The Lighthouse Keeper's Almanac", "Calder"), Now, Ct);
         var decision = await db.ReviewDecisions.AsNoTracking().SingleAsync(Ct);
         Assert.Equal((ReviewVerdict.Confirmed, (string?)null, Now), (decision.Verdict, decision.Note, decision.DecidedAt));
 
@@ -206,9 +218,9 @@ public sealed class ReviewTests : IAsyncLifetime
         await _runner.RunPendingAsync(Ct);
 
         await using var check = await _dbFactory.CreateDbContextAsync(Ct);
-        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.CorrectAsync(check, "Harbor Lights", null, searchId, "OL6666W", null, Now, Ct));
-        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.CorrectAsync(check, "Harbor Lights", null, Guid.NewGuid(), "OL1001W", null, Now, Ct));
-        await ReviewActions.CorrectAsync(check, "Harbor Lights", null, searchId, "OL1001W", null, Now, Ct);
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.CorrectAsync(check, Key("Harbor Lights", null), searchId, "OL6666W", null, Now, Ct));
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.CorrectAsync(check, Key("Harbor Lights", null), Guid.NewGuid(), "OL1001W", null, Now, Ct));
+        await ReviewActions.CorrectAsync(check, Key("Harbor Lights", null), searchId, "OL1001W", null, Now, Ct);
         var decision = await check.ReviewDecisions.SingleAsync(Ct);
         Assert.Equal((ReviewVerdict.Corrected, Almanac.CatalogId, Almanac.InfoUrl), (decision.Verdict, decision.Pick?.CatalogId, decision.Pick?.InfoUrl));
     }
@@ -221,7 +233,7 @@ public sealed class ReviewTests : IAsyncLifetime
         var searchId = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
         await _runner.RunPendingAsync(Ct);
 
-        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.CorrectAsync(db, "Harbor Lights", null, searchId, "OL1001W", null, Now, Ct));
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.CorrectAsync(db, Key("Harbor Lights", null), searchId, "OL1001W", null, Now, Ct));
     }
 
     [Fact]
@@ -285,6 +297,8 @@ public sealed class ReviewTests : IAsyncLifetime
         await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.RequestSearchAsync(db, "   ", null, Now, Ct));
     }
 
+    private static string Key(string title, string? author) => CatalogMatcher.LookupKey(title, author);
+
     private async Task AddMentionAsync(
         int episode, string title, string? author, MatchState state, double confidence = 0.9, MatchDoubts doubts = MatchDoubts.None,
         string matcherVersion = CatalogMatcher.Version)
@@ -306,7 +320,7 @@ public sealed class ReviewTests : IAsyncLifetime
             MatchState = state,
             BookId = state == MatchState.Matched ? _bookId : null,
             Doubts = doubts,
-            LookupKey = CatalogMatcher.LookupKey(title.Trim(), author),
+            LookupKey = CatalogMatcher.LookupKey(title, author),
             MatcherVersion = matcherVersion,
         });
         await db.SaveChangesAsync(Ct);

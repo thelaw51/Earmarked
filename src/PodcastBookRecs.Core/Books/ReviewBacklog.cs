@@ -21,8 +21,8 @@ public enum ReviewReasons
 public sealed record ReviewQuote(Guid EpisodeId, string EpisodeTitle, string? PodcastTitle, string Quote, TimeSpan? StartTime, MentionKind Kind);
 
 /// <summary>
-/// One title waiting for review. <see cref="Title"/> and <see cref="Author"/> are one mention's text as the model gave
-/// it, so <c>CatalogMatcher.LookupKey(Title, Author)</c> is <see cref="LookupKey"/>.
+/// One title waiting for review, identified by the mentions' stored <see cref="LookupKey"/>. <see cref="Title"/> and
+/// <see cref="Author"/> are the newest mention's text as the model gave it.
 /// </summary>
 public sealed record ReviewItem(
     string LookupKey,

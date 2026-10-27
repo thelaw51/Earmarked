@@ -10,8 +10,9 @@ public sealed class ReviewActionException(string message) : Exception(message);
 /// <summary>
 /// What the review page writes. Each decision, change or undo is saved in one <c>SaveChanges</c> together with the
 /// <see cref="WorkerCommandType.ReviewDecided"/> command that makes the Worker re-match the key, so neither is ever
-/// stored without the other. Everything the page sends is treated as untrusted: the key is computed here, text is
-/// trimmed and capped, a confirmed book comes from the mentions, and a pick comes from a stored search result.
+/// stored without the other. Everything the page sends is treated as untrusted: the key must belong to stored mentions,
+/// whose title and author the decision records, notes and search text are trimmed and capped, a confirmed book comes
+/// from the mentions, and a pick comes from a stored search result.
 /// </summary>
 public static class ReviewActions
 {
@@ -19,28 +20,28 @@ public static class ReviewActions
     public const int MaxOpenSearches = 5;
 
     /// <summary>Confirms the catalogue's match, using the book the title's mentions are matched to now.</summary>
-    public static async Task<WorkerCommand> ConfirmAsync(AppDbContext db, string title, string? author, DateTime now, CancellationToken cancellationToken)
+    public static async Task<WorkerCommand> ConfirmAsync(AppDbContext db, string key, DateTime now, CancellationToken cancellationToken)
     {
-        var (key, cleanTitle, cleanAuthor) = Key(title, author);
+        var (title, author) = await MentionedAsync(db, key, cancellationToken);
         var bookId = await db.BookMentions
             .Where(m => m.LookupKey == key && m.MatchState == MatchState.Matched && m.BookId != null)
             .Select(m => m.BookId)
             .FirstOrDefaultAsync(cancellationToken)
             ?? throw new ReviewActionException("This title isn't matched to a book, so there's nothing to confirm.");
-        return await SaveAsync(db, key, cleanTitle, cleanAuthor, ReviewVerdict.Confirmed, bookId, null, null, now, cancellationToken);
+        return await SaveAsync(db, key, title, author, ReviewVerdict.Confirmed, bookId, null, null, now, cancellationToken);
     }
 
     /// <summary>Rules a title out: not a book at all, or not the book the catalogue found.</summary>
     public static async Task<WorkerCommand> RejectAsync(
-        AppDbContext db, string title, string? author, ReviewVerdict verdict, string? note, DateTime now, CancellationToken cancellationToken)
+        AppDbContext db, string key, ReviewVerdict verdict, string? note, DateTime now, CancellationToken cancellationToken)
     {
         if (verdict is not (ReviewVerdict.NotABook or ReviewVerdict.WrongBook))
         {
             throw new ArgumentOutOfRangeException(nameof(verdict), verdict, "Only NotABook and WrongBook rule a title out.");
         }
 
-        var (key, cleanTitle, cleanAuthor) = Key(title, author);
-        return await SaveAsync(db, key, cleanTitle, cleanAuthor, verdict, null, null, Clean(note, ReviewDecision.MaxNoteLength), now, cancellationToken);
+        var (title, author) = await MentionedAsync(db, key, cancellationToken);
+        return await SaveAsync(db, key, title, author, verdict, null, null, Clean(note, ReviewDecision.MaxNoteLength), now, cancellationToken);
     }
 
     /// <summary>
@@ -48,7 +49,7 @@ public static class ReviewActions
     /// that catalogue ID, never from the page, and checked the way the matcher checks it.
     /// </summary>
     public static async Task<WorkerCommand> CorrectAsync(
-        AppDbContext db, string title, string? author, Guid searchId, string catalogId, string? note, DateTime now, CancellationToken cancellationToken)
+        AppDbContext db, string key, Guid searchId, string catalogId, string? note, DateTime now, CancellationToken cancellationToken)
     {
         var results = await db.CatalogSearches.AsNoTracking().Where(s => s.Id == searchId).Select(s => s.Results).FirstOrDefaultAsync(cancellationToken);
         var pick = results?.FirstOrDefault(b => b.CatalogId == catalogId);
@@ -57,8 +58,8 @@ public static class ReviewActions
             throw new ReviewActionException("That search result is no longer available. Search again.");
         }
 
-        var (key, cleanTitle, cleanAuthor) = Key(title, author);
-        return await SaveAsync(db, key, cleanTitle, cleanAuthor, ReviewVerdict.Corrected, null, pick, Clean(note, ReviewDecision.MaxNoteLength), now, cancellationToken);
+        var (title, author) = await MentionedAsync(db, key, cancellationToken);
+        return await SaveAsync(db, key, title, author, ReviewVerdict.Corrected, null, pick, Clean(note, ReviewDecision.MaxNoteLength), now, cancellationToken);
     }
 
     /// <summary>Deletes a decision, so the title is matched normally again.</summary>
@@ -126,12 +127,19 @@ public static class ReviewActions
     private static WorkerCommand Command(string key, DateTime now) =>
         new() { Type = WorkerCommandType.ReviewDecided, LookupKey = key, CreatedAt = now };
 
-    /// <summary>The key the matcher would give a mention with this title and author, from text trimmed and capped as mentions are.</summary>
-    private static (string Key, string Title, string? Author) Key(string title, string? author)
+    /// <summary>
+    /// The title and author of the newest mention with this key, to record on the decision. Decisions only go on keys
+    /// the matcher actually stored, so a key the page made up, or one whose mentions have all gone, is refused.
+    /// </summary>
+    private static async Task<(string Title, string? Author)> MentionedAsync(AppDbContext db, string key, CancellationToken cancellationToken)
     {
-        var cleanTitle = Clean(title, BookMention.MaxTitleLength) ?? throw new ReviewActionException("The title is empty.");
-        var cleanAuthor = Clean(author, BookMention.MaxAuthorLength);
-        return (CatalogMatcher.LookupKey(cleanTitle, cleanAuthor), cleanTitle, cleanAuthor);
+        var mention = await db.BookMentions
+            .Where(m => m.LookupKey == key)
+            .OrderByDescending(m => m.CreatedAt)
+            .Select(m => new { m.Title, m.Author })
+            .FirstOrDefaultAsync(cancellationToken)
+            ?? throw new ReviewActionException("No mentions of this title are left. Refresh the list.");
+        return (mention.Title, mention.Author);
     }
 
     private static string? Clean(string? text, int maxLength)

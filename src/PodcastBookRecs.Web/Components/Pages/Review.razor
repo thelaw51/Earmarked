@@ -277,15 +277,15 @@ else
     }
 
     private Task ConfirmAsync(ReviewItem item) =>
-        DecideAsync(item.LookupKey, "Confirmed.", (db, now) => ReviewActions.ConfirmAsync(db, item.Title, item.Author, now, _closing.Token));
+        DecideAsync(item.LookupKey, "Confirmed.", (db, now) => ReviewActions.ConfirmAsync(db, item.LookupKey, now, _closing.Token));
 
     private Task RejectAsync(ReviewItem item, ReviewVerdict verdict) =>
         DecideAsync(item.LookupKey, verdict == ReviewVerdict.NotABook ? "Marked as not a book." : "Marked as the wrong book.",
-            (db, now) => ReviewActions.RejectAsync(db, item.Title, item.Author, verdict, _notes.GetValueOrDefault(item.LookupKey), now, _closing.Token));
+            (db, now) => ReviewActions.RejectAsync(db, item.LookupKey, verdict, _notes.GetValueOrDefault(item.LookupKey), now, _closing.Token));
 
     private Task PickAsync(ReviewItem item, SearchState search, string catalogId) =>
         DecideAsync(item.LookupKey, "Book picked. It's added within a few seconds.",
-            (db, now) => ReviewActions.CorrectAsync(db, item.Title, item.Author, search.SearchId!.Value, catalogId, _notes.GetValueOrDefault(item.LookupKey), now, _closing.Token));
+            (db, now) => ReviewActions.CorrectAsync(db, item.LookupKey, search.SearchId!.Value, catalogId, _notes.GetValueOrDefault(item.LookupKey), now, _closing.Token));
 
     private Task UndoAsync(ReviewDecision decision) =>
         DecideAsync(decision.LookupKey, "Decision undone. The title is matched normally again.",
