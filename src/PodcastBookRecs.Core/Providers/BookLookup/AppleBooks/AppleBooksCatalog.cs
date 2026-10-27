@@ -94,9 +94,7 @@ public sealed partial class AppleBooksCatalog(IHttpClientFactory httpFactory, IO
                 }
 
                 var trackId = id.ToString(CultureInfo.InvariantCulture);
-                var authors = String(r, "artistName") is { } artist
-                    ? AuthorSeparator().Split(artist).Select(a => a.Trim()).Where(a => a.Length > 0).Select(a => Cap(a, 100)).Distinct().Take(MaxAuthorsPerBook).ToList()
-                    : [];
+                var authors = String(r, "artistName") is { } artist ? SplitAuthors(artist) : [];
                 books.Add(new CatalogBook(
                     trackId,
                     Cap(title, Book.MaxTitleLength),
@@ -129,7 +127,31 @@ public sealed partial class AppleBooksCatalog(IHttpClientFactory httpFactory, IO
 
     private static string Cap(string value, int max) => value.Length <= max ? value : value[..max];
 
-    /// <summary>Apple lists co-authors in one string: "A & B", "A, B & C" or "A and B".</summary>
-    [GeneratedRegex(@"\s*(?:&|,|\band\b)\s*")]
+    /// <summary>
+    /// Apple lists co-authors in one string: "A & B", "A, B & C" or "A and B". A comma before a suffix ("Martin Luther
+    /// King, Jr.") isn't a separator, so a piece that is only a suffix goes back onto the name before it; split off, it
+    /// would be a second "author" with no surname.
+    /// </summary>
+    internal static List<string> SplitAuthors(string artist)
+    {
+        var names = new List<string>();
+        foreach (var piece in AuthorSeparator().Split(artist).Select(a => a.Trim()).Where(a => a.Length > 0))
+        {
+            if (names.Count > 0 && NameSuffixes.Contains(piece.TrimEnd('.')))
+            {
+                names[^1] = $"{names[^1]}, {piece}";
+            }
+            else
+            {
+                names.Add(piece);
+            }
+        }
+
+        return [.. names.Select(a => Cap(a, 100)).Distinct().Take(MaxAuthorsPerBook)];
+    }
+
+    private static readonly HashSet<string> NameSuffixes = new(StringComparer.OrdinalIgnoreCase) { "Jr", "Sr", "II", "III", "IV", "PhD", "MD" };
+
+    [GeneratedRegex(@"\s*(?:&|,|\band\b)\s*", RegexOptions.IgnoreCase)]
     private static partial Regex AuthorSeparator();
 }

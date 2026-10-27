@@ -109,6 +109,15 @@ public sealed class AppleBooksCatalogTests
         Assert.Equal(HealthStatus.Healthy, Assert.Single(report.Entries).Value.Status);
     }
 
+    [Theory]
+    [InlineData("Martin Luther King, Jr.", new[] { "Martin Luther King, Jr." })]
+    [InlineData("Ada Okafor, Ines Calder & Tomas Reyne", new[] { "Ada Okafor", "Ines Calder", "Tomas Reyne" })]
+    [InlineData("Ada Okafor AND Tomas Reyne", new[] { "Ada Okafor", "Tomas Reyne" })]
+    [InlineData("Ines Calder Sr & Tomas Reyne, PhD", new[] { "Ines Calder Sr", "Tomas Reyne, PhD" })]
+    [InlineData("Brandon Anderson", new[] { "Brandon Anderson" })]
+    public void Co_authors_are_split_but_a_name_suffix_stays_with_its_name(string artist, string[] expected) =>
+        Assert.Equal(expected, AppleBooksCatalog.SplitAuthors(artist));
+
     [Fact]
     public async Task Its_status_row_reports_a_403_as_unhealthy()
     {
