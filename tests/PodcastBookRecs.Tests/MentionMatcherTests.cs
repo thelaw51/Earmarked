@@ -476,18 +476,45 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_fallback_that_cant_be_reached_pauses_and_one_that_answers_badly_fails_the_title()
+    public async Task A_fallback_that_cant_be_reached_fails_only_its_title_and_matching_carries_on()
     {
         var apple = new FakeCatalog(BookLookupProviders.AppleBooks) { Throw = new BackendUnavailableException("down") };
         var matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog, apple]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
+        await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+        await AddMentionAsync(1, "The Lighthouse Keeper's Almanac", "Ines Calder");
+
+        Assert.Equal(WorkOutcome.Worked, await matcher.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Worked, await matcher.ProcessNextAsync(Ct));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var states = await db.BookMentions.OrderBy(m => m.CreatedAt).Select(m => m.MatchState).ToListAsync(Ct);
+        Assert.Equal([MatchState.LookupFailed, MatchState.Matched], states);
+    }
+
+    [Fact]
+    public async Task A_fallback_that_answers_badly_fails_the_title()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks) { Throw = new CatalogLookupFailedException("odd") };
+        var matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog, apple]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
+        await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+
+        Assert.Equal(WorkOutcome.Worked, await matcher.ProcessNextAsync(Ct));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(MatchState.LookupFailed, (await db.BookMentions.SingleAsync(Ct)).MatchState);
+    }
+
+    [Fact]
+    public async Task A_primary_that_cant_be_reached_still_pauses_with_fallbacks_configured()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks);
+        var matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog, apple]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
+        _catalog.Throw = new BackendUnavailableException("down");
         await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
 
         Assert.Equal(WorkOutcome.Paused, await matcher.ProcessNextAsync(Ct));
-
-        apple.Throw = new CatalogLookupFailedException("odd");
-        Assert.Equal(WorkOutcome.Worked, await matcher.ProcessNextAsync(Ct));
-        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
-        Assert.Equal(MatchState.LookupFailed, (await db.BookMentions.SingleAsync(Ct)).MatchState);
+        Assert.Equal(0, apple.Calls);
     }
 
     [Theory]

@@ -146,7 +146,9 @@ public sealed partial class MentionMatcher(
     /// <summary>
     /// Asks the primary catalogue, then each fallback in turn while nothing is found. Fallbacks are asked only when the
     /// model named an author: they don't count editions, so without a surname to check no answer of theirs could be
-    /// accepted. An error from any catalogue ends the search, the same as one from the primary.
+    /// accepted. A primary that can't be reached pauses matching. A fallback that can't be reached fails only this
+    /// title, which is tried again after <see cref="RetryFailedAfter"/>, because an optional catalogue being down
+    /// mustn't stop the mentions behind this one, most of which the primary can match.
     /// </summary>
     private async Task<Found?> FindAsync(string title, string? author, CancellationToken cancellationToken)
     {
@@ -158,9 +160,16 @@ public sealed partial class MentionMatcher(
 
         foreach (var catalog in CatalogMatcher.HasSurname(author) ? catalogs.All : [catalogs.Primary])
         {
-            if (await SearchAsync(catalog, title, author, cancellationToken) is { } book)
+            try
             {
-                return new Found(book, catalog);
+                if (await SearchAsync(catalog, title, author, cancellationToken) is { } book)
+                {
+                    return new Found(book, catalog);
+                }
+            }
+            catch (BackendUnavailableException ex) when (catalog != catalogs.Primary)
+            {
+                throw new CatalogLookupFailedException($"Fallback {catalog.Provider} unavailable: {ex.Message}", ex);
             }
         }
 
