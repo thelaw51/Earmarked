@@ -3,6 +3,7 @@
 @implements IDisposable
 @inject NavigationManager Navigation
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject SchemaStatus Schema
 
 <MudThemeProvider Theme="AppTheme.Theme" @bind-IsDarkMode="_darkMode" />
 <MudPopoverProvider />
@@ -83,12 +84,19 @@
 
     /// <summary>
     /// Counts the titles waiting for review. Runs on every navigation and when the review page saves a decision, so the
-    /// badge needs no polling. Before the Worker has created or migrated the database the count fails; the badge just stays hidden.
+    /// badge needs no polling. The layout sits outside SchemaGate, so it asks SchemaStatus first: opening a database the
+    /// Worker hasn't created yet would create an empty file.
     /// </summary>
     private async Task RefreshReviewCountAsync()
     {
         try
         {
+            if (!await Schema.IsReadyAsync(CancellationToken.None))
+            {
+                _reviewCount = null;
+                return;
+            }
+
             await using var db = await DbFactory.CreateDbContextAsync();
             _reviewCount = await ReviewBacklog.CountAsync(db, CancellationToken.None);
         }
