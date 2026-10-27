@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using PodcastBookRecs.Core.Backends;
@@ -28,16 +29,22 @@ public sealed partial class MentionMatcher(
 {
     public static readonly TimeSpan RetryFailedAfter = TimeSpan.FromDays(1);
 
+    /// <summary>
+    /// How long "not in any catalogue" stands before the title is searched again: catalogues add books (a new release
+    /// listed next month, a fallback turned on later), and a search a month per title costs little.
+    /// </summary>
+    public static readonly TimeSpan RetryNoMatchAfter = TimeSpan.FromDays(30);
+
     /// <summary>Fallbacks whose last answer was a failure, so the log warns once per outage, not once per title.</summary>
     private readonly ConcurrentDictionary<string, bool> _failingFallbacks = new(StringComparer.Ordinal);
 
     public async Task<WorkOutcome> ProcessNextAsync(CancellationToken cancellationToken)
     {
-        var retryBefore = time.GetUtcNow().UtcDateTime - RetryFailedAfter;
+        var now = time.GetUtcNow().UtcDateTime;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var next = await db.BookMentions
-            .Where(m => m.MatcherVersion != CatalogMatcher.Version || (m.MatchState == MatchState.LookupFailed && m.MatchedAt < retryBefore))
-            .OrderBy(m => m.MatchState == MatchState.LookupFailed).ThenBy(m => m.CreatedAt).ThenBy(m => m.Id)
+            .Where(IsDue(now))
+            .OrderBy(m => m.MatchState == MatchState.LookupFailed || m.MatchState == MatchState.NoMatch).ThenBy(m => m.CreatedAt).ThenBy(m => m.Id)
             .Select(m => new { m.Id, m.Title, m.Author })
             .FirstOrDefaultAsync(cancellationToken);
         if (next is null)
@@ -55,9 +62,11 @@ public sealed partial class MentionMatcher(
 
         // Mentions settled by a decision share this key, so this can reuse their answer. That is safe only because the
         // decision check above runs first. After an undo, anything reused before ReviewDecided runs is cleared when it does.
+        // A "not found" is reused only while it is fresh, or a stale one would be copied instead of searched again.
+        var noMatchFreshAfter = now - RetryNoMatchAfter;
         var known = await db.BookMentions
             .Where(m => m.LookupKey == key && m.MatcherVersion == CatalogMatcher.Version)
-            .Where(m => (m.MatchState == MatchState.Matched && m.BookId != null) || m.MatchState == MatchState.NoMatch)
+            .Where(m => (m.MatchState == MatchState.Matched && m.BookId != null) || (m.MatchState == MatchState.NoMatch && m.MatchedAt >= noMatchFreshAfter))
             .Select(m => new { m.MatchState, m.BookId, m.Doubts })
             .FirstOrDefaultAsync(cancellationToken);
         if (known is not null)
@@ -259,6 +268,20 @@ public sealed partial class MentionMatcher(
     }
 
     /// <summary>
+    /// Mentions the matcher should (re)match: new or matched under older rules, a failed lookup after
+    /// <see cref="RetryFailedAfter"/>, and a "not found" after <see cref="RetryNoMatchAfter"/>. The queue and the save
+    /// guard share it, so a retried mention can't be picked and then have its answer dropped, which would loop.
+    /// </summary>
+    private static Expression<Func<BookMention, bool>> IsDue(DateTime now)
+    {
+        var failedBefore = now - RetryFailedAfter;
+        var noMatchBefore = now - RetryNoMatchAfter;
+        return m => m.MatcherVersion != CatalogMatcher.Version
+            || (m.MatchState == MatchState.LookupFailed && m.MatchedAt < failedBefore)
+            || (m.MatchState == MatchState.NoMatch && m.MatchedAt < noMatchBefore);
+    }
+
+    /// <summary>
     /// Stores an answer if the mention is still due. With <paramref name="decision"/> null the answer came from the
     /// catalogue or an earlier answer, and is dropped if a decision now exists for the key; otherwise it is dropped if
     /// that decision has since been changed or undone.
@@ -266,8 +289,7 @@ public sealed partial class MentionMatcher(
     private async Task SaveAsync(AppDbContext db, Guid mentionId, string key, Answer answer, ReviewDecision? decision, CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow().UtcDateTime;
-        var due = db.BookMentions
-            .Where(m => m.Id == mentionId && (m.MatcherVersion != CatalogMatcher.Version || m.MatchState == MatchState.LookupFailed));
+        var due = db.BookMentions.Where(m => m.Id == mentionId).Where(IsDue(now));
         due = decision is null
             ? due.Where(m => !db.ReviewDecisions.Any(d => d.LookupKey == key))
             : due.Where(m => db.ReviewDecisions.Any(d => d.Id == decision.Id && d.DecidedAt == decision.DecidedAt));

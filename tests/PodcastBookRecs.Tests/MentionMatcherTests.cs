@@ -18,6 +18,9 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     private static readonly CatalogBook Almanac =
         new("OL1001W", "The Lighthouse Keeper's Almanac", null, ["Ines Calder"], 2019, 4, "https://openlibrary.org/works/OL1001W", null);
 
+    private static readonly CatalogBook HarbourLights =
+        new("OL1002W", "Harbour Lights", null, ["Ines Calder"], 2026, 3, "https://openlibrary.org/works/OL1002W", null);
+
     private readonly string _root = Directory.CreateTempSubdirectory("pbr-matcher-").FullName;
     private readonly FakeCatalog _catalog = new();
     private IDbContextFactory<AppDbContext> _dbFactory = null!;
@@ -170,6 +173,72 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
         Assert.Equal(MatchState.Matched, (await db.BookMentions.SingleAsync(m => m.Id == id, Ct)).MatchState);
     }
+
+    [Fact]
+    public async Task A_title_not_found_is_searched_again_after_thirty_days_and_not_before()
+    {
+        var id = await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+        await RunUntilIdleAsync();
+        _catalog.Answer("Harbour Lights", HarbourLights);
+
+        var early = Later(MentionMatcher.RetryNoMatchAfter - TimeSpan.FromMinutes(1));
+        Assert.Equal(WorkOutcome.Idle, await early.ProcessNextAsync(Ct));
+
+        var later = Later(MentionMatcher.RetryNoMatchAfter + TimeSpan.FromMinutes(1));
+        Assert.Equal(WorkOutcome.Worked, await later.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Idle, await later.ProcessNextAsync(Ct));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(MatchState.Matched, (await db.BookMentions.SingleAsync(m => m.Id == id, Ct)).MatchState);
+    }
+
+    [Fact]
+    public async Task A_title_still_not_found_on_retry_waits_another_thirty_days()
+    {
+        await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+        await RunUntilIdleAsync();
+        var later = Later(MentionMatcher.RetryNoMatchAfter + TimeSpan.FromMinutes(1));
+
+        // The retry's answer must save, or the mention would stay due and be searched on every pass.
+        Assert.Equal(WorkOutcome.Worked, await later.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Idle, await later.ProcessNextAsync(Ct));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var mention = await db.BookMentions.SingleAsync(Ct);
+        Assert.Equal(MatchState.NoMatch, mention.MatchState);
+        Assert.True(mention.MatchedAt > DateTime.UtcNow + MentionMatcher.RetryNoMatchAfter - TimeSpan.FromMinutes(1));
+    }
+
+    [Fact]
+    public async Task A_stale_not_found_is_searched_once_per_title_and_comes_after_new_mentions()
+    {
+        await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+        await AddMentionAsync(1, "Harbour Lights", "Ines Calder");
+        await RunUntilIdleAsync();
+        _catalog.Answer("Harbour Lights", HarbourLights);
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
+        var fresh = await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", null);
+        var callsBefore = _catalog.Calls;
+
+        var later = Later(MentionMatcher.RetryNoMatchAfter + TimeSpan.FromMinutes(1));
+        Assert.Equal(WorkOutcome.Worked, await later.ProcessNextAsync(Ct));
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            Assert.Equal(MatchState.Matched, (await db.BookMentions.SingleAsync(m => m.Id == fresh, Ct)).MatchState);
+        }
+
+        Assert.Equal(WorkOutcome.Worked, await later.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Worked, await later.ProcessNextAsync(Ct));
+        Assert.Equal(WorkOutcome.Idle, await later.ProcessNextAsync(Ct));
+
+        await using var after = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.All(await after.BookMentions.ToListAsync(Ct), m => Assert.Equal(MatchState.Matched, m.MatchState));
+        // The almanac's one search, then one for the two Harbour Lights mentions: the second reuses the first's answer.
+        Assert.Equal(2, _catalog.Calls - callsBefore);
+    }
+
+    private MentionMatcher Later(TimeSpan offset) =>
+        new(_dbFactory, new BookCatalogChain([_catalog]), new ShiftedTime(offset), NullLogger<MentionMatcher>.Instance);
 
     [Fact]
     public async Task Doesnt_copy_a_match_whose_book_is_gone()
