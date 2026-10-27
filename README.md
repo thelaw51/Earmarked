@@ -253,14 +253,15 @@ Matching sends book titles and author names, nothing else, to Open Library over 
 Open Library is missing a lot of new and self-published books. List more catalogues in `BookLookup:Fallbacks` and the matcher asks them, in order, for titles Open Library can't place:
 
 ```json
-"BookLookup": { "Fallbacks": [ "AppleBooks" ] },
+"BookLookup": { "Fallbacks": [ "Hardcover", "AppleBooks" ] },
 "AppleBooks": { "Country": "gb" }
 ```
 
+- **Hardcover** is a book catalogue with one entry per book and many recent titles. It needs a free account and a personal API token: in Hardcover's account settings, open *Hardcover API*, choose *New API Key*, and tick only the `read:catalog` scope, since a token with every scope can delete the account. Pass it to the Worker as the `PBR_Hardcover__Token` environment variable rather than putting it in `config.json`; the Worker won't start with Hardcover listed and no token. Searches go out at most one a second, inside Hardcover's 60 a minute. Its Status row sends one small search every 30 minutes to check the token, about 48 of the free plan's 5,000 requests a day, and says when the token has expired or lacks the scope. Hardcover's covers are uploaded by its users, which is fine for a private instance; if you make yours public, take that into account.
 - **Apple Books** searches the Apple Books store through Apple's public search API, with no key or account. `AppleBooks:Country` picks the store (`us` by default), because stores list different books. Requests go out at most one every 3 seconds, inside Apple's limit of about 20 a minute.
-- A fallback is asked only when the model named an author, because a store has one entry per edition and no edition count, so the author's surname is all that confirms the match. Every fallback match goes to the *Review* page as *Found in a fallback catalogue*, where one click confirms it.
-- Because a store lists each edition separately, two mentions of one book found only through a fallback can land on two different books (say, a paperback and an anniversary edition), and the *Books* page then ranks each on its own count. Confirming one and pointing the other at it with *Find the book* merges them.
-- Turning a fallback on sends book titles and author names to that catalogue too. If a fallback is down or asks the Worker to slow down (Apple says so with HTTP 403 as well as 429), matching doesn't wait for it: each title that needed it is marked *Lookup failed*, shows on the *Review* page, and is tried again a day later. Only an Open Library outage pauses matching. Each fallback has its own row on the Status page, such as *book lookup: Apple Books*.
+- A fallback is asked only when the model named an author, because neither fallback reports how many editions a book has, so the author's surname is all that confirms the match. If one fallback fails, the next is still asked. Every fallback match goes to the *Review* page as *Found in a fallback catalogue*, where one click confirms it.
+- Because Apple lists each edition separately, two mentions of one book found only through a fallback can land on two different books (say, a paperback and an anniversary edition), and the *Books* page then ranks each on its own count. Confirming one and pointing the other at it with *Find the book* merges them.
+- Turning a fallback on sends book titles and author names to that catalogue too; Hardcover receives them under your account. If a fallback is down or asks the Worker to slow down (Apple says so with HTTP 403 as well as 429), or Hardcover rejects the token, matching doesn't wait for it: each title that needed it is marked *Lookup failed*, shows on the *Review* page, and is tried again a day later. Only an Open Library outage pauses matching. Each fallback has its own row on the Status page, such as *book lookup: Apple Books*.
 - Goodreads and Amazon aren't offered. Goodreads has no public API (other tools use a key lifted from its website), and Amazon would mean scraping its pages.
 
 A fallback only changes titles the primary catalogue can't place; titles that already have a book keep it. Adding one later doesn't re-ask titles already marked *Not in the catalogue*: they get the fallback the next time the matching rules change, or straight away through *Find the book*, which searches every catalogue. A rules change matches every mention again once, and until that finishes (a few minutes for a few hundred titles) the *Review* page and its count are short.
@@ -296,7 +297,8 @@ Settings come from `/config/config.json`, then environment variables prefixed `P
 | `Polling:MaxAttempts` | `5` | Transient failures before an episode stops retrying a published transcript |
 | `Feeds` | `[]` | Feeds imported on Worker startup if missing. Feeds added in the UI live in the database. |
 | `BookLookup:Provider` | `OpenLibrary` | The book catalogue mentions are matched against; empty turns matching off |
-| `BookLookup:Fallbacks` | none | Catalogues to try, in order, when the first finds nothing, e.g. `["AppleBooks"]` |
+| `BookLookup:Fallbacks` | none | Catalogues to try, in order, when the first finds nothing, e.g. `["Hardcover", "AppleBooks"]` |
+| `Hardcover:Token` | none | Personal API token with the `read:catalog` scope, needed only when `Hardcover` is listed. Set it as `PBR_Hardcover__Token`. |
 | `AppleBooks:Country` | `us` | The Apple Books store to search, as a two-letter country code |
 | `OpenLibrary:ContactEmail` | | Sent in the User-Agent so Open Library can get in touch about heavy use. Optional. |
 | `AllowedHosts` | `*` | Host names the web app answers, separated by semicolons. Anything else gets 400. Set it before exposing the app; see Cloudflare Tunnel above. |
