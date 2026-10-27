@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using PodcastBookRecs.Core.Backends;
@@ -14,7 +15,8 @@ namespace PodcastBookRecs.Core.Pipeline;
 /// mention whose title and author were already looked up under the current rules copies that answer instead of asking
 /// again. Mentions not yet matched by <see cref="CatalogMatcher.Version"/>, including every new one, are due, so
 /// changing the rules re-matches everything. A lookup that failed is tried again after <see cref="RetryFailedAfter"/>,
-/// at the back of the queue.
+/// and a title not found after <see cref="RetryNoMatchAfter"/>, both at the back of the queue. A copied "not found" keeps
+/// the time of the search it came from, so every mention of a title comes due together and costs one search.
 /// Mentions aren't episode state, so this doesn't take <see cref="EpisodeStateLock"/>: each update is conditional, and a
 /// mention deleted by re-extraction while it was being looked up simply updates nothing. A save from the catalogue also
 /// updates nothing once a decision exists for its key, and a save from a decision updates nothing once that decision
@@ -28,16 +30,24 @@ public sealed partial class MentionMatcher(
 {
     public static readonly TimeSpan RetryFailedAfter = TimeSpan.FromDays(1);
 
+    /// <summary>
+    /// How long "not in any catalogue" stands before the title is searched again: catalogues add books (a new release
+    /// listed next month, a fallback turned on later). A retry costs what the first search did, once per title: two
+    /// requests to each catalogue asked (with the author, then without), fallbacks only for titles with an author
+    /// surname, and nothing for a title too vague to match. The adapters' pacing spreads a large batch over time.
+    /// </summary>
+    public static readonly TimeSpan RetryNoMatchAfter = TimeSpan.FromDays(30);
+
     /// <summary>Fallbacks whose last answer was a failure, so the log warns once per outage, not once per title.</summary>
     private readonly ConcurrentDictionary<string, bool> _failingFallbacks = new(StringComparer.Ordinal);
 
     public async Task<WorkOutcome> ProcessNextAsync(CancellationToken cancellationToken)
     {
-        var retryBefore = time.GetUtcNow().UtcDateTime - RetryFailedAfter;
+        var now = time.GetUtcNow().UtcDateTime;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var next = await db.BookMentions
-            .Where(m => m.MatcherVersion != CatalogMatcher.Version || (m.MatchState == MatchState.LookupFailed && m.MatchedAt < retryBefore))
-            .OrderBy(m => m.MatchState == MatchState.LookupFailed).ThenBy(m => m.CreatedAt).ThenBy(m => m.Id)
+            .Where(IsDue(now))
+            .OrderBy(IsRetry).ThenBy(m => m.CreatedAt).ThenBy(m => m.Id)
             .Select(m => new { m.Id, m.Title, m.Author })
             .FirstOrDefaultAsync(cancellationToken);
         if (next is null)
@@ -55,14 +65,20 @@ public sealed partial class MentionMatcher(
 
         // Mentions settled by a decision share this key, so this can reuse their answer. That is safe only because the
         // decision check above runs first. After an undo, anything reused before ReviewDecided runs is cleared when it does.
+        // A "not found" is reused only while it is fresh, or a stale one would be copied instead of searched again.
+        var noMatchFreshAfter = now - RetryNoMatchAfter;
         var known = await db.BookMentions
             .Where(m => m.LookupKey == key && m.MatcherVersion == CatalogMatcher.Version)
-            .Where(m => (m.MatchState == MatchState.Matched && m.BookId != null) || m.MatchState == MatchState.NoMatch)
-            .Select(m => new { m.MatchState, m.BookId, m.Doubts })
+            .Where(m => (m.MatchState == MatchState.Matched && m.BookId != null) || (m.MatchState == MatchState.NoMatch && m.MatchedAt >= noMatchFreshAfter))
+            .OrderBy(m => m.MatchState != MatchState.Matched)
+            .Select(m => new { m.MatchState, m.BookId, m.Doubts, m.MatchedAt })
             .FirstOrDefaultAsync(cancellationToken);
         if (known is not null)
         {
-            await SaveAsync(db, next.Id, key, new Answer(known.MatchState, known.BookId, known.Doubts), null, cancellationToken);
+            // A copied "not found" keeps the time of the search it came from. Stamped with now, two mentions of one title
+            // would keep each other fresh by copying in turn, and the title would never be searched again.
+            var answeredAt = known.MatchState == MatchState.NoMatch ? known.MatchedAt : null;
+            await SaveAsync(db, next.Id, key, new Answer(known.MatchState, known.BookId, known.Doubts, answeredAt), null, cancellationToken);
             return WorkOutcome.Worked;
         }
 
@@ -259,6 +275,26 @@ public sealed partial class MentionMatcher(
     }
 
     /// <summary>
+    /// A due mention already matched under the current rules is a retry (of a failed lookup or a title not found), which
+    /// waits behind new mentions and those due because the rules changed.
+    /// </summary>
+    private static readonly Expression<Func<BookMention, bool>> IsRetry = m => m.MatcherVersion == CatalogMatcher.Version;
+
+    /// <summary>
+    /// Mentions the matcher should (re)match: new or matched under older rules, a failed lookup after
+    /// <see cref="RetryFailedAfter"/>, and a "not found" after <see cref="RetryNoMatchAfter"/>. The queue and the save
+    /// guard share it, so a retried mention can't be picked and then have its answer dropped, which would loop.
+    /// </summary>
+    private static Expression<Func<BookMention, bool>> IsDue(DateTime now)
+    {
+        var failedBefore = now - RetryFailedAfter;
+        var noMatchBefore = now - RetryNoMatchAfter;
+        return m => m.MatcherVersion != CatalogMatcher.Version
+            || (m.MatchState == MatchState.LookupFailed && m.MatchedAt < failedBefore)
+            || (m.MatchState == MatchState.NoMatch && m.MatchedAt < noMatchBefore);
+    }
+
+    /// <summary>
     /// Stores an answer if the mention is still due. With <paramref name="decision"/> null the answer came from the
     /// catalogue or an earlier answer, and is dropped if a decision now exists for the key; otherwise it is dropped if
     /// that decision has since been changed or undone.
@@ -266,8 +302,7 @@ public sealed partial class MentionMatcher(
     private async Task SaveAsync(AppDbContext db, Guid mentionId, string key, Answer answer, ReviewDecision? decision, CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow().UtcDateTime;
-        var due = db.BookMentions
-            .Where(m => m.Id == mentionId && (m.MatcherVersion != CatalogMatcher.Version || m.MatchState == MatchState.LookupFailed));
+        var due = db.BookMentions.Where(m => m.Id == mentionId).Where(IsDue(now));
         due = decision is null
             ? due.Where(m => !db.ReviewDecisions.Any(d => d.LookupKey == key))
             : due.Where(m => db.ReviewDecisions.Any(d => d.Id == decision.Id && d.DecidedAt == decision.DecidedAt));
@@ -277,10 +312,11 @@ public sealed partial class MentionMatcher(
             .SetProperty(m => m.Doubts, answer.Doubts)
             .SetProperty(m => m.LookupKey, key)
             .SetProperty(m => m.MatcherVersion, CatalogMatcher.Version)
-            .SetProperty(m => m.MatchedAt, now), cancellationToken);
+            .SetProperty(m => m.MatchedAt, answer.AnsweredAt ?? now), cancellationToken);
     }
 
-    private sealed record Answer(MatchState State, Guid? BookId, MatchDoubts Doubts);
+    /// <summary>A match result to save. <paramref name="AnsweredAt"/> is when a copied answer was found, if not now.</summary>
+    private sealed record Answer(MatchState State, Guid? BookId, MatchDoubts Doubts, DateTime? AnsweredAt = null);
 
     private sealed record Found(CatalogBook Book, IBookCatalog Catalog);
 
