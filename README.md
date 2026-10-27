@@ -229,7 +229,7 @@ The Worker checks each book mention against [Open Library](https://openlibrary.o
 
 ### Review decisions
 
-A person's ruling on a title and author (the match is right, it isn't a book, it's the wrong book, or it's this other book) is stored on its own, keyed on the same title-and-surname key the matcher uses, and applies to every mention with that key on every podcast. The matcher reads it before anything else, so it holds when the rules change and every mention is matched again, when an episode's books are extracted again, and when an episode is reset or gets a new transcript: the new mentions get the same ruling. Mentions ruled out leave the book list. Undoing a decision matches its mentions normally again. Decisions are applied by the matcher, so with book lookup turned off they wait until it's back on.
+A person's ruling on a title and author (the match is right, it isn't a book, it's the wrong book, it's this other book, or it's a real book no catalogue has) is stored on its own, keyed on the same title-and-surname key the matcher uses, and applies to every mention with that key on every podcast. The matcher reads it before anything else, so it holds when the rules change and every mention is matched again, when an episode's books are extracted again, and when an episode is reset or gets a new transcript: the new mentions get the same ruling. Mentions ruled out leave the book list. Undoing a decision matches its mentions normally again. Decisions are applied by the matcher, so with book lookup turned off they wait until it's back on.
 
 ### The review page
 
@@ -238,6 +238,7 @@ A person's ruling on a title and author (the match is right, it isn't a book, it
 - **Confirm** a match. It leaves the list for good.
 - Mark it **Not a book** (a newspaper, "my last book") or the **Wrong book**, with an optional note. Its mentions leave the book list.
 - **Find the book**: search the catalogue with the title and author, both editable, and pick the right result.
+- **Keep as is**, for a real book the catalogue doesn't have, often because it's too new or self-published. Fix the title and author if the model got them slightly wrong, then *Save as a book*. The book ranks and exports like any other, with no catalogue link and no cover, and its page says it isn't in any catalogue. Keeping the same title again with different text changes that book; undoing it and keeping it again makes a new one. Like any decision, it's applied by the matcher, so with book lookup turned off it waits until lookup is back on.
 
 Decided titles are listed underneath, each with an *Undo*.
 
