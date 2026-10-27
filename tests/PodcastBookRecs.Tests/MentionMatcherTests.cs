@@ -505,6 +505,47 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         Assert.Equal(MatchState.LookupFailed, (await db.BookMentions.SingleAsync(Ct)).MatchState);
     }
 
+    [Theory]
+    [InlineData(true, true, MatchState.Matched)]
+    [InlineData(false, true, MatchState.Matched)]
+    [InlineData(true, false, MatchState.LookupFailed)]
+    [InlineData(false, false, MatchState.LookupFailed)]
+    public async Task A_failing_fallback_is_skipped_and_the_next_one_asked(bool unreachable, bool lastHasIt, MatchState expected)
+    {
+        var hardcover = new FakeCatalog("Hardcover") { Throw = unreachable ? new BackendUnavailableException("down") : new CatalogLookupFailedException("401") };
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks);
+        var matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog, hardcover, apple]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
+        if (lastHasIt)
+        {
+            apple.Answer("Harbour Lights", AppleBook("Harbour Lights", "Ines Calder"));
+        }
+
+        await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+
+        Assert.Equal(WorkOutcome.Worked, await matcher.ProcessNextAsync(Ct));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var mention = await db.BookMentions.SingleAsync(Ct);
+        Assert.Equal(expected, mention.MatchState);
+        Assert.Equal(expected == MatchState.Matched ? MatchDoubts.OtherCatalogue : MatchDoubts.None, mention.Doubts);
+        // Apple is still asked: with the author, and when that finds nothing, by title alone.
+        Assert.Equal(lastHasIt ? 1 : 2, apple.Calls);
+    }
+
+    [Fact]
+    public async Task With_every_fallback_answering_and_none_matching_the_title_is_not_found()
+    {
+        var hardcover = new FakeCatalog("Hardcover");
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks);
+        var matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog, hardcover, apple]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
+        await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+
+        await RunUntilIdleAsync(matcher);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(MatchState.NoMatch, (await db.BookMentions.SingleAsync(Ct)).MatchState);
+    }
+
     [Fact]
     public async Task A_primary_that_cant_be_reached_still_pauses_with_fallbacks_configured()
     {

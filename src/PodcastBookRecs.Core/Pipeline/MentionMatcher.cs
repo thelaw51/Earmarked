@@ -146,9 +146,10 @@ public sealed partial class MentionMatcher(
     /// <summary>
     /// Asks the primary catalogue, then each fallback in turn while nothing is found. Fallbacks are asked only when the
     /// model named an author: they don't count editions, so without a surname to check no answer of theirs could be
-    /// accepted. A primary that can't be reached pauses matching. A fallback that can't be reached fails only this
-    /// title, which is tried again after <see cref="RetryFailedAfter"/>, because an optional catalogue being down
-    /// mustn't stop the mentions behind this one, most of which the primary can match.
+    /// accepted. A primary that can't be reached pauses matching. A fallback that fails, unreachable or with a bad
+    /// answer, is skipped and the next one asked, so one optional catalogue being down (or its token expiring) can't
+    /// stop the others or the mentions behind this one. If nothing matched and some fallback failed, the title fails
+    /// and is tried again after <see cref="RetryFailedAfter"/>, since that catalogue might have had it.
     /// </summary>
     private async Task<Found?> FindAsync(string title, string? author, CancellationToken cancellationToken)
     {
@@ -158,6 +159,7 @@ public sealed partial class MentionMatcher(
             return null;
         }
 
+        CatalogLookupFailedException? fallbackFailed = null;
         foreach (var catalog in CatalogMatcher.HasSurname(author) ? catalogs.All : [catalogs.Primary])
         {
             try
@@ -167,13 +169,14 @@ public sealed partial class MentionMatcher(
                     return new Found(book, catalog);
                 }
             }
-            catch (BackendUnavailableException ex) when (catalog != catalogs.Primary)
+            catch (Exception ex) when (catalog != catalogs.Primary && ex is BackendUnavailableException or CatalogLookupFailedException)
             {
-                throw new CatalogLookupFailedException($"Fallback {catalog.Provider} unavailable: {ex.Message}", ex);
+                LogFallbackFailed(catalog.Provider, ex.Message);
+                fallbackFailed ??= new CatalogLookupFailedException($"Fallback {catalog.Provider} failed: {ex.Message}", ex);
             }
         }
 
-        return null;
+        return fallbackFailed is null ? null : throw fallbackFailed;
     }
 
     /// <summary>
@@ -268,6 +271,9 @@ public sealed partial class MentionMatcher(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Couldn't apply the {Verdict} review decision for \"{Title}\"")]
     private partial void LogDecisionUnusable(string title, ReviewVerdict verdict);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Fallback catalogue {Catalogue} failed, trying the next: {Reason}")]
+    private partial void LogFallbackFailed(string catalogue, string reason);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Book matching paused: {Reason}")]
     private partial void LogPaused(string reason);
