@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using System.Data.Common;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using PodcastBookRecs.Core.Backends;
@@ -282,6 +284,24 @@ public sealed class ReviewTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_idle_pass_writes_nothing_once_the_clean_up_has_run()
+    {
+        var writes = new WriteCounter();
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite($"Data Source={Path.Combine(_root, "test.db")}")
+            .AddInterceptors(new SqlitePragmaInterceptor(), writes)
+            .Options;
+        var runner = new CatalogSearchRunner(new PooledDbContextFactory<AppDbContext>(options), _catalog, _time, NullLogger<CatalogSearchRunner>.Instance);
+        await runner.RunPendingAsync(Ct);
+        writes.Count = 0;
+
+        _time.Advance(TimeSpan.FromMinutes(5));
+        await runner.RunPendingAsync(Ct);
+
+        Assert.Equal(0, writes.Count);
+    }
+
+    [Fact]
     public async Task Repeating_a_search_reuses_it_and_too_many_open_ones_are_refused()
     {
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
@@ -347,6 +367,30 @@ public sealed class ReviewTests : IAsyncLifetime
 
             IReadOnlyList<CatalogBook> found = _answers.TryGetValue(title, out var a) && (author is null || !a.OnlyWithoutAuthor) ? [a.Book] : [];
             return Task.FromResult(found);
+        }
+    }
+
+    /// <summary>Counts statements that write, so a test can check a pass only read.</summary>
+    private sealed class WriteCounter : DbCommandInterceptor
+    {
+        public int Count { get; set; }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            Count++;
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (!command.CommandText.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase))
+            {
+                Count++;
+            }
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
         }
     }
 

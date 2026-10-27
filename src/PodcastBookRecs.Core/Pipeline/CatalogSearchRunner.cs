@@ -28,24 +28,41 @@ public sealed partial class CatalogSearchRunner(
     public const string UnreadableError = "The catalogue's answer couldn't be read.";
     public const string FailedError = "The search failed. The Worker's log has the details.";
 
-    /// <summary>Clears out old searches, closes ones nobody is waiting for, then answers the rest.</summary>
+    /// <summary>How often searches older than <see cref="KeepFor"/> are deleted.</summary>
+    private static readonly TimeSpan CleanUpEvery = TimeSpan.FromHours(1);
+
+    private DateTime _nextCleanUp = DateTime.MinValue;
+
+    /// <summary>
+    /// Answers open searches, closing any nobody is waiting for, and now and then deletes old ones. It runs every second,
+    /// so a pass with nothing open only reads: a write, even one that changes no rows, takes SQLite's write lock, which
+    /// the matcher, extractor and poller need.
+    /// </summary>
     public async Task RunPendingAsync(CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow().UtcDateTime;
-        var keepAfter = now - KeepFor;
-        var expireBefore = now - ExpireAfter;
         List<CatalogSearch> open;
         await using (var db = await dbFactory.CreateDbContextAsync(cancellationToken))
         {
-            await db.CatalogSearches.Where(s => s.CreatedAt < keepAfter).ExecuteDeleteAsync(cancellationToken);
-            await db.CatalogSearches.Where(s => s.CompletedAt == null && s.CreatedAt < expireBefore).ExecuteUpdateAsync(
-                s => s.SetProperty(c => c.CompletedAt, now).SetProperty(c => c.Error, ExpiredError), cancellationToken);
             open = await db.CatalogSearches.AsNoTracking().Where(s => s.CompletedAt == null).OrderBy(s => s.CreatedAt).ToListAsync(cancellationToken);
+            if (now >= _nextCleanUp)
+            {
+                var keepAfter = now - KeepFor;
+                await db.CatalogSearches.Where(s => s.CreatedAt < keepAfter).ExecuteDeleteAsync(cancellationToken);
+                _nextCleanUp = now + CleanUpEvery;
+            }
         }
 
         foreach (var search in open)
         {
-            await RunAsync(search, cancellationToken);
+            if (search.CreatedAt < now - ExpireAfter)
+            {
+                await CompleteAsync(search.Id, null, ExpiredError, cancellationToken);
+            }
+            else
+            {
+                await RunAsync(search, cancellationToken);
+            }
         }
     }
 
@@ -77,10 +94,15 @@ public sealed partial class CatalogSearchRunner(
             error = FailedError;
         }
 
+        await CompleteAsync(search.Id, error == null ? results : null, error, cancellationToken);
+    }
+
+    private async Task CompleteAsync(Guid id, List<CatalogBook>? results, string? error, CancellationToken cancellationToken)
+    {
         var now = time.GetUtcNow().UtcDateTime;
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        await db.CatalogSearches.Where(s => s.Id == search.Id && s.CompletedAt == null).ExecuteUpdateAsync(
-            s => s.SetProperty(c => c.CompletedAt, now).SetProperty(c => c.Error, error).SetProperty(c => c.Results, error == null ? results : null),
+        await db.CatalogSearches.Where(s => s.Id == id && s.CompletedAt == null).ExecuteUpdateAsync(
+            s => s.SetProperty(c => c.CompletedAt, now).SetProperty(c => c.Error, error).SetProperty(c => c.Results, results),
             cancellationToken);
     }
 
