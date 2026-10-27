@@ -24,6 +24,12 @@ public static class BookExport
     private static readonly string[] CsvColumns =
         ["Rank", "Title", "Authors", "First published", "Podcasts", "Episodes", "Recommended in", "Last mentioned", "Mentioned on", "Catalogue link"];
 
+    // Pieces that SplitAuthors puts back onto the name before them.
+    private static readonly HashSet<string> NameSuffixes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Jr", "Jr.", "Sr", "Sr.", "II", "III", "IV", "PhD", "Ph.D.", "MD", "M.D.",
+    };
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     /// <summary>One row per book, in list order. Starts with a byte order mark so Excel reads it as UTF-8.</summary>
@@ -64,11 +70,11 @@ public static class BookExport
         AppendRow(csv, GoodreadsColumns);
         foreach (var row in rows)
         {
-            var authors = row.Book.Authors.Split(", ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var authors = SplitAuthors(row.Book.Authors);
             AppendRow(csv,
             [
                 row.Book.Title,
-                authors.FirstOrDefault() ?? "",
+                authors.Count > 0 ? authors[0] : "",
                 string.Join(", ", authors.Skip(1)),
                 "",
                 "",
@@ -107,6 +113,28 @@ public static class BookExport
                     .ToList()))
                 .ToList());
         return JsonSerializer.SerializeToUtf8Bytes(export, JsonOptions);
+    }
+
+    /// <summary>
+    /// The names in <c>Book.Authors</c>, which the matcher joins with <c>", "</c>. A name can hold that
+    /// separator itself ("Martin Luther King, Jr."), so a piece that is only a suffix goes back onto the name before it.
+    /// </summary>
+    public static IReadOnlyList<string> SplitAuthors(string authors)
+    {
+        var names = new List<string>();
+        foreach (var piece in authors.Split(", ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (names.Count > 0 && NameSuffixes.Contains(piece))
+            {
+                names[^1] += ", " + piece;
+            }
+            else
+            {
+                names.Add(piece);
+            }
+        }
+
+        return names;
     }
 
     /// <summary>

@@ -80,6 +80,16 @@ public class BookExportTests
             lines[1]);
     }
 
+    [Theory]
+    [InlineData("Jean-Jacques Rousseau, Allan Bloom", new[] { "Jean-Jacques Rousseau", "Allan Bloom" })]
+    [InlineData("Martin Luther King, Jr., Coretta Scott King", new[] { "Martin Luther King, Jr.", "Coretta Scott King" })]
+    [InlineData("Jane Doe, III", new[] { "Jane Doe, III" })]
+    [InlineData("", new string[0])]
+    public void Authors_split_on_the_matchers_separator_but_keep_name_suffixes(string authors, string[] expected)
+    {
+        Assert.Equal(expected, BookExport.SplitAuthors(authors));
+    }
+
     [Fact]
     public void The_json_nests_each_books_mentions_and_records_the_filters()
     {
