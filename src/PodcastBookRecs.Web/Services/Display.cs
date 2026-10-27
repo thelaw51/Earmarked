@@ -77,12 +77,13 @@ public static class Display
         ReviewVerdict.Confirmed => "Confirmed",
         ReviewVerdict.Corrected => "Corrected",
         ReviewVerdict.NotABook => "Not a book",
+        ReviewVerdict.KeptAsIs => "Kept as is",
         _ => "Wrong book",
     };
 
     public static Color VerdictColor(ReviewVerdict verdict) => verdict switch
     {
-        ReviewVerdict.Confirmed or ReviewVerdict.Corrected => Color.Success,
+        ReviewVerdict.Confirmed or ReviewVerdict.Corrected or ReviewVerdict.KeptAsIs => Color.Success,
         _ => Color.Warning,
     };
 

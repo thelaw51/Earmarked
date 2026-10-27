@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using PodcastBookRecs.Core.Backends;
 using PodcastBookRecs.Core.BookLookup;
+using PodcastBookRecs.Core.Books;
 using PodcastBookRecs.Core.Configuration;
 using PodcastBookRecs.Core.Data;
 using PodcastBookRecs.Core.Pipeline;
@@ -75,7 +76,7 @@ public sealed class MentionMatcherTests : IAsyncLifetime
 
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
         var book = await db.Books.SingleAsync(Ct);
-        Assert.Equal(("OpenLibraryTest", "OL1001W", "Ines Calder"), (book.Provider, book.CatalogId, book.Authors));
+        Assert.Equal((BookLookupProviders.OpenLibrary, "OL1001W", "Ines Calder"), (book.Provider, book.CatalogId, book.Authors));
         var mentions = await db.BookMentions.ToListAsync(Ct);
         Assert.All(mentions, m => Assert.Equal((MatchState.Matched, book.Id, CatalogMatcher.Version), (m.MatchState, m.BookId, m.MatcherVersion)));
         Assert.Equal(1, _catalog.Calls);
@@ -323,6 +324,121 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         Assert.All(await db.BookMentions.ToListAsync(Ct), m => Assert.Equal((Guid?)book.Id, m.BookId));
     }
 
+    [Fact]
+    public async Task A_pick_stored_before_providers_were_recorded_reuses_the_open_library_book()
+    {
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
+        await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", null);
+        await AddMentionAsync(1, "Keeper of the Lighthouse", null);
+        await RunUntilIdleAsync();
+        await InsertDecisionAsync("Keeper of the Lighthouse", null, ReviewVerdict.Corrected, null, null);
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            var oldJson = $$"""{"catalogId":"OL1001W","title":"{{Almanac.Title}}","authors":["Ines Calder"],"editionCount":4,"infoUrl":"{{Almanac.InfoUrl}}"}""";
+            await db.Database.ExecuteSqlAsync($"UPDATE ReviewDecisions SET Pick = {oldJson}", Ct);
+            Assert.Null((await db.ReviewDecisions.SingleAsync(Ct)).Pick!.Provider);
+        }
+
+        await QueueReviewDecidedAsync(CatalogMatcher.LookupKey("Keeper of the Lighthouse", null));
+        await _commands.ProcessPendingAsync(Ct);
+        await RunUntilIdleAsync();
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        var book = await check.Books.SingleAsync(Ct);
+        Assert.Equal(BookLookupProviders.OpenLibrary, book.Provider);
+        Assert.All(await check.BookMentions.ToListAsync(Ct), m => Assert.Equal((Guid?)book.Id, m.BookId));
+    }
+
+    [Fact]
+    public async Task Keeping_a_title_as_is_adds_a_book_without_a_link_for_every_mention()
+    {
+        await AddMentionAsync(0, "Harbor Lights", "Calder");
+        await RunUntilIdleAsync();
+
+        var decisionId = await KeepAsIsAsync("Harbor Lights", "Calder", "  Harbour Lights\n", "Ines\tCalder");
+        await AddMentionAsync(1, "Harbor Lights", "Calder");
+        await RunUntilIdleAsync();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var book = await db.Books.SingleAsync(Ct);
+        Assert.Equal((BookLookupProviders.Manual, decisionId.ToString("N"), "Harbour Lights", "Ines Calder", (string?)null),
+            (book.Provider, book.CatalogId, book.Title, book.Authors, book.InfoUrl));
+        Assert.All(await db.BookMentions.ToListAsync(Ct), m => Assert.Equal((MatchState.Matched, (Guid?)book.Id), (m.MatchState, m.BookId)));
+        var decision = await db.ReviewDecisions.SingleAsync(Ct);
+        Assert.Equal(("Harbor Lights", "Calder", (Guid?)book.Id), (decision.Title, decision.Author, decision.BookId));
+    }
+
+    [Fact]
+    public async Task Keeping_a_title_again_with_new_text_updates_its_book()
+    {
+        await AddMentionAsync(0, "Harbor Lights", null);
+        await RunUntilIdleAsync();
+        await KeepAsIsAsync("Harbor Lights", null, "Harbor Lights", null);
+
+        await KeepAsIsAsync("Harbor Lights", null, "Harbour Lights", "Ines Calder");
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var book = await db.Books.SingleAsync(Ct);
+        Assert.Equal(("Harbour Lights", "Ines Calder"), (book.Title, book.Authors));
+        Assert.Equal((Guid?)book.Id, (await db.BookMentions.SingleAsync(Ct)).BookId);
+    }
+
+    [Fact]
+    public async Task Undoing_keep_as_is_matches_the_title_normally_again()
+    {
+        await AddMentionAsync(0, "Harbor Lights", null);
+        await RunUntilIdleAsync();
+        var decisionId = await KeepAsIsAsync("Harbor Lights", null, "Harbor Lights", null);
+
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            await ReviewActions.UndoAsync(db, decisionId, DateTime.UtcNow, Ct);
+        }
+
+        await _commands.ProcessPendingAsync(Ct);
+        await RunUntilIdleAsync();
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        var mention = await check.BookMentions.SingleAsync(Ct);
+        Assert.Equal((MatchState.NoMatch, (Guid?)null), (mention.MatchState, mention.BookId));
+    }
+
+    [Theory]
+    [InlineData(ReviewVerdict.KeptAsIs, false)]
+    [InlineData(ReviewVerdict.Corrected, true)]
+    public async Task A_manual_pick_is_only_added_for_its_own_kept_decision(ReviewVerdict verdict, bool ownId)
+    {
+        await AddMentionAsync(0, "Harbor Lights", null);
+        await AddMentionAsync(1, "Small Rivers", null);
+        await InsertDecisionAsync("Harbor Lights", null, verdict, null, null);
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            var decision = await db.ReviewDecisions.SingleAsync(Ct);
+            var id = ownId ? decision.Id : Guid.NewGuid();
+            decision.Pick = new CatalogBook(id.ToString("N"), "Harbour Lights", null, [], null, 0, null, null, BookLookupProviders.Manual);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await RunUntilIdleAsync();
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        var states = await check.BookMentions.OrderBy(m => m.CreatedAt).Select(m => m.MatchState).ToListAsync(Ct);
+        Assert.Equal([MatchState.LookupFailed, MatchState.NoMatch], states);
+        Assert.Empty(await check.Books.ToListAsync(Ct));
+    }
+
+    [Fact]
+    public async Task A_search_result_claiming_to_be_manual_is_credited_to_the_catalogue()
+    {
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac with { Provider = BookLookupProviders.Manual, InfoUrl = null });
+        await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", "Ines Calder");
+
+        await RunUntilIdleAsync();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(BookLookupProviders.OpenLibrary, (await db.Books.SingleAsync(Ct)).Provider);
+    }
+
     [Theory]
     [InlineData("""{"catalogId":"OL2002W","title":"Harbour Lights","authors":[],"infoUrl":null}""")]
     [InlineData("""{"catalogId":"OL2002W","title":"Harbour Lights","authors":null,"infoUrl":"https://catalog.test/OL2002W"}""")]
@@ -434,6 +550,20 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         await RunUntilIdleAsync();
     }
 
+    /// <summary>Keeps a title as is through the page's own action, then runs the command and the matcher.</summary>
+    private async Task<Guid> KeepAsIsAsync(string title, string? author, string keptTitle, string? keptAuthor)
+    {
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            await ReviewActions.KeepAsIsAsync(db, CatalogMatcher.LookupKey(title, author), keptTitle, keptAuthor, null, DateTime.UtcNow, Ct);
+        }
+
+        await _commands.ProcessPendingAsync(Ct);
+        await RunUntilIdleAsync();
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        return await check.ReviewDecisions.Where(d => d.LookupKey == CatalogMatcher.LookupKey(title, author)).Select(d => d.Id).SingleAsync(Ct);
+    }
+
     private async Task InsertDecisionAsync(string title, string? author, ReviewVerdict verdict, Guid? bookId, CatalogBook? pick)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
@@ -501,7 +631,7 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     {
         private readonly Dictionary<string, (CatalogBook Book, bool OnlyWithoutAuthor)> _answers = new(StringComparer.OrdinalIgnoreCase);
 
-        public string Provider => "OpenLibraryTest";
+        public string Provider => BookLookupProviders.OpenLibrary;
         public int Calls { get; private set; }
         public Exception? Throw { get; set; }
 

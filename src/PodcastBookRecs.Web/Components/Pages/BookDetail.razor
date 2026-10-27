@@ -1,4 +1,5 @@
 @page "/books/{Id:guid}"
+@using PodcastBookRecs.Core.Configuration
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject ILogger<BookDetail> Logger
 
@@ -47,6 +48,10 @@ else
                         <span><MudIcon Icon="@Icons.Material.Rounded.CalendarMonth" Size="Size.Small" /> First published @year</span>
                     }
                     <span><MudIcon Icon="@Icons.Material.Rounded.Podcasts" Size="Size.Small" /> @_mentions.Select(m => m.Episode.PodcastFeedId).Distinct().Count() podcast(s)</span>
+                    @if (_book.Provider == BookLookupProviders.Manual)
+                    {
+                        <span><MudIcon Icon="@Icons.Material.Rounded.BookmarkAdded" Size="Size.Small" /> Not in any catalogue, kept as is in review</span>
+                    }
                 </div>
                 @if (Display.HttpsOrNull(_book.InfoUrl) is { } info)
                 {

@@ -12,10 +12,16 @@ public class Book
 
     public Guid Id { get; set; } = Guid.CreateVersion7();
 
-    /// <summary>The catalogue it came from, e.g. <c>OpenLibrary</c>. With <see cref="CatalogId"/>, identifies the book.</summary>
+    /// <summary>
+    /// The catalogue it came from, e.g. <c>OpenLibrary</c>, or <c>Manual</c> for a book kept as is on the review page.
+    /// With <see cref="CatalogId"/>, identifies the book.
+    /// </summary>
     public required string Provider { get; set; }
 
-    /// <summary>The catalogue's own identifier for the work (all editions together), e.g. <c>OL27513W</c>.</summary>
+    /// <summary>
+    /// The catalogue's own identifier for the work (all editions together), e.g. <c>OL27513W</c>. A <c>Manual</c> book
+    /// uses the ID of the decision that kept it.
+    /// </summary>
     public required string CatalogId { get; set; }
     public required string Title { get; set; }
 
@@ -23,8 +29,11 @@ public class Book
     public string Authors { get; set; } = "";
     public int? FirstPublishYear { get; set; }
 
-    /// <summary>The book's page in the catalogue. Built by the adapter from a checked identifier, always https.</summary>
-    public required string InfoUrl { get; set; }
+    /// <summary>
+    /// The book's page in the catalogue. Built by the adapter from a checked identifier, always https. Null for a
+    /// <c>Manual</c> book, kept as is on the review page because no catalogue has it.
+    /// </summary>
+    public string? InfoUrl { get; set; }
     public string? CoverUrl { get; set; }
     public DateTime CreatedAt { get; set; }
 

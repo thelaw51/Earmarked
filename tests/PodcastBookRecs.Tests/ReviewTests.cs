@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using PodcastBookRecs.Core.Backends;
 using PodcastBookRecs.Core.BookLookup;
 using PodcastBookRecs.Core.Books;
+using PodcastBookRecs.Core.Configuration;
 using PodcastBookRecs.Core.Data;
 using PodcastBookRecs.Core.Pipeline;
 using PodcastBookRecs.Core.Transcripts;
@@ -236,6 +237,61 @@ public sealed class ReviewTests : IAsyncLifetime
         await _runner.RunPendingAsync(Ct);
 
         await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.CorrectAsync(db, Key("Harbor Lights", null), searchId, "OL1001W", null, Now, Ct));
+    }
+
+    [Fact]
+    public async Task Keeping_as_is_stores_the_typed_text_only_in_the_pick_cleaned_and_capped()
+    {
+        await AddMentionAsync(0, "Harbor Lights", "Calder", MatchState.NoMatch);
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+
+        await ReviewActions.KeepAsIsAsync(db, Key("Harbor Lights", "Calder"), " Harbour\r\nLights" + new string('x', 400), "Ines\u0000Calder\u202E\u2028", "  self-published ", Now, Ct);
+
+        var decision = await db.ReviewDecisions.SingleAsync(Ct);
+        Assert.Equal((ReviewVerdict.KeptAsIs, "Harbor Lights", "Calder", "self-published", (Guid?)null),
+            (decision.Verdict, decision.Title, decision.Author, decision.Note, decision.BookId));
+        var pick = decision.Pick!;
+        Assert.Equal((BookLookupProviders.Manual, decision.Id.ToString("N"), (string?)null), (pick.Provider, pick.CatalogId, pick.InfoUrl));
+        Assert.Equal(BookMention.MaxTitleLength, pick.Title.Length);
+        Assert.StartsWith("Harbour  Lights", pick.Title, StringComparison.Ordinal);
+        Assert.Equal(["Ines Calder"], pick.Authors);
+        Assert.True(CatalogMatcher.IsUsable(pick));
+        Assert.Equal(WorkerCommandType.ReviewDecided, (await db.WorkerCommands.SingleAsync(Ct)).Type);
+    }
+
+    [Theory]
+    [InlineData("Harbor Lights", "   ")]
+    [InlineData("Harbor Lights", "\r\n\t")]
+    [InlineData("Harbor Lights", "\u202E\u2029\u200B")]
+    [InlineData("made up", "A Real Title")]
+    public async Task Keeping_as_is_needs_a_title_and_a_stored_key(string mentioned, string typed)
+    {
+        await AddMentionAsync(0, "Harbor Lights", null, MatchState.NoMatch);
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.KeepAsIsAsync(db, Key(mentioned, null), typed, null, null, Now, Ct));
+
+        Assert.Empty(await db.ReviewDecisions.ToListAsync(Ct));
+        Assert.Empty(await db.WorkerCommands.ToListAsync(Ct));
+    }
+
+    [Fact]
+    public async Task A_stored_result_claiming_to_be_manual_cant_be_picked()
+    {
+        await AddMentionAsync(0, "Harbor Lights", null, MatchState.NoMatch);
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var id = Guid.NewGuid().ToString("N");
+        var search = new CatalogSearch
+        {
+            Title = "Harbor Lights",
+            CreatedAt = Now,
+            CompletedAt = Now,
+            Results = [new CatalogBook(id, "Harbour Lights", null, [], null, 0, null, null, BookLookupProviders.Manual)],
+        };
+        db.CatalogSearches.Add(search);
+        await db.SaveChangesAsync(Ct);
+
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.CorrectAsync(db, Key("Harbor Lights", null), search.Id, id, null, Now, Ct));
     }
 
     [Fact]

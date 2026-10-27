@@ -108,4 +108,15 @@ public class BookExportTests
         Assert.Equal(("Show B", "Recommended", 754.5), (mention.GetProperty("podcast").GetString(), mention.GetProperty("kind").GetString(), mention.GetProperty("atSeconds").GetDouble()));
         Assert.Equal(2, book.GetProperty("mentions").GetArrayLength());
     }
+
+    [Fact]
+    public void A_book_kept_as_is_exports_an_empty_link()
+    {
+        var kept = new Book { Provider = "Manual", CatalogId = "0199a5b0c3d47e8fa1b2c3d4e5f60718", Title = "Small Rivers", Authors = "Tomas Reyne" };
+        BookListRow[] rows = [new(1, kept, new RankedBook(kept.Id, 1, 1, 0, Now))];
+
+        var lines = Encoding.UTF8.GetString(BookExport.Csv(rows, [], TimeZoneInfo.Utc)[3..]).Split("\r\n");
+
+        Assert.EndsWith(",\"\"", lines[1]);
+    }
 }

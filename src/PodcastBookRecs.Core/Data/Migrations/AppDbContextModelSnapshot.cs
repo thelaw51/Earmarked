@@ -171,7 +171,6 @@ namespace PodcastBookRecs.Core.Data.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("InfoUrl")
-                        .IsRequired()
                         .HasMaxLength(300)
                         .HasColumnType("TEXT");
 

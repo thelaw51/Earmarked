@@ -1,10 +1,11 @@
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using PodcastBookRecs.Core.BookLookup;
+using PodcastBookRecs.Core.Configuration;
 using PodcastBookRecs.Core.Data;
 
 namespace PodcastBookRecs.Core.Books;
 
-/// <summary>A review action the page asked for can't be done. The message is written for the person.</summary>
 /// <summary>
 /// A review action refused for a reason the person can act on. The review page shows the message as it is, so it must
 /// be written for them and never carry another exception's text.
@@ -16,7 +17,7 @@ public sealed class ReviewActionException(string message) : Exception(message);
 /// <see cref="WorkerCommandType.ReviewDecided"/> command that makes the Worker re-match the key, so neither is ever
 /// stored without the other. Everything the page sends is treated as untrusted: the key must belong to stored mentions,
 /// whose title and author the decision records, notes and search text are trimmed and capped, a confirmed book comes
-/// from the mentions, and a pick comes from a stored search result.
+/// from the mentions, and a pick comes from a stored search result or, for "keep as is", is built here.
 /// </summary>
 public static class ReviewActions
 {
@@ -32,7 +33,7 @@ public static class ReviewActions
             .Select(m => m.BookId)
             .FirstOrDefaultAsync(cancellationToken)
             ?? throw new ReviewActionException("This title isn't matched to a book, so there's nothing to confirm.");
-        return await SaveAsync(db, key, title, author, ReviewVerdict.Confirmed, bookId, null, Clean(note, ReviewDecision.MaxNoteLength), now, cancellationToken);
+        return await SaveAsync(db, key, title, author, ReviewVerdict.Confirmed, bookId, NoPick, Clean(note, ReviewDecision.MaxNoteLength), now, cancellationToken);
     }
 
     /// <summary>Rules a title out: not a book at all, or not the book the catalogue found.</summary>
@@ -45,7 +46,7 @@ public static class ReviewActions
         }
 
         var (title, author) = await MentionedAsync(db, key, cancellationToken);
-        return await SaveAsync(db, key, title, author, verdict, null, null, Clean(note, ReviewDecision.MaxNoteLength), now, cancellationToken);
+        return await SaveAsync(db, key, title, author, verdict, null, NoPick, Clean(note, ReviewDecision.MaxNoteLength), now, cancellationToken);
     }
 
     /// <summary>
@@ -57,13 +58,30 @@ public static class ReviewActions
     {
         var results = await db.CatalogSearches.AsNoTracking().Where(s => s.Id == searchId).Select(s => s.Results).FirstOrDefaultAsync(cancellationToken);
         var pick = results?.FirstOrDefault(b => b.CatalogId == catalogId);
-        if (!CatalogMatcher.IsUsable(pick))
+        if (!CatalogMatcher.IsUsable(pick) || pick!.ProviderOrDefault == BookLookupProviders.Manual)
         {
             throw new ReviewActionException("That search result is no longer available. Search again.");
         }
 
         var (title, author) = await MentionedAsync(db, key, cancellationToken);
-        return await SaveAsync(db, key, title, author, ReviewVerdict.Corrected, null, pick, Clean(note, ReviewDecision.MaxNoteLength), now, cancellationToken);
+        return await SaveAsync(db, key, title, author, ReviewVerdict.Corrected, null, _ => pick, Clean(note, ReviewDecision.MaxNoteLength), now, cancellationToken);
+    }
+
+    /// <summary>
+    /// Keeps a title as a book of its own, for a real book no catalogue has. The person may fix the title and author
+    /// first; that text goes only into the pick, while the decision still records the mention's own text, which is
+    /// what its key was built from. The pick's ID is the decision's, so keeping the same key again with new text
+    /// updates that one book.
+    /// </summary>
+    public static async Task<WorkerCommand> KeepAsIsAsync(
+        AppDbContext db, string key, string? keptTitle, string? keptAuthor, string? note, DateTime now, CancellationToken cancellationToken)
+    {
+        var cleanTitle = Clean(Typed(keptTitle), BookMention.MaxTitleLength) ?? throw new ReviewActionException("Enter the book's title.");
+        var cleanAuthor = Clean(Typed(keptAuthor), BookMention.MaxAuthorLength);
+        var (title, author) = await MentionedAsync(db, key, cancellationToken);
+        return await SaveAsync(db, key, title, author, ReviewVerdict.KeptAsIs, null,
+            id => new CatalogBook(id.ToString("N"), cleanTitle, null, cleanAuthor is null ? [] : [cleanAuthor], null, 0, null, null, BookLookupProviders.Manual),
+            Clean(note, ReviewDecision.MaxNoteLength), now, cancellationToken);
     }
 
     /// <summary>Deletes a decision, so the title is matched normally again.</summary>
@@ -104,8 +122,8 @@ public static class ReviewActions
     }
 
     private static async Task<WorkerCommand> SaveAsync(
-        AppDbContext db, string key, string title, string? author, ReviewVerdict verdict, Guid? bookId, CatalogBook? pick, string? note,
-        DateTime now, CancellationToken cancellationToken)
+        AppDbContext db, string key, string title, string? author, ReviewVerdict verdict, Guid? bookId, Func<Guid, CatalogBook?> pick,
+        string? note, DateTime now, CancellationToken cancellationToken)
     {
         var decision = await db.ReviewDecisions.SingleOrDefaultAsync(d => d.LookupKey == key, cancellationToken);
         if (decision is null)
@@ -118,7 +136,7 @@ public static class ReviewActions
         decision.Author = author;
         decision.Verdict = verdict;
         decision.BookId = bookId;
-        decision.Pick = pick;
+        decision.Pick = pick(decision.Id);
         decision.Note = note;
         // A new DecidedAt is what tells the matcher that work it started under the old decision is stale.
         decision.DecidedAt = now;
@@ -127,6 +145,8 @@ public static class ReviewActions
         await db.SaveChangesAsync(cancellationToken);
         return command;
     }
+
+    private static CatalogBook? NoPick(Guid decisionId) => null;
 
     private static WorkerCommand Command(string key, DateTime now) =>
         new() { Type = WorkerCommandType.ReviewDecided, LookupKey = key, CreatedAt = now };
@@ -145,6 +165,16 @@ public static class ReviewActions
             ?? throw new ReviewActionException("No mentions of this title are left. Refresh the list.");
         return (mention.Title, mention.Author);
     }
+
+    /// <summary>
+    /// Text a person typed becomes a stored book, so control characters, line and paragraph separators and invisible
+    /// format characters (such as the bidi overrides that make text display reversed) become spaces.
+    /// </summary>
+    private static string? Typed(string? text) =>
+        text is null ? null : string.Concat(text.Select(c => char.IsControl(c) || IsInvisible(c) ? ' ' : c));
+
+    private static bool IsInvisible(char c) =>
+        char.GetUnicodeCategory(c) is UnicodeCategory.Format or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator;
 
     private static string? Clean(string? text, int maxLength)
     {
