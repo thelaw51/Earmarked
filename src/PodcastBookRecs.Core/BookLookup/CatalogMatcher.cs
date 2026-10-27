@@ -16,11 +16,14 @@ namespace PodcastBookRecs.Core.BookLookup;
 public static class CatalogMatcher
 {
     /// <summary>Stored on every match. Bump it when these rules or <see cref="Doubts"/> change, and every mention is matched again.</summary>
-    public const string Version = "match-v3";
+    public const string Version = "match-v4";
 
     public const int MinEditionsWithoutAuthor = 2;
 
-    /// <summary>A match to a book with this many editions or fewer is flagged <see cref="MatchDoubts.FewEditions"/>.</summary>
+    /// <summary>
+    /// A match to a book with this many editions or fewer is flagged <see cref="MatchDoubts.FewEditions"/>. A catalogue
+    /// that doesn't count editions sets no flag, and its books never pass <see cref="MinEditionsWithoutAuthor"/>.
+    /// </summary>
     public const int FewEditions = 2;
 
     private static readonly HashSet<string> NameSuffixes = new(StringComparer.Ordinal) { "jr", "sr", "ii", "iii", "iv", "phd", "md" };
@@ -44,6 +47,9 @@ public static class CatalogMatcher
     /// in <see cref="Surname"/>) needs a step that re-keys them from their stored title and author.
     /// </summary>
     public static string LookupKey(string title, string? author) => $"{MentionMerger.TitleKey(title)}|{Surname(author)}";
+
+    /// <summary>True when the author text yields a surname to check a candidate against.</summary>
+    public static bool HasSurname(string? author) => Surname(author).Length > 0;
 
     /// <summary>
     /// The candidate that is this book, or null if none qualifies. One matching the whole title beats one matching only

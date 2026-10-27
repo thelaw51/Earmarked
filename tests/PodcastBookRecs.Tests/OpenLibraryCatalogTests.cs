@@ -88,7 +88,7 @@ public class OpenLibraryCatalogTests
         var handler = new Recorder(HttpStatusCode.OK, """{"docs":[]}""");
         using var provider = Services(new() { ["OpenLibrary:ContactEmail"] = "reader@example.com" }, handler);
 
-        await provider.GetRequiredService<IBookCatalog>().SearchAsync("A Title", null, Ct);
+        await provider.GetRequiredService<BookCatalogChain>().Primary.SearchAsync("A Title", null, Ct);
 
         Assert.EndsWith("; reader@example.com)", handler.UserAgents.Single(), StringComparison.Ordinal);
     }
@@ -98,7 +98,7 @@ public class OpenLibraryCatalogTests
     {
         using var provider = Services(new() { ["BookLookup:Provider"] = "" }, new Recorder(HttpStatusCode.OK, ""));
 
-        Assert.Null(provider.GetService<IBookCatalog>());
+        Assert.Null(provider.GetService<BookCatalogChain>());
     }
 
     [Fact]

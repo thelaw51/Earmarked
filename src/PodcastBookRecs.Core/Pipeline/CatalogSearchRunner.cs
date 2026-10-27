@@ -7,13 +7,15 @@ using PodcastBookRecs.Core.Data;
 namespace PodcastBookRecs.Core.Pipeline;
 
 /// <summary>
-/// Runs the catalogue searches people ask for on the review page (<see cref="CatalogSearch"/>), oldest first. It uses
-/// the same <see cref="IBookCatalog"/> as the matcher, so the adapter's pacing covers both. Someone is waiting for each
-/// answer, so a failure completes the search with a message instead of pausing and trying again.
+/// Runs the catalogue searches people ask for on the review page (<see cref="CatalogSearch"/>), oldest first. It asks
+/// every catalogue in the same <see cref="BookCatalogChain"/> as the matcher, so each adapter's pacing covers both,
+/// and lists their answers in chain order, each marked with the catalogue that gave it. Someone is waiting for each
+/// answer, so a failure completes the search with a message instead of pausing and trying again; a catalogue that
+/// fails while another answers is left out.
 /// </summary>
 public sealed partial class CatalogSearchRunner(
     IDbContextFactory<AppDbContext> dbFactory,
-    IBookCatalog catalog,
+    BookCatalogChain catalogs,
     TimeProvider time,
     ILogger<CatalogSearchRunner> logger)
 {
@@ -27,6 +29,9 @@ public sealed partial class CatalogSearchRunner(
     public const string UnavailableError = "The catalogue can't be reached right now. Try again in a minute.";
     public const string UnreadableError = "The catalogue's answer couldn't be read.";
     public const string FailedError = "The search failed. The Worker's log has the details.";
+
+    /// <summary>Results kept from each catalogue, so one can't crowd out the others.</summary>
+    public const int MaxResultsPerCatalogue = 10;
 
     /// <summary>How often searches older than <see cref="KeepFor"/> are deleted.</summary>
     private static readonly TimeSpan CleanUpEvery = TimeSpan.FromHours(1);
@@ -68,33 +73,41 @@ public sealed partial class CatalogSearchRunner(
 
     private async Task RunAsync(CatalogSearch search, CancellationToken cancellationToken)
     {
-        List<CatalogBook>? results = null;
+        var results = new List<CatalogBook>();
         string? error = null;
-        try
+        var answered = false;
+        foreach (var catalog in catalogs.All)
         {
-            results = [.. await catalog.SearchAsync(search.Title, search.Author, cancellationToken)];
-            if (results.Count == 0 && !string.IsNullOrEmpty(search.Author))
+            try
             {
-                results = [.. await catalog.SearchAsync(search.Title, null, cancellationToken)];
+                var found = await catalog.SearchAsync(search.Title, search.Author, cancellationToken);
+                if (found.Count == 0 && !string.IsNullOrEmpty(search.Author))
+                {
+                    found = await catalog.SearchAsync(search.Title, null, cancellationToken);
+                }
+
+                // Credit the catalogue that was asked, so a pick carries it into the decision and can never pass as Manual.
+                results.AddRange(found.Take(MaxResultsPerCatalogue).Select(b => b with { Provider = catalog.Provider }));
+                answered = true;
+            }
+            catch (BackendUnavailableException ex)
+            {
+                LogSearchUnavailable(catalog.Provider, ex.Message);
+                error ??= UnavailableError;
+            }
+            catch (CatalogLookupFailedException ex)
+            {
+                LogSearchUnreadable(catalog.Provider, ex.Message);
+                error ??= UnreadableError;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LogSearchFailed(ex, catalog.Provider);
+                error ??= FailedError;
             }
         }
-        catch (BackendUnavailableException ex)
-        {
-            LogSearchUnavailable(ex.Message);
-            error = UnavailableError;
-        }
-        catch (CatalogLookupFailedException ex)
-        {
-            LogSearchUnreadable(ex.Message);
-            error = UnreadableError;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            LogSearchFailed(ex);
-            error = FailedError;
-        }
 
-        await CompleteAsync(search.Id, error == null ? results : null, error, cancellationToken);
+        await CompleteAsync(search.Id, answered ? results : null, answered ? null : error, cancellationToken);
     }
 
     private async Task CompleteAsync(Guid id, List<CatalogBook>? results, string? error, CancellationToken cancellationToken)
@@ -106,12 +119,12 @@ public sealed partial class CatalogSearchRunner(
             cancellationToken);
     }
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "A review search couldn't reach the catalogue: {Reason}")]
-    private partial void LogSearchUnavailable(string reason);
+    [LoggerMessage(Level = LogLevel.Information, Message = "A review search couldn't reach {Catalogue}: {Reason}")]
+    private partial void LogSearchUnavailable(string catalogue, string reason);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "A review search got an unusable answer from the catalogue: {Reason}")]
-    private partial void LogSearchUnreadable(string reason);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "A review search got an unusable answer from {Catalogue}: {Reason}")]
+    private partial void LogSearchUnreadable(string catalogue, string reason);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "A review search failed")]
-    private partial void LogSearchFailed(Exception ex);
+    [LoggerMessage(Level = LogLevel.Error, Message = "A review search failed in {Catalogue}")]
+    private partial void LogSearchFailed(Exception ex, string catalogue);
 }

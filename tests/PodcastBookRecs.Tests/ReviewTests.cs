@@ -71,7 +71,7 @@ public sealed class ReviewTests : IAsyncLifetime
         await db.SaveChangesAsync(Ct);
         _bookId = book.Id;
         _episodes = episodes.Select(e => (e.Id, e.Transcript!.Id)).ToList();
-        _runner = new CatalogSearchRunner(_dbFactory, _catalog, _time, NullLogger<CatalogSearchRunner>.Instance);
+        _runner = new CatalogSearchRunner(_dbFactory, new BookCatalogChain([_catalog]), _time, NullLogger<CatalogSearchRunner>.Instance);
     }
 
     public ValueTask DisposeAsync()
@@ -324,6 +324,43 @@ public sealed class ReviewTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_search_asks_every_catalogue_and_marks_each_result_with_the_one_that_answered()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks);
+        var runner = new CatalogSearchRunner(_dbFactory, new BookCatalogChain([_catalog, apple]), _time, NullLogger<CatalogSearchRunner>.Instance);
+        _catalog.Answer("Harbor Lights", Almanac with { Provider = BookLookupProviders.AppleBooks });
+        apple.Answer("Harbor Lights", Almanac with { CatalogId = "900000001", Provider = BookLookupProviders.Manual, EditionCount = null });
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var id = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
+
+        await runner.RunPendingAsync(Ct);
+
+        var search = await db.CatalogSearches.AsNoTracking().SingleAsync(s => s.Id == id, Ct);
+        Assert.Null(search.Error);
+        Assert.Equal([(BookLookupProviders.OpenLibrary, "OL1001W"), (BookLookupProviders.AppleBooks, "900000001")],
+            search.Results!.Select(r => (r.Provider, r.CatalogId)));
+    }
+
+    [Fact]
+    public async Task A_search_fails_only_when_every_catalogue_fails()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks) { Throw = new BackendUnavailableException("down") };
+        var runner = new CatalogSearchRunner(_dbFactory, new BookCatalogChain([_catalog, apple]), _time, NullLogger<CatalogSearchRunner>.Instance);
+        _catalog.Answer("Harbor Lights", Almanac);
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var partly = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
+        await runner.RunPendingAsync(Ct);
+
+        _catalog.Throw = new CatalogLookupFailedException("odd");
+        var wholly = await ReviewActions.RequestSearchAsync(db, "Small Rivers", null, Now, Ct);
+        await runner.RunPendingAsync(Ct);
+
+        var searches = await db.CatalogSearches.AsNoTracking().ToDictionaryAsync(s => s.Id, Ct);
+        Assert.Equal((null, 1), (searches[partly].Error, searches[partly].Results?.Count));
+        Assert.Equal((CatalogSearchRunner.UnreadableError, (List<CatalogBook>?)null), (searches[wholly].Error, searches[wholly].Results));
+    }
+
+    [Fact]
     public async Task Old_searches_expire_unasked_and_are_deleted_after_a_day()
     {
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
@@ -347,7 +384,7 @@ public sealed class ReviewTests : IAsyncLifetime
             .UseSqlite($"Data Source={Path.Combine(_root, "test.db")}")
             .AddInterceptors(new SqlitePragmaInterceptor(), writes)
             .Options;
-        var runner = new CatalogSearchRunner(new PooledDbContextFactory<AppDbContext>(options), _catalog, _time, NullLogger<CatalogSearchRunner>.Instance);
+        var runner = new CatalogSearchRunner(new PooledDbContextFactory<AppDbContext>(options), new BookCatalogChain([_catalog]), _time, NullLogger<CatalogSearchRunner>.Instance);
         await runner.RunPendingAsync(Ct);
         writes.Count = 0;
 
@@ -403,11 +440,11 @@ public sealed class ReviewTests : IAsyncLifetime
         _time.Advance(TimeSpan.FromMilliseconds(10));
     }
 
-    private sealed class FakeCatalog : IBookCatalog
+    private sealed class FakeCatalog(string provider = BookLookupProviders.OpenLibrary) : IBookCatalog
     {
         private readonly Dictionary<string, (CatalogBook Book, bool OnlyWithoutAuthor)> _answers = new(StringComparer.OrdinalIgnoreCase);
 
-        public string Provider => "Test";
+        public string Provider => provider;
         public int Calls { get; private set; }
         public Exception? Throw { get; set; }
 

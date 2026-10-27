@@ -182,9 +182,46 @@ public class BookLookupTests
     [InlineData(null, null, false)]
     [InlineData("OpenLibrary", null, false)]
     [InlineData("SomewhereElse", "https://openlibrary.org/works/OL1W", false)]
-    [InlineData("OpenLibrary", "https://evil.example/openlibrary.org", false)]
     public void A_catalogue_pick_needs_a_known_provider_and_an_https_link(string? provider, string? infoUrl, bool usable) =>
         Assert.Equal(usable, CatalogMatcher.IsUsable(Book("Small Rivers", "Tomas Reyne") with { Provider = provider, InfoUrl = infoUrl }));
+
+    [Theory]
+    [InlineData("AppleBooks", "https://books.apple.com/us/book/id900000001", true)]
+    [InlineData("AppleBooks", "https://openlibrary.org/works/OL1W", false)]
+    [InlineData("OpenLibrary", "https://books.apple.com/us/book/id900000001", false)]
+    [InlineData("OpenLibrary", "https://evil.example/openlibrary.org", false)]
+    public void A_pick_links_to_its_own_catalogues_host(string provider, string infoUrl, bool usable) =>
+        Assert.Equal(usable, CatalogMatcher.IsUsable(Book("Small Rivers", "Tomas Reyne") with { Provider = provider, InfoUrl = infoUrl }));
+
+    [Fact]
+    public void Without_an_edition_count_a_book_needs_an_author_and_has_no_few_editions_doubt()
+    {
+        var unknown = Book("Small Rivers", "Tomas Reyne") with { EditionCount = null };
+
+        Assert.Null(CatalogMatcher.Pick("Small Rivers", null, [unknown]));
+        Assert.Equal(MatchDoubts.None, CatalogMatcher.Doubts("Tomas Reyne", unknown));
+    }
+
+    [Theory]
+    [InlineData("AppleBooks", true)]
+    [InlineData("appleBOOKS", true)]
+    [InlineData("Nope", false)]
+    [InlineData("Manual", false)]
+    [InlineData("OpenLibrary", false)]
+    public void Fallbacks_must_be_other_known_catalogues(string fallback, bool valid)
+    {
+        var options = new BookLookupOptions { Fallbacks = [fallback] };
+
+        Assert.Equal(valid, !options.Validate(new ValidationContext(options)).Any());
+    }
+
+    [Fact]
+    public void A_fallback_cant_be_listed_twice()
+    {
+        var options = new BookLookupOptions { Fallbacks = ["AppleBooks", "applebooks"] };
+
+        Assert.NotEmpty(options.Validate(new ValidationContext(options)));
+    }
 
     [Theory]
     [InlineData("0199a5b0c3d47e8fa1b2c3d4e5f60718", null, null, true)]

@@ -2,6 +2,7 @@
 @using PodcastBookRecs.Core.Backends
 @using PodcastBookRecs.Core.BookLookup
 @using PodcastBookRecs.Core.Books
+@using PodcastBookRecs.Core.Configuration
 @implements IDisposable
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject TimeProvider Time
@@ -173,11 +174,11 @@ else
                                         <div style="min-width: 0;">
                                             <MudText Typo="Typo.subtitle2">@result.Title@(result.Subtitle is null ? "" : $": {result.Subtitle}")</MudText>
                                             <MudText Typo="Typo.caption" Class="muted d-block">
-                                                @string.Join(", ", result.Authors)@(result.FirstPublishYear is { } year ? $" · {year}" : "") · @result.EditionCount edition(s)
+                                                @string.Join(", ", result.Authors)@(result.FirstPublishYear is { } year ? $" · {year}" : "")@(result.EditionCount is { } editions ? $" · {editions} edition(s)" : "") · @BookLookupProviders.Label(result.ProviderOrDefault)
                                             </MudText>
                                             @if (Display.HttpsOrNull(result.InfoUrl) is { } info)
                                             {
-                                                <a href="@info" target="_blank" rel="noopener noreferrer" class="card-title-link"><MudText Typo="Typo.caption">In the catalogue</MudText></a>
+                                                <a href="@info" target="_blank" rel="noopener noreferrer" class="card-title-link"><MudText Typo="Typo.caption">View on @BookLookupProviders.Label(result.ProviderOrDefault)</MudText></a>
                                             }
                                         </div>
                                         <div class="mention-meta">

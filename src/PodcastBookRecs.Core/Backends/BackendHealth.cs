@@ -13,6 +13,12 @@ public static class BackendHealth
     public const string BookLookup = "book lookup";
 
     /// <summary>
+    /// A fallback catalogue's check name and Status row, e.g. "book lookup: Apple Books". <see cref="BookLookup"/> stays
+    /// the primary catalogue's row, so a fallback's row alone never tells the UI that lookup is on.
+    /// </summary>
+    public static string BookLookupFallback(string label) => $"{BookLookup}: {label}";
+
+    /// <summary>
     /// The book extraction check's name and Status row. Like <see cref="BookLookup"/>, it exists only while extraction
     /// is configured, which tells the UI whether an episode with a transcript has anything left to do.
     /// </summary>

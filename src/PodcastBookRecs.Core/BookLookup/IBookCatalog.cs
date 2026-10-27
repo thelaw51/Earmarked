@@ -24,7 +24,8 @@ public interface IBookCatalog
 /// One catalogue entry, in our terms. The adapter builds <paramref name="InfoUrl"/> and <paramref name="CoverUrl"/>
 /// from identifiers it has checked, so they are https links on the catalogue's own hosts and the UI needs no
 /// knowledge of the catalogue's URL scheme. Only a <see cref="BookLookupProviders.Manual"/> entry, typed in on the
-/// review page, has no <paramref name="InfoUrl"/>. <paramref name="Provider"/> is null in entries stored before
+/// review page, has no <paramref name="InfoUrl"/>. <paramref name="EditionCount"/> is null when the catalogue doesn't
+/// count editions. <paramref name="Provider"/> is null in entries stored before
 /// catalogues recorded it, when Open Library was the only one; read it through <see cref="ProviderOrDefault"/>.
 /// </summary>
 public sealed record CatalogBook(
@@ -33,7 +34,7 @@ public sealed record CatalogBook(
     string? Subtitle,
     IReadOnlyList<string> Authors,
     int? FirstPublishYear,
-    int EditionCount,
+    int? EditionCount,
     string? InfoUrl,
     string? CoverUrl,
     string? Provider = null)

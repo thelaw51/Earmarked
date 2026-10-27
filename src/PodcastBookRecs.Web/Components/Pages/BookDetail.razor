@@ -56,7 +56,7 @@ else
                 @if (Display.HttpsOrNull(_book.InfoUrl) is { } info)
                 {
                     <MudButton Href="@info" Target="_blank" rel="noopener noreferrer" Variant="Variant.Outlined" Color="Color.Primary"
-                               EndIcon="@Icons.Material.Rounded.OpenInNew" Size="Size.Small" Class="mt-4">View on @_book.Provider</MudButton>
+                               EndIcon="@Icons.Material.Rounded.OpenInNew" Size="Size.Small" Class="mt-4">View on @BookLookupProviders.Label(_book.Provider)</MudButton>
                 }
             </div>
         </div>

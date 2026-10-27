@@ -21,7 +21,7 @@ namespace PodcastBookRecs.Core.Pipeline;
 /// </summary>
 public sealed partial class MentionMatcher(
     IDbContextFactory<AppDbContext> dbFactory,
-    IBookCatalog catalog,
+    BookCatalogChain catalogs,
     TimeProvider time,
     ILogger<MentionMatcher> logger)
 {
@@ -62,10 +62,10 @@ public sealed partial class MentionMatcher(
             return WorkOutcome.Worked;
         }
 
-        CatalogBook? book;
+        Found? found;
         try
         {
-            book = await FindAsync(next.Title, next.Author, cancellationToken);
+            found = await FindAsync(next.Title, next.Author, cancellationToken);
         }
         catch (BackendUnavailableException ex)
         {
@@ -79,7 +79,7 @@ public sealed partial class MentionMatcher(
             return WorkOutcome.Worked;
         }
 
-        if (book is null)
+        if (found is null)
         {
             await SaveAsync(db, next.Id, key, new Answer(MatchState.NoMatch, null, MatchDoubts.None), null, cancellationToken);
             LogNoMatch(next.Title);
@@ -87,8 +87,10 @@ public sealed partial class MentionMatcher(
         else
         {
             // Credit the catalogue that was asked, whatever the entry says, so a search result can never pass as Manual.
+            var (book, catalog) = found;
             var bookId = await AddBookAsync(db, book with { Provider = catalog.Provider }, cancellationToken);
-            await SaveAsync(db, next.Id, key, new Answer(MatchState.Matched, bookId, CatalogMatcher.Doubts(next.Author, book)), null, cancellationToken);
+            var doubts = CatalogMatcher.Doubts(next.Author, book) | (catalog == catalogs.Primary ? MatchDoubts.None : MatchDoubts.OtherCatalogue);
+            await SaveAsync(db, next.Id, key, new Answer(MatchState.Matched, bookId, doubts), null, cancellationToken);
             LogMatched(next.Title, book.Title);
         }
 
@@ -142,10 +144,11 @@ public sealed partial class MentionMatcher(
     }
 
     /// <summary>
-    /// Searches with the author when the model gave one, then by title alone, because catalogues file authors in ways
-    /// the model doesn't repeat ("J. R. R." against "J.R.R."). <see cref="CatalogMatcher"/> still checks the surname.
+    /// Asks the primary catalogue, then each fallback in turn while nothing is found. Fallbacks are asked only when the
+    /// model named an author: they don't count editions, so without a surname to check no answer of theirs could be
+    /// accepted. An error from any catalogue ends the search, the same as one from the primary.
     /// </summary>
-    private async Task<CatalogBook?> FindAsync(string title, string? author, CancellationToken cancellationToken)
+    private async Task<Found?> FindAsync(string title, string? author, CancellationToken cancellationToken)
     {
         // No catalogue answer could be accepted, so don't spend a request on it.
         if (CatalogMatcher.IsTooVague(title, author))
@@ -153,6 +156,23 @@ public sealed partial class MentionMatcher(
             return null;
         }
 
+        foreach (var catalog in CatalogMatcher.HasSurname(author) ? catalogs.All : [catalogs.Primary])
+        {
+            if (await SearchAsync(catalog, title, author, cancellationToken) is { } book)
+            {
+                return new Found(book, catalog);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Searches with the author when the model gave one, then by title alone, because catalogues file authors in ways
+    /// the model doesn't repeat ("J. R. R." against "J.R.R."). <see cref="CatalogMatcher"/> still checks the surname.
+    /// </summary>
+    private static async Task<CatalogBook?> SearchAsync(IBookCatalog catalog, string title, string? author, CancellationToken cancellationToken)
+    {
         if (!string.IsNullOrWhiteSpace(author)
             && CatalogMatcher.Pick(title, author, await catalog.SearchAsync(title, author, cancellationToken)) is { } withAuthor)
         {
@@ -225,6 +245,8 @@ public sealed partial class MentionMatcher(
     }
 
     private sealed record Answer(MatchState State, Guid? BookId, MatchDoubts Doubts);
+
+    private sealed record Found(CatalogBook Book, IBookCatalog Catalog);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Matched \"{Title}\" to \"{Book}\"")]
     private partial void LogMatched(string title, string book);
