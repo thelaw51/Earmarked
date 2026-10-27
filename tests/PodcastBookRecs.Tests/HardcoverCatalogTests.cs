@@ -133,7 +133,7 @@ public sealed class HardcoverCatalogTests
     }
 
     [Fact]
-    public async Task As_a_fallback_it_gets_its_own_status_row_and_a_token_is_required_only_then()
+    public async Task As_a_fallback_it_gets_its_own_status_row()
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -150,6 +150,33 @@ public sealed class HardcoverCatalogTests
         var report = await provider.GetRequiredService<HealthCheckService>().CheckHealthAsync(r => r.Name == BackendHealth.BookLookupFallback("Hardcover"), Ct);
         Assert.Equal(HealthStatus.Healthy, Assert.Single(report.Entries).Value.Status);
         Assert.Equal("https://api.hardcover.app/v1/graphql", Assert.Single(handler.Requests).Uri.ToString());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("hc_pat secret-value")]
+    public void Listed_without_a_usable_token_it_refuses_to_start_without_echoing_the_value(string? token)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["BookLookup:Fallbacks:0"] = "Hardcover",
+            ["Hardcover:Token"] = token,
+        }).Build();
+        using var provider = new ServiceCollection().AddLogging().AddSingleton(TimeProvider.System).AddPbrCore(config).AddPbrBookLookup(config).BuildServiceProvider();
+
+        var ex = Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<IOptions<HardcoverOptions>>().Value);
+
+        Assert.DoesNotContain("secret-value", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Not_listed_it_needs_no_token_and_isnt_registered()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["BookLookup:Fallbacks:0"] = "AppleBooks" }).Build();
+        using var provider = new ServiceCollection().AddLogging().AddSingleton(TimeProvider.System).AddPbrCore(config).AddPbrBookLookup(config).BuildServiceProvider();
+
+        Assert.Null(provider.GetKeyedService<IBookCatalog>(BookLookupProviders.Hardcover));
+        Assert.DoesNotContain(provider.GetRequiredService<BookCatalogChain>().All, c => c.Provider == BookLookupProviders.Hardcover);
     }
 
     private static HttpClient Client(HttpMessageHandler handler) => new(handler) { BaseAddress = new Uri("https://graphql.example.test/") };
