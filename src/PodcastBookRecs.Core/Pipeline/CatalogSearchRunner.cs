@@ -20,9 +20,6 @@ public sealed partial class CatalogSearchRunner(
     TimeProvider time,
     ILogger<CatalogSearchRunner> logger)
 {
-    /// <summary>The review page stops waiting after 30 seconds, so a search this old has nobody waiting for it.</summary>
-    public static readonly TimeSpan ExpireAfter = TimeSpan.FromMinutes(2);
-
     /// <summary>A pick copies its result into the decision, so searches are only needed while someone is choosing.</summary>
     public static readonly TimeSpan KeepFor = TimeSpan.FromDays(1);
 
@@ -39,8 +36,9 @@ public sealed partial class CatalogSearchRunner(
     private static readonly TimeSpan CleanUpEvery = TimeSpan.FromHours(1);
 
     /// <summary>
-    /// How long one search may take across every catalogue, kept under the review page's 30-second wait so the page
-    /// gets whatever did answer. Tests shorten it.
+    /// How long after it was asked for a search must be answered, kept under the review page's 30-second wait so the
+    /// page gets whatever did answer. It counts from the search's creation, so one queued behind another search gets
+    /// only what is left. Tests shorten it.
     /// </summary>
     internal TimeSpan SearchTimeout { get; set; } = TimeSpan.FromSeconds(25);
 
@@ -68,20 +66,22 @@ public sealed partial class CatalogSearchRunner(
 
         foreach (var search in open)
         {
-            if (search.CreatedAt < now - ExpireAfter)
+            // Earlier searches in this pass took time, so the clock is read again for each one.
+            var left = search.CreatedAt + SearchTimeout - time.GetUtcNow().UtcDateTime;
+            if (left <= TimeSpan.Zero)
             {
                 await CompleteAsync(search.Id, null, ExpiredError, cancellationToken);
             }
             else
             {
-                await RunAsync(search, cancellationToken);
+                await RunAsync(search, left, cancellationToken);
             }
         }
     }
 
-    private async Task RunAsync(CatalogSearch search, CancellationToken cancellationToken)
+    private async Task RunAsync(CatalogSearch search, TimeSpan timeLeft, CancellationToken cancellationToken)
     {
-        using var timeout = new CancellationTokenSource(SearchTimeout, time);
+        using var timeout = new CancellationTokenSource(timeLeft, time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         var answers = await Task.WhenAll(catalogs.All.Select(catalog => AskAsync(catalog, search, linked.Token, cancellationToken)));
 

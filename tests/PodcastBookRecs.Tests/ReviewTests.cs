@@ -383,7 +383,7 @@ public sealed class ReviewTests : IAsyncLifetime
     {
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
         var stale = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
-        _time.Advance(CatalogSearchRunner.ExpireAfter + TimeSpan.FromSeconds(1));
+        _time.Advance(_runner.SearchTimeout + TimeSpan.FromSeconds(1));
 
         await _runner.RunPendingAsync(Ct);
         Assert.Equal(CatalogSearchRunner.ExpiredError, (await db.CatalogSearches.AsNoTracking().SingleAsync(Ct)).Error);

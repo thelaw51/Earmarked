@@ -242,7 +242,7 @@ A person's ruling on a title and author (the match is right, it isn't a book, it
 
 Decided titles are listed underneath, each with an *Undo*.
 
-The Worker runs these searches, not the web app, so the one-request-a-second pace holds across both: the page saves the search, the Worker answers within a few seconds, and the page waits up to 30 seconds. Five searches can wait at once; the Worker drops one nobody has collected after two minutes and deletes them all after a day. A pick is copied from the Worker's stored results, never from the page.
+The Worker runs these searches, not the web app, so the one-request-a-second pace holds across both: the page saves the search, the Worker answers within a few seconds, and the page waits up to 30 seconds. Five searches can wait at once. Each has 25 seconds from when you asked, counting any time spent queued behind another, so the page gets an answer before it gives up; the Worker deletes them all after a day. A pick is copied from the Worker's stored results, never from the page.
 
 Requests go out at most one a second, Open Library's limit for anonymous clients, so a few hundred mentions take a few minutes. Set `OpenLibrary:ContactEmail` and it goes in the User-Agent, as Open Library asks of regular clients. If Open Library is down or asks the Worker to slow down, matching pauses and tries again later; the Status page has a *book lookup* row.
 
