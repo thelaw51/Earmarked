@@ -31,7 +31,7 @@ Most podcasts don't publish transcripts, so most episodes go through speech-to-t
 
 Each queue takes the newest episode first. To have an older one done sooner, open it and click **Do this next**. It moves to the front of whichever queue it's in, and stays there through transcription and book extraction, without a second click. With book extraction off, its work ends at the transcript: the priority clears then, and the episode page shows "Find books" as off. An episode already being worked on finishes first. Several prioritised episodes run in the order you asked for them. A prioritised episode also skips the grace period for shows that publish transcripts, and any wait before its next retry.
 
-Episodes skipped by the backfill window when a podcast was added have an **Include** button: the episode joins the queue in its normal place, and the Worker polls the feed straight away to refresh its audio link. **Do this next** on a skipped episode does both.
+Episodes skipped by the backfill window when a podcast was added have an **Include** button: the episode joins the queue in its normal place, and the Worker polls the feed straight away to refresh its audio link. **Do this next** on a skipped episode does both. To take in more of a podcast's back catalogue at once, the podcast page has **Include the newest N skipped episodes**, which queues that many of the most recent skipped ones and polls the feed once. Raising `Polling:BackfillEpisodes` only changes podcasts added after the change.
 
 ## Deploying with Portainer
 

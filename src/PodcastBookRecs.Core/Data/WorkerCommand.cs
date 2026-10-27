@@ -10,6 +10,9 @@ public class WorkerCommand
 
     /// <summary>The mentions' lookup key, for <see cref="WorkerCommandType.ReviewDecided"/>.</summary>
     public string? LookupKey { get; set; }
+
+    /// <summary>How many episodes, for <see cref="WorkerCommandType.IncludeSkippedEpisodes"/>.</summary>
+    public int? Count { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public string? Error { get; set; }
@@ -35,4 +38,7 @@ public enum WorkerCommandType
     /// matched again, and the matcher applies whatever decision is now stored.
     /// </summary>
     ReviewDecided = 6,
+
+    /// <summary>Queues the newest <see cref="WorkerCommand.Count"/> episodes of a podcast skipped by the backfill window.</summary>
+    IncludeSkippedEpisodes = 7,
 }
