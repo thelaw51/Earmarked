@@ -261,6 +261,33 @@ public sealed class PipelineTests : IAsyncLifetime
     }
 
     /// <summary>Queues a command for the episode with this identity key, runs it, and returns its error.</summary>
+    [Fact]
+    public async Task Without_extraction_priority_clears_once_an_episode_has_its_transcript()
+    {
+        _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
+        await _poller.PollAsync(_podcastId, Ct);
+        EpisodeState[] states = [EpisodeState.Transcribed, EpisodeState.TranscriptFetched, EpisodeState.AwaitingTranscription];
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            var episodes = await db.Episodes.OrderBy(e => e.IdentityKey).ToListAsync(Ct);
+            Assert.True(episodes.Count >= states.Length);
+            for (var i = 0; i < episodes.Count; i++)
+            {
+                episodes[i].State = states[Math.Min(i, states.Length - 1)];
+                episodes[i].PrioritisedAt = DateTime.UtcNow;
+            }
+
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await new PriorityRelease(_dbFactory, new EpisodeStateLock()).ReleaseAsync(Ct);
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        var left = await check.Episodes.Select(e => new { e.State, Prioritised = e.PrioritisedAt != null }).ToListAsync(Ct);
+        // Only the episode still waiting for a transcript keeps its place at the front.
+        Assert.All(left, e => Assert.Equal(e.State == EpisodeState.AwaitingTranscription, e.Prioritised));
+    }
+
     private async Task<string?> RunCommandAsync(WorkerCommandType type, string identityKey)
     {
         await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
