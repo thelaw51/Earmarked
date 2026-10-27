@@ -154,13 +154,15 @@ else
                                     <MudText Typo="Typo.body2" Class="muted">Asking the catalogue…</MudText>
                                 </div>
                             }
-                            else if (search.Message is not null)
+                            else
                             {
-                                <MudText Typo="Typo.body2" Class="muted mt-3">@search.Message</MudText>
-                            }
-                            else if (search.Results is { } results)
-                            {
-                                @foreach (var result in results)
+                                @* A partial answer has both: the results that came back and a note that some catalogues didn't. *@
+                                @if (search.Message is not null)
+                                {
+                                    <MudText Typo="Typo.body2" Class="muted mt-3">@search.Message</MudText>
+                                }
+
+                                @foreach (var result in search.Results ?? [])
                                 {
                                     <div class="mention" @key="result.CatalogId">
                                         @if (Display.HttpsOrNull(result.CoverUrl) is { } resultCover)
