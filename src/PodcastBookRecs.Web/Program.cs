@@ -71,6 +71,7 @@ app.UseAntiforgery();
 // The sign-in page needs its CSS and scripts before anyone has signed in, and Docker's health check never signs in.
 app.MapStaticAssets().AllowAnonymous();
 app.MapHealthChecks("/health").AllowAnonymous();
+app.MapBookExports();
 // Blazor's default allows same-origin framing. Nothing here is meant to be embedded, and a framed sign-in page
 // invites clickjacking.
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode(o => o.ContentSecurityFrameAncestorsPolicy = "'none'");

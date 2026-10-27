@@ -10,6 +10,15 @@
 @* Books that mentions were matched to in the catalogue, most widely discussed first (BookRanking). *@
 <PageHeader Eyebrow="Library" Title="Books" Subtitle="Every book the podcasts mentioned, ranked by how many podcasts and episodes brought it up.">
     <Actions>
+        @if (_rows is { Count: > 0 })
+        {
+            @* Plain downloads with the page's filters. "download" stops Blazor's router from handling the link. *@
+            <MudMenu Icon="@Icons.Material.Rounded.Download" AriaLabel="Export the list" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                <MudMenuItem Href="@ExportHref("books/export.csv")" download="" Icon="@Icons.Material.Rounded.TableView">CSV</MudMenuItem>
+                <MudMenuItem Href="@ExportHref("books/export-goodreads.csv")" download="" Icon="@Icons.Material.Rounded.LibraryAdd">Goodreads import (CSV)</MudMenuItem>
+                <MudMenuItem Href="@ExportHref("books/export.json")" download="" Icon="@Icons.Material.Rounded.DataObject">JSON with mentions</MudMenuItem>
+            </MudMenu>
+        }
         <MudTooltip Text="Refresh">
             <MudIconButton Icon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
         </MudTooltip>
@@ -270,6 +279,9 @@ else
             Navigation.NavigateTo(uri, replace: true);
         }
     }
+
+    /// <summary>A download link for the list as filtered now.</summary>
+    private string ExportHref(string path) => Navigation.GetUriWithQueryParameters(path, _parameters.ToQuery());
 
     private static DateOnly? DayOf(DateTime? date) => date is { } value ? DateOnly.FromDateTime(value) : null;
 }
