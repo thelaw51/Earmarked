@@ -253,6 +253,16 @@ The *Books* page ranks every matched book by the number of different podcasts th
 
 Filters above the list narrow it by text in the title or author, by podcast, by the date episodes were published, and to books someone recommended. Podcast and date filters change the numbers: a book's counts and rank then cover only mentions in those podcasts and dates, so "the most-discussed books on one show last year" is one filter away. Text and *Recommended only* hide books without renumbering the rest. The filters are kept in the address (`/books?podcast=…&from=2026-01-01&to=2026-12-31&rec=1&q=…`), so a filtered list can be bookmarked or shared.
 
+### Exporting the list
+
+The download button on the *Books* page saves the list as it's filtered, in one of three formats:
+
+- **CSV**: one row per book with its rank, counts, last mention, the podcasts that mentioned it and its catalogue link. Opens in any spreadsheet.
+- **Goodreads import (CSV)**: Goodreads' own column names, with every book on the *to-read* shelf and the podcasts in its private notes. Upload it at *My Books → Import and export*. The app knows a book's work, not a particular edition, so the file has no ISBNs and Goodreads matches on title and author; check the import results for anything it couldn't place.
+- **JSON**: every book with the mentions that counted for it (podcast, episode, date, kind, time and quote) and the filters used.
+
+The files are built from the same query as the page, at `/books/export.csv`, `/books/export-goodreads.csv` and `/books/export.json` with the page's query string, and need you to be signed in. A cell that a spreadsheet would treat as a formula (starting with `=`, `+`, `-` or `@`) gets a leading `'`, because titles and quotes come from the catalogue and the model. The Goodreads file gets the same guard, since it can be opened in a spreadsheet too, so the rare title that starts with one of those characters imports with the `'` in front; edit it in Goodreads afterwards.
+
 ### Pointing at a different catalogue
 
 The matching rules live in `CatalogMatcher` and know nothing about Open Library. Another catalogue (Google Books, say) needs a new adapter under `src/PodcastBookRecs.Core/Providers/BookLookup/` that implements `IBookCatalog`, and a new `BookLookup:Provider` name. Each stored book records the catalogue it came from, and each match the version of the rules (`CatalogMatcher.Version`) that made it; changing the rules and bumping the version re-matches every mention.
