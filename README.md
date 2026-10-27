@@ -261,7 +261,7 @@ The download button on the *Books* page saves the list as it's filtered, in one 
 - **Goodreads import (CSV)**: Goodreads' own column names, with every book on the *to-read* shelf and the podcasts in its private notes. Upload it at *My Books → Import and export*. The app knows a book's work, not a particular edition, so the file has no ISBNs and Goodreads matches on title and author; check the import results for anything it couldn't place.
 - **JSON**: every book with the mentions that counted for it (podcast, episode, date, kind, time and quote) and the filters used.
 
-The files are built from the same query as the page, at `/books/export.csv`, `/books/export-goodreads.csv` and `/books/export.json` with the page's query string, and need you to be signed in. A cell that a spreadsheet would treat as a formula (starting with `=`, `+`, `-` or `@`) gets a leading `'`, because titles and quotes come from the catalogue and the model.
+The files are built from the same query as the page, at `/books/export.csv`, `/books/export-goodreads.csv` and `/books/export.json` with the page's query string, and need you to be signed in. A cell that a spreadsheet would treat as a formula (starting with `=`, `+`, `-` or `@`) gets a leading `'`, because titles and quotes come from the catalogue and the model. The Goodreads file gets the same guard, since it can be opened in a spreadsheet too, so the rare title that starts with one of those characters imports with the `'` in front; edit it in Goodreads afterwards.
 
 ### Pointing at a different catalogue
 
