@@ -13,7 +13,7 @@ It runs as two containers from one image: a **Worker** that polls feeds and proc
 | 1 | Feed polling, published `<podcast:transcript>` fetching and parsing, podcast and episode pages, CI/CD | **Done** |
 | 2 | Speech-to-text transcription (Whisper to start) for episodes without a published transcript, on a [Mac transcription server](#transcription-server-on-a-mac) | **Done** |
 | 3 | Book extraction with a local LLM, Open Library matching, ranked book list | **Done** |
-| 4 | Review queue, filters, export | In progress |
+| 4 | Review queue, filters, export | **Done** |
 
 Most podcasts don't publish transcripts, so most episodes go through speech-to-text.
 
