@@ -493,7 +493,7 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_fallback_that_answers_badly_fails_the_title()
+    public async Task A_fallback_that_answers_badly_counts_as_not_having_the_book()
     {
         var apple = new FakeCatalog(BookLookupProviders.AppleBooks) { Throw = new CatalogLookupFailedException("odd") };
         var matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog, apple]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
@@ -502,14 +502,14 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         Assert.Equal(WorkOutcome.Worked, await matcher.ProcessNextAsync(Ct));
 
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
-        Assert.Equal(MatchState.LookupFailed, (await db.BookMentions.SingleAsync(Ct)).MatchState);
+        Assert.Equal(MatchState.NoMatch, (await db.BookMentions.SingleAsync(Ct)).MatchState);
     }
 
     [Theory]
     [InlineData(true, true, MatchState.Matched)]
     [InlineData(false, true, MatchState.Matched)]
     [InlineData(true, false, MatchState.LookupFailed)]
-    [InlineData(false, false, MatchState.LookupFailed)]
+    [InlineData(false, false, MatchState.NoMatch)]
     public async Task A_failing_fallback_is_skipped_and_the_next_one_asked(bool unreachable, bool lastHasIt, MatchState expected)
     {
         var hardcover = new FakeCatalog("Hardcover") { Throw = unreachable ? new BackendUnavailableException("down") : new CatalogLookupFailedException("401") };
