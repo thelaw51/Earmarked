@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using PodcastBookRecs.Core.BookLookup;
 using PodcastBookRecs.Core.Configuration;
+using PodcastBookRecs.Core.Data;
 using PodcastBookRecs.Core.Providers.BookLookup.OpenLibrary;
 
 namespace PodcastBookRecs.Tests;
@@ -147,4 +148,31 @@ public class BookLookupTests
         var unknown = new BookLookupOptions { Provider = "Nope" };
         Assert.NotEmpty(unknown.Validate(new ValidationContext(unknown)));
     }
+
+    [Theory]
+    [InlineData(null, 4, MatchDoubts.NoAuthor)]
+    [InlineData(null, 2, MatchDoubts.NoAuthor | MatchDoubts.FewEditions)]
+    [InlineData("Ines Calder", 4, MatchDoubts.None)]
+    [InlineData("I. Calder", 1, MatchDoubts.FewEditions)]
+    [InlineData("Ines Caldor", 4, MatchDoubts.FuzzySurname)]
+    public void Flags_why_a_match_might_be_wrong(string? author, int editions, MatchDoubts expected) =>
+        Assert.Equal(expected, CatalogMatcher.Doubts(author, Book("The Lighthouse Keeper's Almanac", "Ines Calder", editions)));
+
+    /// <summary>
+    /// Review decisions are stored by lookup key. If this test fails, the key rules changed: stored decisions no longer
+    /// match their mentions, and a step must re-key ReviewDecisions from their Title and Author before this ships.
+    /// </summary>
+    [Theory]
+    [InlineData("The Lighthouse Keeper's Almanac", "Ines Calder", "lighthouse keepers almanac|calder")]
+    [InlineData("lighthouse keepers almanac", "I. CALDER", "lighthouse keepers almanac|calder")]
+    [InlineData("A Walk in the Woods", null, "walk in the woods|")]
+    [InlineData("The", null, "the|")]
+    [InlineData("Dune Messiah: A Novel", "Frank Herbert", "dune messiah a novel|herbert")]
+    [InlineData("The Hobbit", "Tolkien, J.R.R.", "hobbit|tolkien")]
+    [InlineData("Strength to Love", "Martin Luther King Jr.", "strength to love|king")]
+    [InlineData("1984", "George Orwell", "1984|orwell")]
+    [InlineData("  The   New York Times ", "", "new york times|")]
+    [InlineData("Économie & Société", "Émile Durkheim", "économie société|durkheim")]
+    public void Lookup_keys_stay_the_same(string title, string? author, string expected) =>
+        Assert.Equal(expected, CatalogMatcher.LookupKey(title, author));
 }

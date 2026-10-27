@@ -7,6 +7,9 @@ public class WorkerCommand
     public WorkerCommandType Type { get; set; }
     public Guid? PodcastFeedId { get; set; }
     public Guid? EpisodeId { get; set; }
+
+    /// <summary>The mentions' lookup key, for <see cref="WorkerCommandType.ReviewDecided"/>.</summary>
+    public string? LookupKey { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public string? Error { get; set; }
@@ -26,4 +29,10 @@ public enum WorkerCommandType
 
     /// <summary>Queues an episode skipped by the backfill window, in its normal place.</summary>
     IncludeEpisode = 5,
+
+    /// <summary>
+    /// A review decision for <see cref="WorkerCommand.LookupKey"/> was made, changed or undone: mentions with that key are
+    /// matched again, and the matcher applies whatever decision is now stored.
+    /// </summary>
+    ReviewDecided = 6,
 }

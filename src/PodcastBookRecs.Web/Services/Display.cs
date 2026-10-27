@@ -54,6 +54,7 @@ public static class Display
         MatchState.Pending => lookupOn ? "Checking the catalogue" : "Book lookup is off",
         MatchState.NoMatch => "Not found in the catalogue",
         MatchState.LookupFailed => "Catalogue lookup failed",
+        MatchState.Rejected => "Ruled out in review",
         _ => null,
     };
 

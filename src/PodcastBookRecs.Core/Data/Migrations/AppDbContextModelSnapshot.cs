@@ -212,6 +212,9 @@ namespace PodcastBookRecs.Core.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("Doubts")
+                        .HasColumnType("INTEGER");
+
                     b.Property<Guid>("EpisodeId")
                         .HasColumnType("TEXT");
 
@@ -399,6 +402,52 @@ namespace PodcastBookRecs.Core.Data.Migrations
                     b.ToTable("PodcastFeeds");
                 });
 
+            modelBuilder.Entity("PodcastBookRecs.Core.Data.ReviewDecision", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Author")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("BookId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("DecidedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LookupKey")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Pick")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Verdict")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BookId");
+
+                    b.HasIndex("LookupKey")
+                        .IsUnique();
+
+                    b.ToTable("ReviewDecisions");
+                });
+
             modelBuilder.Entity("PodcastBookRecs.Core.Data.Transcript", b =>
                 {
                     b.Property<Guid>("Id")
@@ -454,6 +503,10 @@ namespace PodcastBookRecs.Core.Data.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Error")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LookupKey")
+                        .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
                     b.Property<Guid?>("PodcastFeedId")
@@ -553,6 +606,16 @@ namespace PodcastBookRecs.Core.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("PodcastFeed");
+                });
+
+            modelBuilder.Entity("PodcastBookRecs.Core.Data.ReviewDecision", b =>
+                {
+                    b.HasOne("PodcastBookRecs.Core.Data.Book", "Book")
+                        .WithMany()
+                        .HasForeignKey("BookId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Book");
                 });
 
             modelBuilder.Entity("PodcastBookRecs.Core.Data.Transcript", b =>

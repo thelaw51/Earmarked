@@ -53,6 +53,9 @@ public class BookMention
     /// <summary>Which matching rules produced <see cref="MatchState"/>. Null until matched; a different version means match again.</summary>
     public string? MatcherVersion { get; set; }
     public DateTime? MatchedAt { get; set; }
+
+    /// <summary>Why a catalogue match might be wrong, recorded by the matcher. None for unmatched or reviewed mentions.</summary>
+    public MatchDoubts Doubts { get; set; }
 }
 
 /// <summary>Where a mention is in catalogue matching. Values are stored, so never renumber them.</summary>
@@ -66,6 +69,28 @@ public enum MatchState
 
     /// <summary>The catalogue's answer for this title couldn't be used. Kept out of the queue so it can't block it.</summary>
     LookupFailed = 3,
+
+    /// <summary>
+    /// A person ruled it isn't a book, or isn't the book the catalogue found (<see cref="ReviewDecision"/>). Only a
+    /// decision produces it. No book, so it's off the book list.
+    /// </summary>
+    Rejected = 4,
+}
+
+/// <summary>Reasons a catalogue match is shaky enough to show a person. Values are stored, so never renumber them.</summary>
+[Flags]
+public enum MatchDoubts
+{
+    None = 0,
+
+    /// <summary>The model named no author, so only the title and edition count backed the match.</summary>
+    NoAuthor = 1,
+
+    /// <summary>The author matched only with one letter out ("Elliot" for "Eliot").</summary>
+    FuzzySurname = 2,
+
+    /// <summary>The book has few editions, so it may be an obscure title that happens to share the words.</summary>
+    FewEditions = 4,
 }
 
 /// <summary>How a book came up. Values are stored, so never renumber them.</summary>

@@ -79,6 +79,10 @@ public sealed partial class CommandProcessor(
                 await UpdateQueueAsync(episodeId, prioritise: false, cancellationToken);
                 break;
 
+            case WorkerCommandType.ReviewDecided when command.LookupKey is { Length: > 0 and <= MaxLookupKeyLength } key:
+                await RematchKeyAsync(key, cancellationToken);
+                break;
+
             default:
                 throw new InvalidOperationException($"Command {command.Type} is missing its target.");
         }
@@ -155,6 +159,19 @@ public sealed partial class CommandProcessor(
         {
             await poller.PollAsync(podcastId, cancellationToken);
         }
+    }
+
+    private const int MaxLookupKeyLength = BookMention.MaxTitleLength + BookMention.MaxAuthorLength;
+
+    /// <summary>
+    /// Makes every mention with this lookup key due for matching again, so the matcher applies whatever review decision
+    /// is now stored for it, or matches normally if it was undone. Only invalidates: the matcher alone changes match
+    /// state, and mentions keep their current answer until it does.
+    /// </summary>
+    private async Task RematchKeyAsync(string key, CancellationToken cancellationToken)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        await db.BookMentions.Where(m => m.LookupKey == key).ExecuteUpdateAsync(s => s.SetProperty(m => m.MatcherVersion, (string?)null), cancellationToken);
     }
 
     /// <summary>States an episode waits in for its next step, where priority changes what runs next.</summary>

@@ -1,3 +1,4 @@
+using PodcastBookRecs.Core.Data;
 using PodcastBookRecs.Core.Extraction;
 
 namespace PodcastBookRecs.Core.BookLookup;
@@ -13,10 +14,13 @@ namespace PodcastBookRecs.Core.BookLookup;
 /// </summary>
 public static class CatalogMatcher
 {
-    /// <summary>Stored on every match. Bump it when these rules change, and every mention is matched again.</summary>
-    public const string Version = "match-v2";
+    /// <summary>Stored on every match. Bump it when these rules or <see cref="Doubts"/> change, and every mention is matched again.</summary>
+    public const string Version = "match-v3";
 
     public const int MinEditionsWithoutAuthor = 2;
+
+    /// <summary>A match to a book with this many editions or fewer is flagged <see cref="MatchDoubts.FewEditions"/>.</summary>
+    public const int FewEditions = 2;
 
     private static readonly HashSet<string> NameSuffixes = new(StringComparer.Ordinal) { "jr", "sr", "ii", "iii", "iv", "phd", "md" };
 
@@ -34,7 +38,9 @@ public static class CatalogMatcher
 
     /// <summary>
     /// The key two mentions share when they would get the same answer: the title key and the author's surname. Used to
-    /// reuse an earlier result instead of asking the catalogue again.
+    /// reuse an earlier result instead of asking the catalogue again, and to apply a <see cref="ReviewDecision"/>.
+    /// Decisions are stored by this key, so changing what it returns (here, in <see cref="MentionMerger.TitleKey"/> or
+    /// in <see cref="Surname"/>) needs a step that re-keys them from their stored title and author.
     /// </summary>
     public static string LookupKey(string title, string? author) => $"{MentionMerger.TitleKey(title)}|{Surname(author)}";
 
@@ -60,6 +66,22 @@ public static class CatalogMatcher
             .OrderByDescending(c => TitleKeys(c.Title, c.Subtitle).Contains(full))
             .ThenByDescending(c => c.EditionCount)
             .FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Why <paramref name="picked"/>, chosen by <see cref="Pick"/> for this title and author, might still be the wrong
+    /// book. The review queue shows matches with any doubt to a person.
+    /// </summary>
+    public static MatchDoubts Doubts(string? author, CatalogBook picked)
+    {
+        var doubts = picked.EditionCount <= FewEditions ? MatchDoubts.FewEditions : MatchDoubts.None;
+        var surname = Surname(author);
+        if (surname.Length == 0)
+        {
+            return doubts | MatchDoubts.NoAuthor;
+        }
+
+        return picked.Authors.Any(a => Surname(a) == surname) ? doubts : doubts | MatchDoubts.FuzzySurname;
     }
 
     /// <summary>
