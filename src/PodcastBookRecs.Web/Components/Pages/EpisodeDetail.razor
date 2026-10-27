@@ -6,13 +6,14 @@
 @inject CommandFeedback Commands
 @inject IJSRuntime JS
 @inject NavigationManager Navigation
+@inject ILogger<EpisodeDetail> Logger
 @implements IAsyncDisposable
 
 <PageTitle>@(_episode?.Title ?? "Episode")</PageTitle>
 
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Couldn't load this episode: @_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_error</MudAlert>
 }
 else if (_loading)
 {
@@ -243,7 +244,7 @@ else
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _error = Logger.LoadFailed(ex, "this episode");
         }
         finally
         {

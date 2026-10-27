@@ -2,6 +2,7 @@
 @using PodcastBookRecs.Core.Configuration
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject TimeProvider Time
+@inject ILogger<Status> Logger
 
 <PageTitle>Status</PageTitle>
 
@@ -15,7 +16,7 @@
 
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Couldn't load status: @_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_error</MudAlert>
 }
 else if (_loading)
 {
@@ -146,7 +147,7 @@ else
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _error = Logger.LoadFailed(ex, "status");
         }
         finally
         {

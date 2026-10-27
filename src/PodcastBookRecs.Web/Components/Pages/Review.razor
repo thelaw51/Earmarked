@@ -34,7 +34,7 @@
 
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Couldn't load the review list: @_error</MudAlert>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_error</MudAlert>
 }
 else if (_items is null || _decided is null)
 {
@@ -273,7 +273,7 @@ else
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _error = Logger.LoadFailed(ex, "the review list");
         }
     }
 
@@ -324,9 +324,10 @@ else
         {
             Snackbar.Add(ex.Message, Severity.Warning);
         }
-        // Only the unique key (two decisions on one title at once) or undoing a row already gone means someone else got
-        // there first. Anything else, such as a lock timeout, saved nothing and gets the general message below.
-        catch (DbUpdateException ex) when (ex is DbUpdateConcurrencyException || ex.InnerException is Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 19 })
+        // Only the unique key (two decisions on one title at once, SQLITE_CONSTRAINT_UNIQUE) or undoing a row already gone
+        // means someone else got there first. Anything else, such as a lock timeout, saved nothing and gets the general
+        // message below.
+        catch (DbUpdateException ex) when (ex is DbUpdateConcurrencyException || ex.InnerException is Microsoft.Data.Sqlite.SqliteException { SqliteExtendedErrorCode: 2067 })
         {
             Snackbar.Add("This title was decided somewhere else just now. Refresh and try again.", Severity.Warning);
         }
