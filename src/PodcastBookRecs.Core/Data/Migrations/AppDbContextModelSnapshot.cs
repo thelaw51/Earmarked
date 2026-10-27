@@ -278,6 +278,41 @@ namespace PodcastBookRecs.Core.Data.Migrations
                     b.ToTable("BookMentions");
                 });
 
+            modelBuilder.Entity("PodcastBookRecs.Core.Data.CatalogSearch", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Author")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Results")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompletedAt");
+
+                    b.ToTable("CatalogSearches");
+                });
+
             modelBuilder.Entity("PodcastBookRecs.Core.Data.Episode", b =>
                 {
                     b.Property<Guid>("Id")

@@ -24,6 +24,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityUser
     public DbSet<BookMention> BookMentions => Set<BookMention>();
     public DbSet<Book> Books => Set<Book>();
     public DbSet<ReviewDecision> ReviewDecisions => Set<ReviewDecision>();
+    public DbSet<CatalogSearch> CatalogSearches => Set<CatalogSearch>();
     public DbSet<WorkerCommand> WorkerCommands => Set<WorkerCommand>();
     public DbSet<WorkerStatus> WorkerStatuses => Set<WorkerStatus>();
 
@@ -96,6 +97,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityUser
             b.Property(d => d.Note).HasMaxLength(ReviewDecision.MaxNoteLength);
             b.Property(d => d.Pick).HasConversion(NullableJsonConverter<CatalogBook>(), NullableJsonComparer<CatalogBook>());
             b.HasOne(d => d.Book).WithMany().OnDelete(DeleteBehavior.SetNull);
+        });
+
+        builder.Entity<CatalogSearch>(b =>
+        {
+            b.HasIndex(c => c.CompletedAt);
+            b.Property(c => c.Title).HasMaxLength(BookMention.MaxTitleLength);
+            b.Property(c => c.Author).HasMaxLength(BookMention.MaxAuthorLength);
+            b.Property(c => c.Error).HasMaxLength(CatalogSearch.MaxErrorLength);
+            b.Property(c => c.Results).HasConversion(NullableJsonConverter<List<CatalogBook>>(), NullableJsonComparer<List<CatalogBook>>());
         });
 
         builder.Entity<WorkerCommand>(b =>
