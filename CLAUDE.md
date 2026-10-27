@@ -19,7 +19,7 @@ Local runs read `.local/config/config.json` and write `.local/data/` (both git-i
 | 1 | Feed polling, published `<podcast:transcript>` fetch and parse, podcast/episode/status UI, CI/CD to GHCR | Done and deployed |
 | 2 | Speech-to-text for episodes without a published transcript (whisper.cpp on a Mac, `mac/`), chunked and resumable | Done and deployed |
 | 3 | Book extraction with a local LLM and quote validation, Open Library matching, ranked book list | Done |
-| 4 | Review queue, filters, export | In progress (review queue and filters done) |
+| 4 | Review queue, book list filters and transcript links, CSV, Goodreads and JSON export | Done (`ReviewBacklog.LowConfidence`, 0.6, not yet checked against real data) |
 
 Transcription runs natively (not in Docker) on an Apple Silicon Mac on the LAN, behind an OpenAI-compatible `/v1/audio/transcriptions` endpoint; `mac/setup.sh` installs it. Book extraction uses LM Studio on the same Mac (OpenAI-compatible `/v1/chat/completions`, Qwen3 8B), running alongside transcription. Every external backend follows the same pattern: our own interface, an adapter under `Core/Providers/`, `BackendUnavailableException` for "can't reach it", `BackendProbe` to tell a dropped request from a crash, and a health check tagged `BackendHealth.Tag` so it shows on the Status page. Book lookup (Open Library, over the internet) follows the same pattern, with `IBookCatalog` and `BookLookup:Provider`.
 
