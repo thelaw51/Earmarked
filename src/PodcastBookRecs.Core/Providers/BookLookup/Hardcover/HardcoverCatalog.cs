@@ -154,8 +154,7 @@ public sealed partial class HardcoverCatalog(IHttpClientFactory httpFactory, IOp
     private static string? CoverOrNull(JsonElement d) =>
         d.TryGetProperty("image", out var image) && image.ValueKind == JsonValueKind.Object
         && image.TryGetProperty("url", out var url) && url.ValueKind == JsonValueKind.String
-        && CatalogMatcher.IsSafeLink(url.GetString(), BookLookupProviders.CoverHost(BookLookupProviders.Hardcover), allowSubdomains: true)
-            ? new Uri(url.GetString()!).AbsoluteUri
+            ? CatalogMatcher.SafeLinkOrNull(url.GetString(), BookLookupProviders.CoverHost(BookLookupProviders.Hardcover), allowSubdomains: true)
             : null;
 
     /// <summary>A GraphQL error's machine-readable code, if it is a short plain word; never its message.</summary>

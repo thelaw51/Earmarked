@@ -19,6 +19,19 @@ public class BookLookupTests
         Assert.Equal("OL1W", CatalogMatcher.Pick(title, author, [Book("The Lighthouse Keeper's Almanac", "Ines Calder")])?.CatalogId);
 
     [Fact]
+    public void A_link_is_checked_in_the_form_it_will_be_stored()
+    {
+        // 250 characters as written, but each "é" becomes "%C3%A9" when escaped, taking it past the 300 limit.
+        var lengthened = "https://assets.hardcover.app/" + new string('é', 221);
+        Assert.True(lengthened.Length <= PodcastBookRecs.Core.Data.Book.MaxUrlLength);
+
+        Assert.Null(CatalogMatcher.SafeLinkOrNull(lengthened, "hardcover.app", allowSubdomains: true));
+        Assert.Equal("https://assets.hardcover.app/caf%C3%A9.jpg", CatalogMatcher.SafeLinkOrNull("https://assets.hardcover.app/café.jpg", "hardcover.app", allowSubdomains: true));
+        Assert.Null(CatalogMatcher.SafeLinkOrNull("https://evilhardcover.app/a.jpg", "hardcover.app", allowSubdomains: true));
+        Assert.Null(CatalogMatcher.SafeLinkOrNull("not a link", "hardcover.app"));
+    }
+
+    [Fact]
     public void A_candidate_with_a_subtitle_matches_the_full_title_too() =>
         Assert.NotNull(CatalogMatcher.Pick("Small Rivers: A Walking Year", null, [Book("Small Rivers", "Tomas Reyne", subtitle: "A Walking Year")]));
 

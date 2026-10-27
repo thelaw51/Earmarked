@@ -99,9 +99,7 @@ public sealed partial class AppleBooksCatalog(IHttpClientFactory httpFactory, IO
 
     /// <summary>A cover link kept only if <see cref="CatalogMatcher.IsUsable"/> would accept it: https on Apple's image host.</summary>
     private static string? CoverOrNull(string? url) =>
-        CatalogMatcher.IsSafeLink(url, BookLookupProviders.CoverHost(BookLookupProviders.AppleBooks), allowSubdomains: true)
-            ? new Uri(url!).AbsoluteUri
-            : null;
+        CatalogMatcher.SafeLinkOrNull(url, BookLookupProviders.CoverHost(BookLookupProviders.AppleBooks), allowSubdomains: true);
 
     private static string Cap(string value, int max) => value.Length <= max ? value : value[..max];
 
