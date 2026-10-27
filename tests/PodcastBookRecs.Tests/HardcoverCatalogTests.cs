@@ -15,6 +15,7 @@ namespace PodcastBookRecs.Tests;
 public sealed class HardcoverCatalogTests
 {
     private const string Token = "hc_pat_test-placeholder";
+    private const string OneHit = """{"data":{"search":{"results":{"hits":[{"document":{"id":"1","slug":"a-book","title":"A Book","author_names":["Ines Calder"]}}]}}}}""";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -101,13 +102,13 @@ public sealed class HardcoverCatalogTests
     [InlineData(HttpStatusCode.TooManyRequests, HealthStatus.Unhealthy, "HTTP 429")]
     public async Task Its_status_row_tests_the_token_and_reuses_any_answer(HttpStatusCode status, HealthStatus expected, string says)
     {
-        var handler = new Recorder(status, "");
+        var handler = new Recorder(status, OneHit);
         var time = new ManualTime();
         var check = new HardcoverHealthCheck(new SingleClientFactory(Client(handler)), Options.Create(new HardcoverOptions { Token = Token }), time);
 
         var first = await check.CheckHealthAsync(new HealthCheckContext(), Ct);
         var second = await check.CheckHealthAsync(new HealthCheckContext(), Ct);
-        time.Advance(HardcoverHealthCheck.RecheckAfter);
+        time.Advance(status == HttpStatusCode.TooManyRequests ? HardcoverHealthCheck.RecheckOutageAfter : HardcoverHealthCheck.RecheckAfter);
         await check.CheckHealthAsync(new HealthCheckContext(), Ct);
 
         Assert.Equal(expected, first.Status);
@@ -115,6 +116,36 @@ public sealed class HardcoverCatalogTests
         Assert.Same(first.Description, second.Description);
         Assert.Equal(2, handler.Requests.Count);
         Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
+    }
+
+    [Fact]
+    public async Task Its_status_row_reads_the_answer_so_a_graphql_error_is_not_healthy()
+    {
+        var handler = new Recorder(HttpStatusCode.OK, """{"errors":[{"message":"Book Intermezzo not allowed","extensions":{"code":"access-denied"}}]}""");
+        var check = new HardcoverHealthCheck(new SingleClientFactory(Client(handler)), Options.Create(new HardcoverOptions { Token = Token }), new ManualTime());
+
+        var result = await check.CheckHealthAsync(new HealthCheckContext(), Ct);
+
+        Assert.Equal(HealthStatus.Unhealthy, result.Status);
+        Assert.Contains("access-denied", result.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("Intermezzo", result.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Its_status_row_checks_a_server_error_again_sooner()
+    {
+        var handler = new Recorder(HttpStatusCode.ServiceUnavailable, "");
+        var time = new ManualTime();
+        var check = new HardcoverHealthCheck(new SingleClientFactory(Client(handler)), Options.Create(new HardcoverOptions { Token = Token }), time);
+
+        await check.CheckHealthAsync(new HealthCheckContext(), Ct);
+        time.Advance(HardcoverHealthCheck.RecheckOutageAfter - TimeSpan.FromSeconds(1));
+        await check.CheckHealthAsync(new HealthCheckContext(), Ct);
+        Assert.Single(handler.Requests);
+
+        time.Advance(TimeSpan.FromSeconds(1));
+        await check.CheckHealthAsync(new HealthCheckContext(), Ct);
+        Assert.Equal(2, handler.Requests.Count);
     }
 
     [Theory]
@@ -140,7 +171,7 @@ public sealed class HardcoverCatalogTests
             ["BookLookup:Fallbacks:0"] = "hardcover",
             ["Hardcover:Token"] = Token,
         }).Build();
-        var handler = new Recorder(HttpStatusCode.OK, "");
+        var handler = new Recorder(HttpStatusCode.OK, OneHit);
         var services = new ServiceCollection().AddLogging().AddSingleton(TimeProvider.System).AddPbrCore(config).AddPbrBookLookup(config);
         services.AddHttpClient(HardcoverCatalog.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => handler);
         await using var provider = services.BuildServiceProvider();
