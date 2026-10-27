@@ -170,8 +170,8 @@ public static class CatalogMatcher
     /// <summary>
     /// A picked book was copied from a search result or built from what a person typed, and it sat in the database in
     /// between. Before it becomes a <see cref="Book"/>, check what every entry must have: a known provider, an ID, a
-    /// title, and https links. A <see cref="BookLookupProviders.Manual"/> entry is the one kind with no link, and its ID
-    /// must be a GUID (its decision's). The review page checks a pick with this when it's made, and the matcher again
+    /// title, and https links, the book's own on that catalogue's host. A <see cref="BookLookupProviders.Manual"/> entry
+    /// is the one kind with no link, and its ID must be a GUID (its decision's). The review page checks a pick with this when it's made, and the matcher again
     /// before adding it. The record's types say most of these aren't null, but JSON read back from the database can
     /// still hold nulls.
     /// </summary>
@@ -184,7 +184,8 @@ public static class CatalogMatcher
         && pick.ProviderOrDefault switch
         {
             BookLookupProviders.Manual => pick.InfoUrl is null && pick.CoverUrl is null && Guid.TryParseExact(pick.CatalogId, "N", out _),
-            var provider => BookLookupProviders.Known.Contains(provider) && IsHttps(pick.InfoUrl),
+            var provider => BookLookupProviders.Known.Contains(provider) && IsHttps(pick.InfoUrl)
+                && new Uri(pick.InfoUrl!).Host == BookLookupProviders.InfoHost(provider),
         };
 
     private const int MaxCatalogIdLength = 40;

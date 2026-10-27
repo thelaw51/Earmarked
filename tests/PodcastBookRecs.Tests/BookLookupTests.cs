@@ -9,7 +9,7 @@ namespace PodcastBookRecs.Tests;
 public class BookLookupTests
 {
     private static CatalogBook Book(string title, string author, int editions = 2, string? subtitle = null, string id = "OL1W") =>
-        new(id, title, subtitle, [author], null, editions, $"https://catalog.test/{id}", null);
+        new(id, title, subtitle, [author], null, editions, $"https://openlibrary.org/works/{id}", null);
 
     [Theory]
     [InlineData("the lighthouse keepers almanac", null)]
@@ -177,19 +177,20 @@ public class BookLookupTests
         Assert.Equal(expected, CatalogMatcher.LookupKey(title, author));
 
     [Theory]
-    [InlineData(null, "https://catalog.test/OL1W", true)]
-    [InlineData("OpenLibrary", "https://catalog.test/OL1W", true)]
+    [InlineData(null, "https://openlibrary.org/works/OL1W", true)]
+    [InlineData("OpenLibrary", "https://openlibrary.org/works/OL1W", true)]
     [InlineData(null, null, false)]
     [InlineData("OpenLibrary", null, false)]
-    [InlineData("SomewhereElse", "https://catalog.test/OL1W", false)]
+    [InlineData("SomewhereElse", "https://openlibrary.org/works/OL1W", false)]
+    [InlineData("OpenLibrary", "https://evil.example/openlibrary.org", false)]
     public void A_catalogue_pick_needs_a_known_provider_and_an_https_link(string? provider, string? infoUrl, bool usable) =>
         Assert.Equal(usable, CatalogMatcher.IsUsable(Book("Small Rivers", "Tomas Reyne") with { Provider = provider, InfoUrl = infoUrl }));
 
     [Theory]
     [InlineData("0199a5b0c3d47e8fa1b2c3d4e5f60718", null, null, true)]
     [InlineData("OL1W", null, null, false)]
-    [InlineData("0199a5b0c3d47e8fa1b2c3d4e5f60718", "https://catalog.test/OL1W", null, false)]
-    [InlineData("0199a5b0c3d47e8fa1b2c3d4e5f60718", "http://catalog.test/OL1W", null, false)]
+    [InlineData("0199a5b0c3d47e8fa1b2c3d4e5f60718", "https://openlibrary.org/works/OL1W", null, false)]
+    [InlineData("0199a5b0c3d47e8fa1b2c3d4e5f60718", "http://openlibrary.org/works/OL1W", null, false)]
     [InlineData("0199a5b0c3d47e8fa1b2c3d4e5f60718", null, "https://covers.test/1.jpg", false)]
     public void A_kept_as_is_pick_has_a_guid_id_and_no_links(string catalogId, string? infoUrl, string? coverUrl, bool usable) =>
         Assert.Equal(usable, CatalogMatcher.IsUsable(

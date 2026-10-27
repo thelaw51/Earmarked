@@ -16,7 +16,7 @@ namespace PodcastBookRecs.Tests;
 public sealed class MentionMatcherTests : IAsyncLifetime
 {
     private static readonly CatalogBook Almanac =
-        new("OL1001W", "The Lighthouse Keeper's Almanac", null, ["Ines Calder"], 2019, 4, "https://catalog.test/OL1001W", null);
+        new("OL1001W", "The Lighthouse Keeper's Almanac", null, ["Ines Calder"], 2019, 4, "https://openlibrary.org/works/OL1001W", null);
 
     private readonly string _root = Directory.CreateTempSubdirectory("pbr-matcher-").FullName;
     private readonly FakeCatalog _catalog = new();
@@ -294,7 +294,7 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     [Fact]
     public async Task Correcting_adds_the_picked_book_once_and_points_every_mention_at_it()
     {
-        var pick = new CatalogBook("OL2002W", "Harbour Lights", null, ["Ines Calder"], 2021, 3, "https://catalog.test/OL2002W", null);
+        var pick = new CatalogBook("OL2002W", "Harbour Lights", null, ["Ines Calder"], 2021, 3, "https://openlibrary.org/works/OL2002W", null);
         await AddMentionAsync(0, "Harbor Lights", "Calder");
         await RunUntilIdleAsync();
 
@@ -441,7 +441,7 @@ public sealed class MentionMatcherTests : IAsyncLifetime
 
     [Theory]
     [InlineData("""{"catalogId":"OL2002W","title":"Harbour Lights","authors":[],"infoUrl":null}""")]
-    [InlineData("""{"catalogId":"OL2002W","title":"Harbour Lights","authors":null,"infoUrl":"https://catalog.test/OL2002W"}""")]
+    [InlineData("""{"catalogId":"OL2002W","title":"Harbour Lights","authors":null,"infoUrl":"https://openlibrary.org/works/OL2002W"}""")]
     public async Task A_stored_pick_with_missing_fields_fails_its_mention_without_blocking_the_queue(string pickJson)
     {
         _catalog.Answer("Small Rivers", Almanac with { Title = "Small Rivers" });
@@ -462,8 +462,8 @@ public sealed class MentionMatcherTests : IAsyncLifetime
 
     [Theory]
     [InlineData("javascript:alert(1)", null)]
-    [InlineData("http://catalog.test/OL2002W", null)]
-    [InlineData("https://catalog.test/OL2002W", "data:image/png;base64,AAAA")]
+    [InlineData("http://openlibrary.org/works/OL2002W", null)]
+    [InlineData("https://openlibrary.org/works/OL2002W", "data:image/png;base64,AAAA")]
     public async Task A_pick_without_https_links_isnt_turned_into_a_book(string infoUrl, string? coverUrl)
     {
         var pick = new CatalogBook("OL2002W", "Harbour Lights", null, [], null, 1, infoUrl, coverUrl);

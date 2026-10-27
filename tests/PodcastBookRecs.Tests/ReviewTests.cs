@@ -17,7 +17,7 @@ namespace PodcastBookRecs.Tests;
 public sealed class ReviewTests : IAsyncLifetime
 {
     private static readonly CatalogBook Almanac =
-        new("OL1001W", "The Lighthouse Keeper's Almanac", null, ["Ines Calder"], 2019, 4, "https://catalog.test/OL1001W", null);
+        new("OL1001W", "The Lighthouse Keeper's Almanac", null, ["Ines Calder"], 2019, 4, "https://openlibrary.org/works/OL1001W", null);
 
     private readonly string _root = Directory.CreateTempSubdirectory("pbr-review-").FullName;
     private readonly ManualTime _time = new();
@@ -64,7 +64,7 @@ public sealed class ReviewTests : IAsyncLifetime
             CatalogId = "OL1001W",
             Title = "The Lighthouse Keeper's Almanac",
             Authors = "Ines Calder",
-            InfoUrl = "https://catalog.test/OL1001W",
+            InfoUrl = "https://openlibrary.org/works/OL1001W",
             CreatedAt = Now,
         };
         db.Books.Add(book);
@@ -231,7 +231,7 @@ public sealed class ReviewTests : IAsyncLifetime
     [Fact]
     public async Task A_stored_result_without_https_links_cant_be_picked()
     {
-        _catalog.Answer("Harbor Lights", Almanac with { InfoUrl = "http://catalog.test/OL1001W" });
+        _catalog.Answer("Harbor Lights", Almanac with { InfoUrl = "http://openlibrary.org/works/OL1001W" });
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
         var searchId = await ReviewActions.RequestSearchAsync(db, "Harbor Lights", null, Now, Ct);
         await _runner.RunPendingAsync(Ct);

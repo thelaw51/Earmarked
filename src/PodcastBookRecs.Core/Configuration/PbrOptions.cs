@@ -202,6 +202,16 @@ public static class BookLookupProviders
     public const string Manual = "Manual";
 
     public static readonly IReadOnlyList<string> Known = [OpenLibrary];
+
+    /// <summary>
+    /// The host every book link from each catalogue is on. The adapters build these links themselves; a stored pick is
+    /// checked against this again before it becomes a book.
+    /// </summary>
+    public static string? InfoHost(string provider) => provider switch
+    {
+        OpenLibrary => "openlibrary.org",
+        _ => null,
+    };
 }
 
 /// <summary>Outbound HTTP settings for feed-supplied URLs.</summary>
