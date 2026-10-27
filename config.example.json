@@ -18,7 +18,13 @@
   "Feeds": [
     { "Url": "https://feeds.example.com/your-podcast.rss" }
   ],
+  "BookLookup": {
+    "Fallbacks": [ "AppleBooks" ]
+  },
   "OpenLibrary": {
     "ContactEmail": "you@example.com"
+  },
+  "AppleBooks": {
+    "Country": "us"
   }
 }
