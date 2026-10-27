@@ -324,6 +324,27 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData("""{"catalogId":"OL2002W","title":"Harbour Lights","authors":[],"infoUrl":null}""")]
+    [InlineData("""{"catalogId":"OL2002W","title":"Harbour Lights","authors":null,"infoUrl":"https://catalog.test/OL2002W"}""")]
+    public async Task A_stored_pick_with_missing_fields_fails_its_mention_without_blocking_the_queue(string pickJson)
+    {
+        _catalog.Answer("Small Rivers", Almanac with { Title = "Small Rivers" });
+        await AddMentionAsync(0, "Harbor Lights", null);
+        await AddMentionAsync(1, "Small Rivers", null);
+        await InsertDecisionAsync("Harbor Lights", null, ReviewVerdict.Corrected, null, null);
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            await db.Database.ExecuteSqlAsync($"UPDATE ReviewDecisions SET Pick = {pickJson}", Ct);
+        }
+
+        await RunUntilIdleAsync();
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        var states = await check.BookMentions.OrderBy(m => m.CreatedAt).Select(m => m.MatchState).ToListAsync(Ct);
+        Assert.Equal([MatchState.LookupFailed, MatchState.Matched], states);
+    }
+
+    [Theory]
     [InlineData("javascript:alert(1)", null)]
     [InlineData("http://catalog.test/OL2002W", null)]
     [InlineData("https://catalog.test/OL2002W", "data:image/png;base64,AAAA")]
