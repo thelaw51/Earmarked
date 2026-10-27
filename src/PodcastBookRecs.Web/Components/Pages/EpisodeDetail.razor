@@ -3,8 +3,7 @@
 @using PodcastBookRecs.Core.Pipeline
 @using PodcastBookRecs.Core.Transcripts
 @inject IDbContextFactory<AppDbContext> DbFactory
-@inject TimeProvider Time
-@inject ISnackbar Snackbar
+@inject CommandFeedback Commands
 
 <PageTitle>@(_episode?.Title ?? "Episode")</PageTitle>
 
@@ -232,18 +231,5 @@ else
     private Task RetryAsync() => QueueAsync(WorkerCommandType.RetryEpisode, "Retry queued. Any stored transcript will be fetched again.");
 
     /// <summary>Asks the Worker to act on this episode. The Worker picks the command up within about 5 seconds.</summary>
-    private async Task QueueAsync(WorkerCommandType type, string done)
-    {
-        try
-        {
-            await using var db = await DbFactory.CreateDbContextAsync();
-            db.WorkerCommands.Add(new WorkerCommand { Type = type, EpisodeId = Id, CreatedAt = Time.GetUtcNow().UtcDateTime });
-            await db.SaveChangesAsync();
-            Snackbar.Add(done, Severity.Info);
-        }
-        catch (Exception ex)
-        {
-            Snackbar.Add($"Couldn't send that to the Worker: {ex.Message}", Severity.Error);
-        }
-    }
+    private Task QueueAsync(WorkerCommandType type, string queued) => Commands.QueueAsync(new WorkerCommand { Type = type, EpisodeId = Id }, queued);
 }
