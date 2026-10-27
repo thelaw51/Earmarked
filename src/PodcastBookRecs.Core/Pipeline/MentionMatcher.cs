@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using PodcastBookRecs.Core.Backends;
 using PodcastBookRecs.Core.BookLookup;
+using PodcastBookRecs.Core.Configuration;
 using PodcastBookRecs.Core.Data;
 
 namespace PodcastBookRecs.Core.Pipeline;
@@ -85,7 +86,8 @@ public sealed partial class MentionMatcher(
         }
         else
         {
-            var bookId = await AddBookAsync(db, book, cancellationToken);
+            // Credit the catalogue that was asked, whatever the entry says, so a search result can never pass as Manual.
+            var bookId = await AddBookAsync(db, book with { Provider = catalog.Provider }, cancellationToken);
             await SaveAsync(db, next.Id, key, new Answer(MatchState.Matched, bookId, CatalogMatcher.Doubts(next.Author, book)), null, cancellationToken);
             LogMatched(next.Title, book.Title);
         }
@@ -106,7 +108,8 @@ public sealed partial class MentionMatcher(
             ReviewVerdict.NotABook or ReviewVerdict.WrongBook => new Answer(MatchState.Rejected, null, MatchDoubts.None),
             ReviewVerdict.Confirmed when decision.BookId is { } id => new Answer(MatchState.Matched, id, MatchDoubts.None),
             ReviewVerdict.Corrected when decision.BookId is { } id => new Answer(MatchState.Matched, id, MatchDoubts.None),
-            ReviewVerdict.Corrected when CatalogMatcher.IsUsable(decision.Pick) => new Answer(MatchState.Matched, await AddPickAsync(db, decision, cancellationToken), MatchDoubts.None),
+            ReviewVerdict.Corrected when CatalogMatcher.IsUsable(decision.Pick) && decision.Pick!.ProviderOrDefault != BookLookupProviders.Manual
+                => new Answer(MatchState.Matched, await AddPickAsync(db, decision, cancellationToken), MatchDoubts.None),
             _ => failed,
         };
 
@@ -151,20 +154,22 @@ public sealed partial class MentionMatcher(
     /// <summary>Returns the stored book for this catalogue entry, adding it first if it's new. Only this loop adds books.</summary>
     private async Task<Guid> AddBookAsync(AppDbContext db, CatalogBook found, CancellationToken cancellationToken)
     {
-        var existing = await db.Books.Where(b => b.Provider == catalog.Provider && b.CatalogId == found.CatalogId)
+        var provider = found.ProviderOrDefault;
+        var authors = string.Join(", ", found.Authors);
+        authors = authors.Length <= Book.MaxAuthorsLength ? authors : authors[..Book.MaxAuthorsLength];
+        var existing = await db.Books.Where(b => b.Provider == provider && b.CatalogId == found.CatalogId)
             .Select(b => (Guid?)b.Id).FirstOrDefaultAsync(cancellationToken);
         if (existing is { } id)
         {
             return id;
         }
 
-        var authors = string.Join(", ", found.Authors);
         var book = new Book
         {
-            Provider = catalog.Provider,
+            Provider = provider,
             CatalogId = found.CatalogId,
             Title = found.Title,
-            Authors = authors.Length <= Book.MaxAuthorsLength ? authors : authors[..Book.MaxAuthorsLength],
+            Authors = authors,
             FirstPublishYear = found.FirstPublishYear,
             InfoUrl = found.InfoUrl,
             CoverUrl = found.CoverUrl,

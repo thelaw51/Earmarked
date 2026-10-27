@@ -190,10 +190,16 @@ public sealed class BookLookupOptions : IValidatableObject
     }
 }
 
-/// <summary>Names accepted in <see cref="BookLookupOptions.Provider"/>.</summary>
+/// <summary>Names accepted in <see cref="BookLookupOptions.Provider"/>, and the one stored on books no catalogue has.</summary>
 public static class BookLookupProviders
 {
     public const string OpenLibrary = "OpenLibrary";
+
+    /// <summary>
+    /// A book kept as the person typed it on the review page, because no catalogue has it. Stored as
+    /// <see cref="Data.Book.Provider"/>, never chosen in config: it has no adapter.
+    /// </summary>
+    public const string Manual = "Manual";
 
     public static readonly IReadOnlyList<string> Known = [OpenLibrary];
 }

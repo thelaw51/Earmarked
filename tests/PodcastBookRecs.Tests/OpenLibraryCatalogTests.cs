@@ -22,7 +22,7 @@ public class OpenLibraryCatalogTests
         Assert.Equal(["OL1001W", "OL1002W", "OL1004W"], books.Select(b => b.CatalogId));
         Assert.Equal(
             new CatalogBook("OL1001W", "The Lighthouse Keeper's Almanac", null, ["Ines Calder"], 2019, 4,
-                "https://openlibrary.org/works/OL1001W", "https://covers.openlibrary.org/b/id/12345-M.jpg"),
+                "https://openlibrary.org/works/OL1001W", "https://covers.openlibrary.org/b/id/12345-M.jpg", "OpenLibrary"),
             books[0],
             new CandidateComparer());
         Assert.Equal(["Tomas Reyne"], books[2].Authors);

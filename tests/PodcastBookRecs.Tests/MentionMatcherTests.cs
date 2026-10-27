@@ -75,7 +75,7 @@ public sealed class MentionMatcherTests : IAsyncLifetime
 
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
         var book = await db.Books.SingleAsync(Ct);
-        Assert.Equal(("OpenLibraryTest", "OL1001W", "Ines Calder"), (book.Provider, book.CatalogId, book.Authors));
+        Assert.Equal((BookLookupProviders.OpenLibrary, "OL1001W", "Ines Calder"), (book.Provider, book.CatalogId, book.Authors));
         var mentions = await db.BookMentions.ToListAsync(Ct);
         Assert.All(mentions, m => Assert.Equal((MatchState.Matched, book.Id, CatalogMatcher.Version), (m.MatchState, m.BookId, m.MatcherVersion)));
         Assert.Equal(1, _catalog.Calls);
@@ -323,6 +323,43 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         Assert.All(await db.BookMentions.ToListAsync(Ct), m => Assert.Equal((Guid?)book.Id, m.BookId));
     }
 
+    [Fact]
+    public async Task A_pick_stored_before_providers_were_recorded_reuses_the_open_library_book()
+    {
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
+        await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", null);
+        await AddMentionAsync(1, "Keeper of the Lighthouse", null);
+        await RunUntilIdleAsync();
+        await InsertDecisionAsync("Keeper of the Lighthouse", null, ReviewVerdict.Corrected, null, null);
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            var oldJson = $$"""{"catalogId":"OL1001W","title":"{{Almanac.Title}}","authors":["Ines Calder"],"editionCount":4,"infoUrl":"{{Almanac.InfoUrl}}"}""";
+            await db.Database.ExecuteSqlAsync($"UPDATE ReviewDecisions SET Pick = {oldJson}", Ct);
+            Assert.Null((await db.ReviewDecisions.SingleAsync(Ct)).Pick!.Provider);
+        }
+
+        await QueueReviewDecidedAsync(CatalogMatcher.LookupKey("Keeper of the Lighthouse", null));
+        await _commands.ProcessPendingAsync(Ct);
+        await RunUntilIdleAsync();
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        var book = await check.Books.SingleAsync(Ct);
+        Assert.Equal(BookLookupProviders.OpenLibrary, book.Provider);
+        Assert.All(await check.BookMentions.ToListAsync(Ct), m => Assert.Equal((Guid?)book.Id, m.BookId));
+    }
+
+    [Fact]
+    public async Task A_search_result_claiming_to_be_manual_is_credited_to_the_catalogue()
+    {
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac with { Provider = BookLookupProviders.Manual, InfoUrl = null });
+        await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", "Ines Calder");
+
+        await RunUntilIdleAsync();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(BookLookupProviders.OpenLibrary, (await db.Books.SingleAsync(Ct)).Provider);
+    }
+
     [Theory]
     [InlineData("""{"catalogId":"OL2002W","title":"Harbour Lights","authors":[],"infoUrl":null}""")]
     [InlineData("""{"catalogId":"OL2002W","title":"Harbour Lights","authors":null,"infoUrl":"https://catalog.test/OL2002W"}""")]
@@ -501,7 +538,7 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     {
         private readonly Dictionary<string, (CatalogBook Book, bool OnlyWithoutAuthor)> _answers = new(StringComparer.OrdinalIgnoreCase);
 
-        public string Provider => "OpenLibraryTest";
+        public string Provider => BookLookupProviders.OpenLibrary;
         public int Calls { get; private set; }
         public Exception? Throw { get; set; }
 

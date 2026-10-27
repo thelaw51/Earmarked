@@ -175,4 +175,23 @@ public class BookLookupTests
     [InlineData("Économie & Société", "Émile Durkheim", "économie société|durkheim")]
     public void Lookup_keys_stay_the_same(string title, string? author, string expected) =>
         Assert.Equal(expected, CatalogMatcher.LookupKey(title, author));
+
+    [Theory]
+    [InlineData(null, "https://catalog.test/OL1W", true)]
+    [InlineData("OpenLibrary", "https://catalog.test/OL1W", true)]
+    [InlineData(null, null, false)]
+    [InlineData("OpenLibrary", null, false)]
+    [InlineData("SomewhereElse", "https://catalog.test/OL1W", false)]
+    public void A_catalogue_pick_needs_a_known_provider_and_an_https_link(string? provider, string? infoUrl, bool usable) =>
+        Assert.Equal(usable, CatalogMatcher.IsUsable(Book("Small Rivers", "Tomas Reyne") with { Provider = provider, InfoUrl = infoUrl }));
+
+    [Theory]
+    [InlineData("0199a5b0c3d47e8fa1b2c3d4e5f60718", null, null, true)]
+    [InlineData("OL1W", null, null, false)]
+    [InlineData("0199a5b0c3d47e8fa1b2c3d4e5f60718", "https://catalog.test/OL1W", null, false)]
+    [InlineData("0199a5b0c3d47e8fa1b2c3d4e5f60718", "http://catalog.test/OL1W", null, false)]
+    [InlineData("0199a5b0c3d47e8fa1b2c3d4e5f60718", null, "https://covers.test/1.jpg", false)]
+    public void A_kept_as_is_pick_has_a_guid_id_and_no_links(string catalogId, string? infoUrl, string? coverUrl, bool usable) =>
+        Assert.Equal(usable, CatalogMatcher.IsUsable(
+            new CatalogBook(catalogId, "Small Rivers", null, [], null, 0, infoUrl, coverUrl, BookLookupProviders.Manual)));
 }

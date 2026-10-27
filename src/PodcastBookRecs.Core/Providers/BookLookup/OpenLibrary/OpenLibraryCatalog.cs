@@ -167,7 +167,8 @@ public sealed partial class OpenLibraryCatalog(IHttpClientFactory httpFactory, T
                     Number(d, "first_publish_year") is > 0 and < 10000 and var year ? (int)year : null,
                     Number(d, "edition_count") is > 0 and <= int.MaxValue and var editions ? (int)editions : 0,
                     $"https://openlibrary.org/works/{id}",
-                    cover));
+                    cover,
+                    BookLookupProviders.OpenLibrary));
             }
 
             return books;

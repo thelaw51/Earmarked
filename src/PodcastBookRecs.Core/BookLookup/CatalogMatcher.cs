@@ -1,3 +1,4 @@
+using PodcastBookRecs.Core.Configuration;
 using PodcastBookRecs.Core.Data;
 using PodcastBookRecs.Core.Extraction;
 
@@ -167,17 +168,24 @@ public static class CatalogMatcher
     }
 
     /// <summary>
-    /// A picked book was copied from a search result, so it came from the adapter, but it sat in the database in
-    /// between. Before it becomes a <see cref="Book"/>, check what every catalogue entry must have: an ID, a title,
-    /// and https links. The review page checks a pick with this when it's made, and the matcher again before adding it.
-    /// The record's types say none of these is null, but JSON read back from the database can still hold nulls.
+    /// A picked book was copied from a search result or built from what a person typed, and it sat in the database in
+    /// between. Before it becomes a <see cref="Book"/>, check what every entry must have: a known provider, an ID, a
+    /// title, and https links. A <see cref="BookLookupProviders.Manual"/> entry is the one kind with no link, and its ID
+    /// must be a GUID (its decision's). The review page checks a pick with this when it's made, and the matcher again
+    /// before adding it. The record's types say most of these aren't null, but JSON read back from the database can
+    /// still hold nulls.
     /// </summary>
     public static bool IsUsable(CatalogBook? pick) =>
         pick is not null
         && !string.IsNullOrWhiteSpace(pick.CatalogId) && pick.CatalogId.Length <= MaxCatalogIdLength
         && !string.IsNullOrWhiteSpace(pick.Title)
         && pick.Authors is not null && pick.Authors.All(a => a is not null)
-        && IsHttps(pick.InfoUrl) && (pick.CoverUrl is null || IsHttps(pick.CoverUrl));
+        && (pick.CoverUrl is null || IsHttps(pick.CoverUrl))
+        && pick.ProviderOrDefault switch
+        {
+            BookLookupProviders.Manual => pick.InfoUrl is null && pick.CoverUrl is null && Guid.TryParseExact(pick.CatalogId, "N", out _),
+            var provider => BookLookupProviders.Known.Contains(provider) && IsHttps(pick.InfoUrl),
+        };
 
     private const int MaxCatalogIdLength = 40;
 

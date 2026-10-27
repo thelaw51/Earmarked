@@ -1,3 +1,5 @@
+using PodcastBookRecs.Core.Configuration;
+
 namespace PodcastBookRecs.Core.BookLookup;
 
 /// <summary>
@@ -21,7 +23,9 @@ public interface IBookCatalog
 /// <summary>
 /// One catalogue entry, in our terms. The adapter builds <paramref name="InfoUrl"/> and <paramref name="CoverUrl"/>
 /// from identifiers it has checked, so they are https links on the catalogue's own hosts and the UI needs no
-/// knowledge of the catalogue's URL scheme.
+/// knowledge of the catalogue's URL scheme. Only a <see cref="BookLookupProviders.Manual"/> entry, typed in on the
+/// review page, has no <paramref name="InfoUrl"/>. <paramref name="Provider"/> is null in entries stored before
+/// catalogues recorded it, when Open Library was the only one; read it through <see cref="ProviderOrDefault"/>.
 /// </summary>
 public sealed record CatalogBook(
     string CatalogId,
@@ -30,8 +34,13 @@ public sealed record CatalogBook(
     IReadOnlyList<string> Authors,
     int? FirstPublishYear,
     int EditionCount,
-    string InfoUrl,
-    string? CoverUrl);
+    string? InfoUrl,
+    string? CoverUrl,
+    string? Provider = null)
+{
+    /// <summary>The catalogue this entry came from, with entries stored before it was recorded counted as Open Library.</summary>
+    public string ProviderOrDefault => Provider ?? BookLookupProviders.OpenLibrary;
+}
 
 /// <summary>The catalogue answered with something that can't be used for this title. Retrying the same title won't help.</summary>
 public sealed class CatalogLookupFailedException(string message, Exception? innerException = null) : Exception(message, innerException);
