@@ -57,9 +57,11 @@ public class OpenLibraryCatalogTests
     public async Task Slow_down_and_server_errors_pause(HttpStatusCode status) =>
         await Assert.ThrowsAsync<BackendUnavailableException>(() => Catalog(new Recorder(status, "")).SearchAsync("A Title", null, Ct));
 
-    [Fact]
-    public async Task Other_errors_fail_only_this_title() =>
-        await Assert.ThrowsAsync<CatalogLookupFailedException>(() => Catalog(new Recorder(HttpStatusCode.BadRequest, "")).SearchAsync("A Title", null, Ct));
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task Other_errors_fail_only_this_title(HttpStatusCode status) =>
+        await Assert.ThrowsAsync<CatalogLookupFailedException>(() => Catalog(new Recorder(status, "")).SearchAsync("A Title", null, Ct));
 
     [Fact]
     public async Task An_oversized_answer_fails_only_this_title()

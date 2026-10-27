@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using PodcastBookRecs.Core.Backends;
 using PodcastBookRecs.Core.BookLookup;
 using PodcastBookRecs.Core.Configuration;
+using PodcastBookRecs.Core.Providers.BookLookup;
 using PodcastBookRecs.Core.Providers.BookLookup.AppleBooks;
 
 namespace PodcastBookRecs.Tests;
@@ -63,13 +64,14 @@ public sealed class AppleBooksCatalogTests
 
     [Theory]
     [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.Forbidden)]
     [InlineData(HttpStatusCode.ServiceUnavailable)]
     public async Task Slow_down_and_server_errors_pause(HttpStatusCode status) =>
         await Assert.ThrowsAsync<BackendUnavailableException>(() => Catalog(new Recorder(status, "")).SearchAsync("A Title", null, Ct));
 
     [Theory]
     [InlineData(HttpStatusCode.BadRequest)]
-    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
     [InlineData(HttpStatusCode.MovedPermanently)]
     public async Task Other_answers_fail_only_this_title(HttpStatusCode status) =>
         await Assert.ThrowsAsync<CatalogLookupFailedException>(() => Catalog(new Recorder(status, "")).SearchAsync("A Title", null, Ct));
@@ -105,6 +107,15 @@ public sealed class AppleBooksCatalogTests
             provider.GetRequiredService<BookCatalogChain>().All.Select(c => c.Provider));
         var report = await provider.GetRequiredService<HealthCheckService>().CheckHealthAsync(r => r.Name == BackendHealth.BookLookupFallback("Apple Books"), Ct);
         Assert.Equal(HealthStatus.Healthy, Assert.Single(report.Entries).Value.Status);
+    }
+
+    [Fact]
+    public async Task Its_status_row_reports_a_403_as_unhealthy()
+    {
+        var check = new CatalogHealthCheck(new SingleClientFactory(new HttpClient(new Recorder(HttpStatusCode.Forbidden, "")) { BaseAddress = new Uri("https://itunes.example.test/") }),
+            TimeProvider.System, AppleBooksCatalog.HttpClientName, "Apple Books", AppleBooksCatalog.SlowDownStatuses);
+
+        Assert.Equal(HealthStatus.Unhealthy, (await check.CheckHealthAsync(new HealthCheckContext(), Ct)).Status);
     }
 
     private static AppleBooksCatalog Catalog(HttpMessageHandler handler, string country = "us") =>

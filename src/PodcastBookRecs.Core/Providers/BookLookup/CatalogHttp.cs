@@ -8,13 +8,16 @@ namespace PodcastBookRecs.Core.Providers.BookLookup;
 /// Sends one catalogue request and reads the answer with the rules every catalogue adapter shares. Can't connect, a
 /// timeout, 429 and 5xx mean the catalogue is unavailable, so the matcher pauses; any other error status or an answer
 /// over <see cref="MaxResponseBytes"/> is about this request, so it fails only this title. Messages name the catalogue
-/// and the status, never the request URL, which holds the title being looked up.
+/// and the status, never the request URL, which holds the title being looked up. A catalogue that signals "slow down"
+/// with another status (Apple uses 403) passes it in <c>alsoUnavailable</c>; nobody else gets that reading, so a 403
+/// from any other catalogue, such as a rejected token, still fails only the title and can't stall matching.
 /// </summary>
 internal static class CatalogHttp
 {
     public const int MaxResponseBytes = 1024 * 1024;
 
-    public static async Task<string> SendAsync(HttpClient client, HttpRequestMessage request, string label, CancellationToken cancellationToken)
+    public static async Task<string> SendAsync(
+        HttpClient client, HttpRequestMessage request, string label, CancellationToken cancellationToken, IReadOnlyCollection<HttpStatusCode>? alsoUnavailable = null)
     {
         using var sent = request;
         HttpResponseMessage response;
@@ -33,7 +36,7 @@ internal static class CatalogHttp
 
         using (response)
         {
-            if (response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500)
+            if (IsUnavailable(response.StatusCode, alsoUnavailable))
             {
                 throw new BackendUnavailableException($"{label} returned HTTP {(int)response.StatusCode}.");
             }
@@ -46,6 +49,10 @@ internal static class CatalogHttp
             return await ReadCappedAsync(response.Content, label, cancellationToken);
         }
     }
+
+    /// <summary>True for a status that means the catalogue is struggling or wants us to slow down, rather than a bad request.</summary>
+    public static bool IsUnavailable(HttpStatusCode status, IReadOnlyCollection<HttpStatusCode>? alsoUnavailable = null) =>
+        status == HttpStatusCode.TooManyRequests || (int)status >= 500 || alsoUnavailable?.Contains(status) == true;
 
     /// <summary>
     /// Reads the body, refusing one over <see cref="MaxResponseBytes"/>. Too big is about this answer, so it fails the

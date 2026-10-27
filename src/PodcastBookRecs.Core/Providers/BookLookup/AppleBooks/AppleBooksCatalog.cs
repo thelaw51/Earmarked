@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
@@ -12,13 +13,17 @@ namespace PodcastBookRecs.Core.Providers.BookLookup.AppleBooks;
 /// Searches the Apple Books store through Apple's keyless iTunes Search API (<c>/search</c> with <c>media=ebook</c>).
 /// The API has one free-text <c>term</c>, so the title and author go in together and <see cref="CatalogMatcher"/>
 /// checks both. Apple asks for about 20 requests a minute, so requests are spaced at least 3 seconds apart. The store
-/// has one entry per edition and no edition count, so <see cref="CatalogBook.EditionCount"/> is always null.
+/// has one entry per edition and no edition count, so <see cref="CatalogBook.EditionCount"/> is always null. Apple
+/// answers HTTP 403 when a client goes over its limit, so here a 403 pauses like a 429 instead of failing the title.
 /// Nothing outside this folder knows Apple's URLs or JSON.
 /// </summary>
 public sealed partial class AppleBooksCatalog(IHttpClientFactory httpFactory, IOptions<AppleBooksOptions> options, TimeProvider time)
     : IBookCatalog, IDisposable
 {
     public const string HttpClientName = "applebooks";
+
+    /// <summary>Statuses Apple uses to say "slow down", on top of 429 and 5xx.</summary>
+    public static readonly IReadOnlyCollection<HttpStatusCode> SlowDownStatuses = [HttpStatusCode.Forbidden];
 
     private const int MaxCandidates = 10;
     private const int MaxQueryLength = 200;
@@ -51,7 +56,7 @@ public sealed partial class AppleBooksCatalog(IHttpClientFactory httpFactory, IO
             try
             {
                 body = await CatalogHttp.SendAsync(
-                    httpFactory.CreateClient(HttpClientName), new HttpRequestMessage(HttpMethod.Get, query), "Apple Books", cancellationToken);
+                    httpFactory.CreateClient(HttpClientName), new HttpRequestMessage(HttpMethod.Get, query), "Apple Books", cancellationToken, SlowDownStatuses);
             }
             finally
             {

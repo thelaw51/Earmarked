@@ -179,7 +179,7 @@ public static class ServiceCollectionExtensions
                     break;
                 case BookLookupProviders.AppleBooks:
                     AddAppleBooks(services, configuration);
-                    AddCatalogHealthCheck(services, name, AppleBooksCatalog.HttpClientName, healthName);
+                    AddCatalogHealthCheck(services, name, AppleBooksCatalog.HttpClientName, healthName, AppleBooksCatalog.SlowDownStatuses);
                     break;
             }
         }
@@ -225,10 +225,11 @@ public static class ServiceCollectionExtensions
     /// Registers a catalogue's reachability check under <paramref name="healthName"/>. The check is a keyed singleton,
     /// so its five-minute memory of a healthy answer survives between runs.
     /// </summary>
-    private static void AddCatalogHealthCheck(IServiceCollection services, string provider, string httpClientName, string healthName)
+    private static void AddCatalogHealthCheck(
+        IServiceCollection services, string provider, string httpClientName, string healthName, IReadOnlyCollection<HttpStatusCode>? alsoUnavailable = null)
     {
         services.AddKeyedSingleton(provider, (sp, _) => new CatalogHealthCheck(
-            sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<TimeProvider>(), httpClientName, BookLookupProviders.Label(provider)));
+            sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<TimeProvider>(), httpClientName, BookLookupProviders.Label(provider), alsoUnavailable));
         services.AddHealthChecks().Add(new HealthCheckRegistration(
             healthName, sp => sp.GetRequiredKeyedService<CatalogHealthCheck>(provider), null, [BackendHealth.Tag], BackendHealth.Timeout));
     }

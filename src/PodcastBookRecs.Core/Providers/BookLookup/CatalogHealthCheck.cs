@@ -9,8 +9,11 @@ namespace PodcastBookRecs.Core.Providers.BookLookup;
 /// adapter's own HTTP client. A healthy answer is reused for 5 minutes, so the Status page's 30-second schedule doesn't
 /// become a steady stream of requests; a problem is checked again every time, so recovery shows straight away. Sends no
 /// mention data. Register one instance per catalogue as a singleton, so its memory of the last answer survives.
+/// <paramref name="alsoUnavailable"/> takes the same extra "slow down" statuses as the adapter passes to
+/// <see cref="CatalogHttp.SendAsync"/>, so the Status row agrees with the matcher.
 /// </summary>
-public sealed class CatalogHealthCheck(IHttpClientFactory httpFactory, TimeProvider time, string httpClientName, string label) : IHealthCheck
+public sealed class CatalogHealthCheck(
+    IHttpClientFactory httpFactory, TimeProvider time, string httpClientName, string label, IReadOnlyCollection<HttpStatusCode>? alsoUnavailable = null) : IHealthCheck
 {
     private static readonly TimeSpan RecheckAfter = TimeSpan.FromMinutes(5);
 
@@ -28,7 +31,7 @@ public sealed class CatalogHealthCheck(IHttpClientFactory httpFactory, TimeProvi
         try
         {
             using var response = await httpFactory.CreateClient(httpClientName).GetAsync("", HttpCompletionOption.ResponseHeadersRead, cts.Token);
-            if (response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500)
+            if (CatalogHttp.IsUnavailable(response.StatusCode, alsoUnavailable))
             {
                 _healthyAt = null;
                 return HealthCheckResult.Unhealthy($"Reachable, but answering HTTP {(int)response.StatusCode}.");
