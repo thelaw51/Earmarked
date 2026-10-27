@@ -13,7 +13,7 @@ It runs as two containers from one image: a **Worker** that polls feeds and proc
 | 1 | Feed polling, published `<podcast:transcript>` fetching and parsing, podcast and episode pages, CI/CD | **Done** |
 | 2 | Speech-to-text transcription (Whisper to start) for episodes without a published transcript, on a [Mac transcription server](#transcription-server-on-a-mac) | **Done** |
 | 3 | Book extraction with a local LLM, Open Library matching, ranked book list | **Done** |
-| 4 | Review queue, filters, export | Planned |
+| 4 | Review queue, filters, export | In progress |
 
 Most podcasts don't publish transcripts, so most episodes go through speech-to-text.
 
@@ -249,7 +249,9 @@ Matching sends book titles and author names, nothing else, to Open Library over 
 
 ### The book list
 
-The *Books* page ranks every matched book by the number of different podcasts that mentioned it, then the number of episodes, then the most recent mention. The kind of mention (recommended, discussed and so on) doesn't change the order, because the model labels kinds unreliably; the list shows how many episodes recommended each book instead. Each book has its own page with every mention: podcast, episode, time and quote.
+The *Books* page ranks every matched book by the number of different podcasts that mentioned it, then the number of episodes, then the most recent mention. The kind of mention (recommended, discussed and so on) doesn't change the order, because the model labels kinds unreliably; the list shows how many episodes recommended each book instead. Each book has its own page with every mention: podcast, episode, time and quote. A mention's time links to that moment in the episode's transcript, which scrolls into view and is highlighted; a transcript without timings links to the episode's list of books instead.
+
+Filters above the list narrow it by text in the title or author, by podcast, by the date episodes were published, and to books someone recommended. Podcast and date filters change the numbers: a book's counts and rank then cover only mentions in those podcasts and dates, so "the most-discussed books on one show last year" is one filter away. Text and *Recommended only* hide books without renumbering the rest. The filters are kept in the address (`/books?podcast=…&from=2026-01-01&to=2026-12-31&rec=1&q=…`), so a filtered list can be bookmarked or shared.
 
 ### Pointing at a different catalogue
 
