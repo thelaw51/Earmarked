@@ -67,7 +67,7 @@ Nothing updates automatically. To update:
 1. Back up the `data` folder. A new version may migrate the database, and migrations only go forwards.
 2. Open the stack in Portainer, tick **Re-pull image**, and click **Update the stack**. Always update the whole stack, not one container: the UI assumes both containers run the same build.
 
-Every build of `main` is also tagged `sha-<first 7 characters of the commit>`. To roll back, set `PBR_TAG` to an earlier build's tag (for example `sha-1a2b3c4`) and update the stack again. The tags are listed on the package page on GitHub. Both containers read the same variable, so they never run different versions.
+Every image CI publishes (builds of `main` and of `v*` tags) is also tagged `sha-<first 7 characters of the commit>`. To roll back, set `PBR_TAG` to an earlier build's tag (for example `sha-1a2b3c4`) and update the stack again. The tags are listed on the package page on GitHub. Both containers read the same variable, so they never run different versions.
 
 If the version you're leaving had added a migration, an older build won't understand the newer database. Stop the stack, restore the `data` backup you took before updating, then start the older tag.
 
