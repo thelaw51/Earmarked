@@ -181,6 +181,8 @@ With `Transcription:Provider` set, the Worker transcribes episodes that have no 
 
 If the backend can't be reached, or the data volume has less than `Transcription:MinFreeDiskGb` free, transcription pauses (30 seconds, doubling to 10 minutes) without counting it against the episode. Errors about one episode, such as audio that won't download or a chunk the backend rejects, use up its `Polling:MaxAttempts`. A 403 or 410 on the audio waits for the next feed poll, since signed links (Patreon, for example) expire and the poll refreshes them.
 
+A server error (HTTP 500) on a chunk can mean either that one file is bad or that the server is broken for every file; whisper.cpp says `failed to process audio` for both. So after one, the Worker sends a one-second test clip. If the clip transcribes, the chunk was at fault and the attempt counts. If the clip fails too, transcription pauses as if the backend were unreachable, and the Status page's *transcription* row says the server rejects all audio until something transcribes again. Restarting the transcription server usually clears it. Episodes that used up their attempts before this check existed stay *Failed* until you use *Reset and retry* on them.
+
 The Status page shows each backend as reachable or not, checked every 30 seconds. The Worker's own `/health` ignores backends, so a Mac that's switched off doesn't make Docker mark the Worker unhealthy.
 
 ### Pointing at a different transcription backend

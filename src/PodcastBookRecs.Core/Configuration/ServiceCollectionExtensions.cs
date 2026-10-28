@@ -106,7 +106,9 @@ public static class ServiceCollectionExtensions
         switch (transcription.Provider)
         {
             case var p when string.Equals(p, TranscriptionProviders.OpenAiCompatible, StringComparison.OrdinalIgnoreCase):
-                services.AddSingleton<ITranscriptionService, OpenAiCompatibleTranscriptionService>();
+                // One instance for both, so the health check sees the state the transcriber's requests left.
+                services.AddSingleton<OpenAiCompatibleTranscriptionService>();
+                services.AddSingleton<ITranscriptionService>(sp => sp.GetRequiredService<OpenAiCompatibleTranscriptionService>());
                 services.AddHealthChecks().AddCheck<OpenAiCompatibleHealthCheck>("transcription", tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
                 break;
         }
