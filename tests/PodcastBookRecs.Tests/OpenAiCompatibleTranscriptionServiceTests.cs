@@ -65,12 +65,85 @@ public class OpenAiCompatibleTranscriptionServiceTests
         await Assert.ThrowsAsync<BackendUnavailableException>(() =>
             Service(new RecordingHandler(status, "")).TranscribeAsync(new MemoryStream([1]), "a.wav", Ct));
 
-    [Theory]
-    [InlineData(HttpStatusCode.InternalServerError)]
-    [InlineData(HttpStatusCode.BadRequest)]
-    public async Task Treats_other_errors_as_a_failed_request(HttpStatusCode status) =>
-        await Assert.ThrowsAsync<TranscriptionFailedException>(() =>
-            Service(new RecordingHandler(status, "bad audio")).TranscribeAsync(new MemoryStream([1]), "a.wav", Ct));
+    [Fact]
+    public async Task A_client_error_counts_without_sending_the_test_clip()
+    {
+        var handler = new SequenceHandler((HttpStatusCode.BadRequest, "bad audio"));
+
+        await Assert.ThrowsAsync<TranscriptionFailedException>(() => Service(handler).TranscribeAsync(new MemoryStream([1]), "a.wav", Ct));
+        Assert.Equal(["a.wav"], handler.FileNames);
+    }
+
+    [Fact]
+    public async Task A_server_error_on_one_chunk_counts_when_the_test_clip_transcribes()
+    {
+        // whisper.cpp answers 500 for a single file it can't decode.
+        var handler = new SequenceHandler((HttpStatusCode.InternalServerError, """{"error":"failed to process audio"}"""), (HttpStatusCode.OK, """{"text":""}"""));
+        var service = Service(handler);
+
+        var ex = await Assert.ThrowsAsync<TranscriptionFailedException>(() => service.TranscribeAsync(new MemoryStream([1]), "a.wav", Ct));
+        Assert.Contains("HTTP 500", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(["a.wav", "test-clip.wav"], handler.FileNames);
+        Assert.Equal(0, service.RejectingAudioStatus);
+    }
+
+    [Fact]
+    public async Task A_server_error_for_the_test_clip_too_pauses_and_shows_on_the_health_check()
+    {
+        // What the deployed whisper did for six hours: 500 for every file, while still answering a GET.
+        const string Broken = """{"error":"failed to process audio"}""";
+        var handler = new SequenceHandler((HttpStatusCode.InternalServerError, Broken), (HttpStatusCode.InternalServerError, Broken), (HttpStatusCode.OK, Fixtures.Read("whisper-verbose.json")));
+        var service = Service(handler);
+        var check = HealthCheck(handler, service);
+
+        var ex = await Assert.ThrowsAsync<BackendUnavailableException>(() => service.TranscribeAsync(new MemoryStream([1]), "a.wav", Ct));
+        Assert.Contains("rejects all audio", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("failed to process", ex.Message, StringComparison.Ordinal);
+        var unhealthy = await check.CheckHealthAsync(new HealthCheckContext(), Ct);
+        Assert.Equal(HealthStatus.Unhealthy, unhealthy.Status);
+        Assert.Equal("Answers, but rejects all audio (HTTP 500). Restart the transcription server.", unhealthy.Description);
+
+        await service.TranscribeAsync(new MemoryStream([1]), "a.wav", Ct);
+
+        Assert.Equal(HealthStatus.Healthy, (await check.CheckHealthAsync(new HealthCheckContext(), Ct)).Status);
+    }
+
+    [Fact]
+    public async Task A_client_error_for_the_test_clip_counts_the_attempt()
+    {
+        // The clip can't tell a broken backend from a bad chunk here, so the attempt counts and never pauses forever.
+        var handler = new SequenceHandler((HttpStatusCode.InternalServerError, "oops"), (HttpStatusCode.BadRequest, "no"));
+        var service = Service(handler);
+
+        await Assert.ThrowsAsync<TranscriptionFailedException>(() => service.TranscribeAsync(new MemoryStream([1]), "a.wav", Ct));
+        Assert.Equal(0, service.RejectingAudioStatus);
+    }
+
+    [Fact]
+    public async Task A_gateway_error_pauses_without_sending_the_test_clip()
+    {
+        var handler = new SequenceHandler((HttpStatusCode.BadGateway, ""));
+
+        await Assert.ThrowsAsync<BackendUnavailableException>(() => Service(handler).TranscribeAsync(new MemoryStream([1]), "a.wav", Ct));
+        Assert.Equal(["a.wav"], handler.FileNames);
+    }
+
+    [Fact]
+    public void The_test_clip_is_one_second_of_16_khz_mono_pcm_with_sound_in_it()
+    {
+        var wav = TestClip.Wav;
+
+        Assert.Equal("RIFF", System.Text.Encoding.ASCII.GetString(wav, 0, 4));
+        Assert.Equal(wav.Length - 8, BitConverter.ToInt32(wav, 4));
+        Assert.Equal("WAVEfmt ", System.Text.Encoding.ASCII.GetString(wav, 8, 8));
+        Assert.Equal(1, BitConverter.ToInt16(wav, 20));
+        Assert.Equal(1, BitConverter.ToInt16(wav, 22));
+        Assert.Equal(16_000, BitConverter.ToInt32(wav, 24));
+        Assert.Equal(16, BitConverter.ToInt16(wav, 34));
+        Assert.Equal("data", System.Text.Encoding.ASCII.GetString(wav, 36, 4));
+        Assert.Equal(32_000, BitConverter.ToInt32(wav, 40));
+        Assert.Contains(wav.Skip(44), b => b != 0);
+    }
 
     [Fact]
     public async Task A_refused_connection_means_the_backend_is_unavailable()
@@ -146,6 +219,10 @@ public class OpenAiCompatibleTranscriptionServiceTests
         new(new SingleClientFactory(new HttpClient(handler) { BaseAddress = new Uri("http://transcriber.test:8178/") }),
             Options.Create(new TranscriptionOptions { Provider = "OpenAiCompatible", BaseUrl = "http://transcriber.test:8178", Language = language }));
 
+    private static OpenAiCompatibleHealthCheck HealthCheck(HttpMessageHandler handler, OpenAiCompatibleTranscriptionService service) =>
+        new(new SingleClientFactory(new HttpClient(handler) { BaseAddress = new Uri("http://transcriber.test:8178/") }), service,
+            Options.Create(new TranscriptionOptions { Provider = "OpenAiCompatible", BaseUrl = "http://transcriber.test:8178" }));
+
     private static ServiceProvider RealServices(string baseUrl, TimeSpan? timeoutOverride = null)
     {
         var config = new ConfigurationBuilder()
@@ -174,6 +251,30 @@ public class OpenAiCompatibleTranscriptionServiceTests
             LastUri = request.RequestUri;
             LastBody = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
             return new HttpResponseMessage(status) { Content = new StringContent(body) };
+        }
+    }
+
+    /// <summary>
+    /// Answers each POST with the next response in order (repeating the last one) and every GET, the health probe,
+    /// with 200. Records the file name of each POST.
+    /// </summary>
+    private sealed class SequenceHandler(params (HttpStatusCode Status, string Body)[] responses) : HttpMessageHandler
+    {
+        private int _next;
+
+        public List<string> FileNames { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            FileNames.Add(System.Text.RegularExpressions.Regex.Match(body, "filename=([^;\\r\\n]+)").Groups[1].Value);
+            var (status, text) = responses[Math.Min(_next++, responses.Length - 1)];
+            return new HttpResponseMessage(status) { Content = new StringContent(text) };
         }
     }
 
