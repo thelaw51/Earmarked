@@ -156,7 +156,8 @@ The script:
 1. installs `whisper-cpp` and `ffmpeg` with Homebrew, if they aren't already installed
 2. downloads the model to `~/Library/Application Support/whisper-server/models/` and checks its SHA-256 against the published hash
 3. installs a launchd agent, `com.podcastbookrecs.whisper-server`, that starts the server at login and restarts it if it stops
-4. waits until the server answers, then prints its address
+4. installs a second agent, `com.podcastbookrecs.whisper-watchdog`, that restarts the server when it stops accepting audio (see below)
+5. waits until the server answers, then prints its address
 
 It's safe to run again: it skips a model that's already verified and reinstalls the agent with the current settings. Options: `--port` (default `8178`) and `--model` (`large-v3-turbo`, or the smaller `large-v3-turbo-q8_0` and `large-v3-turbo-q5_0`).
 
@@ -164,9 +165,10 @@ Give the Mac a reserved IP address on your router, since the Worker's config poi
 
 ### Living with it
 
-- **Logs:** `~/Library/Logs/whisper-server.log`
+- **Logs:** `~/Library/Logs/whisper-server.log`, and `~/Library/Logs/whisper-watchdog.log` for the watchdog
 - **Restart:** `launchctl kickstart -k gui/$(id -u)/com.podcastbookrecs.whisper-server`. Do this after `brew upgrade whisper-cpp` too.
-- **Stop and remove:** `launchctl bootout gui/$(id -u)/com.podcastbookrecs.whisper-server`, then delete `~/Library/LaunchAgents/com.podcastbookrecs.whisper-server.plist`
+- **The watchdog.** If the GPU runs out of memory mid-chunk (more likely with LM Studio on the same Mac), whisper.cpp's Metal backend stays broken: every request gets HTTP 500 `failed to process audio`, but the process keeps running, so launchd never restarts it. Every 3 minutes the watchdog sends a one-second test clip, and after two 500s in a row it restarts the server, so recovery takes about 6 minutes. A refused connection or a slow answer (the clip waits behind a real chunk) changes nothing. It writes a log line only when the clip fails. If the server restarts every 6 minutes and the log keeps saying so, it can't start working again on its own: look at `whisper-server.log`. The agent runs a copy of `mac/whisper-watchdog.sh` from `~/Library/Application Support/whisper-server/`, so re-run `setup.sh` after changing the script.
+- **Stop and remove:** `launchctl bootout gui/$(id -u)/com.podcastbookrecs.whisper-watchdog` and `launchctl bootout gui/$(id -u)/com.podcastbookrecs.whisper-server`, then delete both `.plist` files from `~/Library/LaunchAgents/`
 - **After a reboot:** a launchd agent only runs once you're logged in. If FileVault keeps the Mac at the login screen, transcription waits until someone logs in. The Worker treats an unreachable server as "try again later", not as a failed episode.
 - **Test it:** `curl http://<mac-ip>:8178/v1/audio/transcriptions -F file=@some.mp3 -F response_format=verbose_json`
 
