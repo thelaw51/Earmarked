@@ -109,7 +109,7 @@ public static class ServiceCollectionExtensions
                 // One instance for both, so the health check sees the state the transcriber's requests left.
                 services.AddSingleton<OpenAiCompatibleTranscriptionService>();
                 services.AddSingleton<ITranscriptionService>(sp => sp.GetRequiredService<OpenAiCompatibleTranscriptionService>());
-                services.AddHealthChecks().AddCheck<OpenAiCompatibleHealthCheck>("transcription", tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
+                services.AddHealthChecks().AddCheck<OpenAiCompatibleHealthCheck>(BackendHealth.Transcription, tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
                 break;
         }
 

@@ -135,6 +135,12 @@ public sealed class ExtractionOptions : IValidatableObject
     [Range(1, 60)]
     public int RequestTimeoutMinutes { get; set; } = 10;
 
+    /// <summary>
+    /// Holds extraction back while transcription has work to do, so the two models don't share one GPU's memory.
+    /// Only while transcription is configured and its Status row is healthy; "Do this next" episodes don't wait.
+    /// </summary>
+    public bool WaitForTranscription { get; set; }
+
     public bool Enabled => !string.IsNullOrWhiteSpace(Provider);
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)

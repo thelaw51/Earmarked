@@ -24,7 +24,7 @@ Most podcasts don't publish transcripts, so most episodes go through speech-to-t
 3. The first time a feed is polled, only the newest `Polling:BackfillEpisodes` (10 by default) are queued. Older ones are stored as *Skipped* so later polls don't mistake them for new episodes.
 4. An episode with a `<podcast:transcript>` link is fetched in the best available format: VTT, then SRT, then JSON, then HTML, then plain text. A dead or unparseable link moves on to the next one. Network errors retry with exponential backoff, up to `Polling:MaxAttempts`.
 5. Episodes with no usable transcript are transcribed, one at a time, newest first, if `Transcription:Provider` is set (see [Transcription in the Worker](#transcription-in-the-worker)). Shows that have published transcripts before get a grace period first, in case one turns up late.
-6. Episodes with a transcript are searched for book mentions, one at a time, newest first, if `Extraction:Provider` is set (see [Book extraction](#book-extraction)). Extraction runs alongside transcription.
+6. Episodes with a transcript are searched for book mentions, one at a time, newest first, if `Extraction:Provider` is set (see [Book extraction](#book-extraction)). Extraction runs alongside transcription, unless `Extraction:WaitForTranscription` is on.
 7. Each book mention is looked up in Open Library, and mentions of the same book from any episode point at one book (see [Matching books in Open Library](#matching-books-in-open-library)). The *Books* page ranks them.
 
 ### Moving an episode up the queue
@@ -215,6 +215,8 @@ The default setup runs [LM Studio](https://lmstudio.ai) on the same Mac as the t
 4. Leave *Just-in-Time model loading* on. The first request loads the model (allowed for by `Extraction:RequestTimeoutMinutes`), and LM Studio unloads it after an idle hour.
 5. Keep the default context length at 8,192 tokens or more. A 1,800-word window needs about 4,500 with the instructions and the answer. If you lower it, lower `Extraction:WindowWords` too.
 
+On a Mac with 16 GB, whisper and the model together can run the GPU out of memory, and whisper then rejects every file until it restarts. Two settings keep them apart. Turn on `Extraction:WaitForTranscription`: the Worker then extracts only when transcription has nothing due, so a backlog is transcribed first and its books follow. It stops waiting whenever the Status page's *transcription* row is unhealthy (whisper down or broken leaves the GPU free), and episodes you mark *Do this next* never wait. New transcription work that arrives during an extraction still starts at once, so the two can overlap for a few minutes. Then lower LM Studio's idle time-to-live (Developer → Server Settings → *Max idle TTL*) to about 5 minutes, so the model leaves memory soon after extraction stops. During a large backfill, no books appear until transcription catches up.
+
 The Status page shows an *extraction* row, which turns red if LM Studio can't be reached or doesn't have the configured model. Requests go over plain HTTP on your LAN, like the transcription server's, so transcript text is visible to anything on that network.
 
 ### Pointing at a different language model
@@ -324,6 +326,7 @@ Settings come from `/config/config.json`, then environment variables prefixed `P
 | `Extraction:WindowWords` | `1800` | Words of transcript per request |
 | `Extraction:OverlapWords` | `200` | Words each window repeats from the one before |
 | `Extraction:RequestTimeoutMinutes` | `10` | How long one request may take, including loading the model, before it counts as a failure |
+| `Extraction:WaitForTranscription` | `false` | Extract only while transcription has nothing waiting, for one GPU running both models |
 | `Http:AllowPrivateNetworkFeeds` | `false` | Feeds, transcripts and audio on private or local addresses are refused unless this is `true` |
 
 Private feed URLs (for example a Supporting Cast subscriber feed) contain an access token. The app stores them as entered, but logs and the UI only ever show the host. Their audio URLs often carry the token too, so those are never shown either.

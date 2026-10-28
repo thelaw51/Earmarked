@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using System.Net;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -104,15 +105,11 @@ public sealed partial class EpisodeTranscriber(
     internal async Task<Episode?> ClaimNextAsync(CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow().UtcDateTime;
-        var graceCutoff = now.AddDays(-options.Value.PublishedTranscriptGraceDays);
         using var _ = await stateLock.AcquireAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
 
         var candidate = await db.Episodes
-            .Where(e => e.EnclosureUrl != null && (e.NextAttemptAt == null || e.NextAttemptAt <= now))
-            .Where(e => e.State == EpisodeState.Transcribing
-                || (e.State == EpisodeState.AwaitingTranscription
-                    && (e.PrioritisedAt != null || !e.PodcastFeed.PublishesTranscripts || e.PublishedAt == null || e.PublishedAt <= graceCutoff)))
+            .Where(IsDue(now, options.Value))
             .OrderBy(e => e.State == EpisodeState.Transcribing ? 0 : 1)
             .ThenBy(e => e.PrioritisedAt == null)
             .ThenBy(e => e.PrioritisedAt)
@@ -136,6 +133,19 @@ public sealed partial class EpisodeTranscriber(
         }
 
         return await db.Episodes.AsNoTracking().Include(e => e.PodcastFeed).SingleAsync(e => e.Id == candidate.Id, cancellationToken);
+    }
+
+    /// <summary>
+    /// Whether the transcriber would take the episode now. <see cref="EpisodeExtractor"/> uses the same rule to see
+    /// whether transcription has work waiting.
+    /// </summary>
+    internal static Expression<Func<Episode, bool>> IsDue(DateTime now, TranscriptionOptions options)
+    {
+        var graceCutoff = now.AddDays(-options.PublishedTranscriptGraceDays);
+        return e => e.EnclosureUrl != null && (e.NextAttemptAt == null || e.NextAttemptAt <= now)
+            && (e.State == EpisodeState.Transcribing
+                || (e.State == EpisodeState.AwaitingTranscription
+                    && (e.PrioritisedAt != null || !e.PodcastFeed.PublishesTranscripts || e.PublishedAt == null || e.PublishedAt <= graceCutoff)));
     }
 
     private async Task<WorkOutcome> TranscribeAsync(Episode episode, CancellationToken cancellationToken)

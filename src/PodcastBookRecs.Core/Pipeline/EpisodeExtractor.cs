@@ -18,12 +18,16 @@ public sealed partial class EpisodeExtractor(
     IBookExtractor extractor,
     EpisodeStateLock stateLock,
     IOptions<ExtractionOptions> options,
+    IOptions<TranscriptionOptions> transcription,
     IOptions<PollingOptions> polling,
     TimeProvider time,
     ILogger<EpisodeExtractor> logger)
 {
     /// <summary>States an episode is in once it has a transcript and is ready for extraction.</summary>
     public static readonly EpisodeState[] ReadyStates = [EpisodeState.TranscriptFetched, EpisodeState.Transcribed];
+
+    /// <summary>Only the extraction loop calls <see cref="ClaimNextAsync"/>, so this needs no locking.</summary>
+    private bool _waitingForTranscription;
 
     public async Task<WorkOutcome> ProcessNextAsync(CancellationToken cancellationToken)
     {
@@ -53,6 +57,8 @@ public sealed partial class EpisodeExtractor(
     /// <summary>
     /// Picks an episode already being extracted first (to finish it after a restart), then prioritised ones in the
     /// order they were asked for, then the newest one with a transcript. Claiming is a conditional update under the state lock.
+    /// With <see cref="ExtractionOptions.WaitForTranscription"/>, a new episode that isn't prioritised waits while
+    /// <see cref="TranscriptionWaitingAsync"/> says transcription has work.
     /// </summary>
     internal async Task<Episode?> ClaimNextAsync(CancellationToken cancellationToken)
     {
@@ -67,11 +73,33 @@ public sealed partial class EpisodeExtractor(
             .ThenBy(e => e.PrioritisedAt == null)
             .ThenBy(e => e.PrioritisedAt)
             .ThenByDescending(e => e.PublishedAt)
-            .Select(e => new { e.Id, e.State })
+            .Select(e => new { e.Id, e.State, e.PrioritisedAt })
             .FirstOrDefaultAsync(cancellationToken);
         if (candidate is null)
         {
             return null;
+        }
+
+        if (candidate.State != EpisodeState.Extracting && candidate.PrioritisedAt is null && options.Value.WaitForTranscription && transcription.Value.Enabled)
+        {
+            var waiting = await TranscriptionWaitingAsync(db, now, cancellationToken);
+            if (waiting != _waitingForTranscription)
+            {
+                _waitingForTranscription = waiting;
+                if (waiting)
+                {
+                    LogWaiting();
+                }
+                else
+                {
+                    LogResumed();
+                }
+            }
+
+            if (waiting)
+            {
+                return null;
+            }
         }
 
         if (candidate.State != EpisodeState.Extracting)
@@ -87,6 +115,18 @@ public sealed partial class EpisodeExtractor(
 
         return await db.Episodes.AsNoTracking().Include(e => e.PodcastFeed).Include(e => e.Transcript)
             .SingleAsync(e => e.Id == candidate.Id, cancellationToken);
+    }
+
+    /// <summary>
+    /// Whether transcription has an episode due by its own rule while its Status row is healthy and current. An
+    /// unhealthy or missing row means transcription can't use the GPU anyway, so extraction doesn't wait for it.
+    /// </summary>
+    private async Task<bool> TranscriptionWaitingAsync(AppDbContext db, DateTime now, CancellationToken cancellationToken)
+    {
+        var freshAfter = now - WorkerStatusNames.StaleAfter;
+        var healthy = await db.WorkerStatuses.AnyAsync(
+            s => s.Name == BackendHealth.Transcription && s.Healthy && s.UpdatedAt >= freshAfter, cancellationToken);
+        return healthy && await db.Episodes.AnyAsync(EpisodeTranscriber.IsDue(now, transcription.Value), cancellationToken);
     }
 
     private async Task ExtractAsync(Episode episode, CancellationToken cancellationToken)
@@ -195,6 +235,12 @@ public sealed partial class EpisodeExtractor(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Extraction failed for {Episode} (attempt {Attempt}): {Error}")]
     private partial void LogFailed(string episode, int attempt, string error);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Extraction is waiting for transcription to finish (Extraction:WaitForTranscription)")]
+    private partial void LogWaiting();
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Transcription has nothing waiting; extraction carries on")]
+    private partial void LogResumed();
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Extraction paused: {Reason}")]
     private partial void LogPaused(string reason);

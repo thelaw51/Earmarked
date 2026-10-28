@@ -24,6 +24,9 @@ public static class BackendHealth
     /// </summary>
     public const string Extraction = "extraction";
 
+    /// <summary>The transcription check's name and Status row.</summary>
+    public const string Transcription = "transcription";
+
     /// <summary>How often backends are checked, and each check's own time limit.</summary>
     public static readonly TimeSpan Period = TimeSpan.FromSeconds(30);
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);

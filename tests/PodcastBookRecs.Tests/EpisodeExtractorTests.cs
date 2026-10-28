@@ -61,11 +61,7 @@ public sealed class EpisodeExtractorTests : IAsyncLifetime
         }
 
         // Windows of 20 words with 8 overlapping: three requests for this 34-word transcript.
-        _extractor = new EpisodeExtractor(
-            _dbFactory, _backend, _lock,
-            Options.Create(new ExtractionOptions { Provider = "OpenAiCompatible", WindowWords = 20, OverlapWords = 8 }),
-            Options.Create(new PollingOptions { MaxAttempts = 2 }),
-            TimeProvider.System, NullLogger<EpisodeExtractor>.Instance);
+        _extractor = Extractor(waitForTranscription: false);
         _commands = new CommandProcessor(_dbFactory, null!, _lock,
             new TranscriptionWorkspace(Options.Create(new PathsOptions { Data = _root })), TimeProvider.System, NullLogger<CommandProcessor>.Instance);
     }
@@ -253,6 +249,108 @@ public sealed class EpisodeExtractorTests : IAsyncLifetime
         await using var db = await _dbFactory.CreateDbContextAsync(Ct);
         Assert.Empty(await db.BookMentions.ToListAsync(Ct));
         Assert.Equal(EpisodeState.AwaitingTranscription, (await LoadAsync()).State);
+    }
+
+    [Fact]
+    public async Task Waits_while_transcription_has_an_episode_due_and_a_healthy_backend()
+    {
+        var extractor = Extractor(waitForTranscription: true);
+        await AddAwaitingAsync(publishesTranscripts: false);
+        await SetTranscriptionHealthAsync(healthy: true);
+
+        Assert.Equal(WorkOutcome.Idle, await extractor.ProcessNextAsync(Ct));
+        Assert.Equal(EpisodeState.Transcribed, (await LoadAsync()).State);
+
+        await SetTranscriptionHealthAsync(healthy: false);
+
+        Assert.Equal(WorkOutcome.Worked, await extractor.ProcessNextAsync(Ct));
+        Assert.Equal(EpisodeState.Extracted, (await LoadAsync()).State);
+    }
+
+    [Fact]
+    public async Task Does_not_wait_when_the_option_is_off()
+    {
+        await AddAwaitingAsync(publishesTranscripts: false);
+        await SetTranscriptionHealthAsync(healthy: true);
+
+        Assert.Equal(WorkOutcome.Worked, await _extractor.ProcessNextAsync(Ct));
+    }
+
+    [Fact]
+    public async Task Does_not_wait_for_an_episode_still_in_its_published_transcript_grace_period()
+    {
+        // The transcriber wouldn't take it yet either, so the GPU is free.
+        await AddAwaitingAsync(publishesTranscripts: true);
+        await SetTranscriptionHealthAsync(healthy: true);
+
+        Assert.Equal(WorkOutcome.Worked, await Extractor(waitForTranscription: true).ProcessNextAsync(Ct));
+    }
+
+    [Fact]
+    public async Task Does_not_wait_when_the_transcription_status_row_is_stale()
+    {
+        var extractor = Extractor(waitForTranscription: true);
+        await AddAwaitingAsync(publishesTranscripts: false);
+        await SetTranscriptionHealthAsync(healthy: true, updatedAt: DateTime.UtcNow - WorkerStatusNames.StaleAfter - TimeSpan.FromMinutes(1));
+
+        Assert.Equal(WorkOutcome.Worked, await extractor.ProcessNextAsync(Ct));
+    }
+
+    [Fact]
+    public async Task A_prioritised_episode_does_not_wait_for_transcription()
+    {
+        await AddAwaitingAsync(publishesTranscripts: false);
+        await SetTranscriptionHealthAsync(healthy: true);
+        await SetAsync(e => e.PrioritisedAt = DateTime.UtcNow);
+
+        Assert.Equal(WorkOutcome.Worked, await Extractor(waitForTranscription: true).ProcessNextAsync(Ct));
+    }
+
+    [Fact]
+    public async Task Does_not_wait_when_transcription_is_not_configured()
+    {
+        await AddAwaitingAsync(publishesTranscripts: false);
+        await SetTranscriptionHealthAsync(healthy: true);
+
+        Assert.Equal(WorkOutcome.Worked, await Extractor(waitForTranscription: true, transcriptionProvider: null).ProcessNextAsync(Ct));
+    }
+
+    private EpisodeExtractor Extractor(bool waitForTranscription, string? transcriptionProvider = "OpenAiCompatible") =>
+        new(_dbFactory, _backend, _lock,
+            Options.Create(new ExtractionOptions { Provider = "OpenAiCompatible", WindowWords = 20, OverlapWords = 8, WaitForTranscription = waitForTranscription }),
+            Options.Create(new TranscriptionOptions { Provider = transcriptionProvider, PublishedTranscriptGraceDays = 3 }),
+            Options.Create(new PollingOptions { MaxAttempts = 2 }),
+            TimeProvider.System, NullLogger<EpisodeExtractor>.Instance);
+
+    /// <summary>Adds an episode waiting for speech-to-text, published an hour ago, on a podcast of its own.</summary>
+    private async Task AddAwaitingAsync(bool publishesTranscripts)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        db.Episodes.Add(new Episode
+        {
+            PodcastFeed = new PodcastFeed { FeedUrl = "https://feeds.test/other.xml", Title = "Another Show", AddedAt = DateTime.UtcNow, PublishesTranscripts = publishesTranscripts },
+            IdentityKey = "waiting",
+            Title = "Not transcribed yet",
+            PublishedAt = DateTime.UtcNow.AddHours(-1),
+            EnclosureUrl = "https://media.test/waiting.mp3",
+            State = EpisodeState.AwaitingTranscription,
+        });
+        await db.SaveChangesAsync(Ct);
+    }
+
+    private async Task SetTranscriptionHealthAsync(bool healthy, DateTime? updatedAt = null)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var row = await db.WorkerStatuses.SingleOrDefaultAsync(s => s.Name == BackendHealth.Transcription, Ct);
+        if (row is null)
+        {
+            row = new WorkerStatus { Name = BackendHealth.Transcription };
+            db.WorkerStatuses.Add(row);
+        }
+
+        row.Healthy = healthy;
+        row.UpdatedAt = updatedAt ?? DateTime.UtcNow;
+        await db.SaveChangesAsync(Ct);
     }
 
     private async Task<Episode> LoadAsync()
