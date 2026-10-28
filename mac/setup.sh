@@ -6,6 +6,7 @@
 set -euo pipefail
 
 LABEL="com.podcastbookrecs.whisper-server"
+WATCHDOG_LABEL="com.podcastbookrecs.whisper-watchdog"
 HOST=""
 PORT="8178"
 MODEL="large-v3-turbo"
@@ -45,6 +46,8 @@ DATA_DIR="$HOME/Library/Application Support/whisper-server"
 MODEL_PATH="$DATA_DIR/models/ggml-$MODEL.bin"
 LOG_PATH="$HOME/Library/Logs/whisper-server.log"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+WATCHDOG_LOG_PATH="$HOME/Library/Logs/whisper-watchdog.log"
+WATCHDOG_PLIST="$HOME/Library/LaunchAgents/$WATCHDOG_LABEL.plist"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "==> Installing whisper-cpp and ffmpeg (skipped if present)"
@@ -63,29 +66,46 @@ else
     echo "    downloaded and verified"
 fi
 
+# Fills in a template and (re)loads it as a launchd agent.
+install_agent() {
+    local label="$1" plist="$2"
+    sed -e "s|__BREW_PREFIX__|$BREW_PREFIX|g" \
+        -e "s|__MODEL_PATH__|$MODEL_PATH|g" \
+        -e "s|__HOST__|$HOST|g" \
+        -e "s|__PORT__|$PORT|g" \
+        -e "s|__DATA_DIR__|$DATA_DIR|g" \
+        -e "s|__LOG_PATH__|$LOG_PATH|g" \
+        -e "s|__WATCHDOG_LOG_PATH__|$WATCHDOG_LOG_PATH|g" \
+        "$SCRIPT_DIR/$label.plist.template" > "$plist"
+    plutil -lint "$plist" >/dev/null
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+    # bootout returns before launchd has removed the old service; bootstrapping too soon fails with error 5.
+    for _ in $(seq 1 20); do
+        launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || break
+        sleep 0.5
+    done
+    launchctl bootstrap "gui/$(id -u)" "$plist"
+}
+
 echo "==> Installing launchd agent $LABEL"
 mkdir -p "$(dirname "$PLIST")" "$(dirname "$LOG_PATH")"
-sed -e "s|__BREW_PREFIX__|$BREW_PREFIX|g" \
-    -e "s|__MODEL_PATH__|$MODEL_PATH|g" \
-    -e "s|__HOST__|$HOST|g" \
-    -e "s|__PORT__|$PORT|g" \
-    -e "s|__DATA_DIR__|$DATA_DIR|g" \
-    -e "s|__LOG_PATH__|$LOG_PATH|g" \
-    "$SCRIPT_DIR/$LABEL.plist.template" > "$PLIST"
-plutil -lint "$PLIST" >/dev/null
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-# bootout returns before launchd has removed the old service; bootstrapping too soon fails with error 5.
-for _ in $(seq 1 20); do
-    launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || break
-    sleep 0.5
-done
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
+install_agent "$LABEL" "$PLIST"
+
+echo "==> Installing launchd agent $WATCHDOG_LABEL"
+# The agent runs a copy, so moving or editing the repo can't break or change it until setup.sh runs again.
+chmod go-w "$DATA_DIR"
+install -m 755 "$SCRIPT_DIR/whisper-watchdog.sh" "$DATA_DIR/whisper-watchdog.sh"
+"$BREW_PREFIX/bin/ffmpeg" -loglevel error -y -f lavfi -i "sine=frequency=440:duration=1" -ar 16000 -ac 1 -c:a pcm_s16le "$DATA_DIR/watchdog-clip.wav"
+chmod 644 "$DATA_DIR/watchdog-clip.wav"
+rm -f "$DATA_DIR/watchdog-failures"
+install_agent "$WATCHDOG_LABEL" "$WATCHDOG_PLIST"
 
 echo "==> Waiting for http://$HOST:$PORT"
 for _ in $(seq 1 60); do
     if curl -s -m 2 -o /dev/null "http://$HOST:$PORT/"; then
         echo "    whisper-server is up: http://$HOST:$PORT/v1/audio/transcriptions"
         echo "    log: $LOG_PATH"
+        echo "    watchdog log: $WATCHDOG_LOG_PATH"
         exit 0
     fi
     sleep 1
