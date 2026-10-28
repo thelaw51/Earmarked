@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  IMAGE: ghcr.io/thelaw51/podcastbookrecs
+  IMAGE: ghcr.io/thelaw51/earmarked
 
 jobs:
   test:
@@ -79,7 +79,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
           labels: |
-            org.opencontainers.image.title=PodcastBookRecs
+            org.opencontainers.image.title=Earmarked
             org.opencontainers.image.description=Self-hosted tracker for books mentioned on podcasts
 
       # Pull requests build the image to catch Dockerfile breakage but never push it.

@@ -1,0 +1,433 @@
+@page "/review"
+@using Earmarked.Core.Backends
+@using Earmarked.Core.BookLookup
+@using Earmarked.Core.Books
+@using Earmarked.Core.Configuration
+@implements IDisposable
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject TimeProvider Time
+@inject ISnackbar Snackbar
+@inject CommandFeedback Commands
+@inject ILogger<Review> Logger
+
+<PageTitle>Review</PageTitle>
+
+@* Titles the catalogue couldn't place or placed doubtfully (ReviewBacklog). A decision here applies to every mention
+   of the title, on every podcast, and to mentions found later. Everything shown from mentions and the catalogue is
+   plain text; links go through Display.HttpsOrNull. *@
+<PageHeader Eyebrow="Library" Title="Review" Subtitle="Settle the titles the catalogue couldn't place, or placed with doubts. A decision covers every mention of the title.">
+    <Actions>
+        <MudTooltip Text="Refresh">
+            <MudIconButton Icon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
+        </MudTooltip>
+    </Actions>
+</PageHeader>
+
+@if (!_lookupOn && _items is not null)
+{
+    <div class="notice">
+        <MudIcon Icon="@Icons.Material.Outlined.Info" Size="Size.Small" />
+        <MudText Typo="Typo.body2">
+            Book lookup is off (<code>BookLookup:Provider</code> is empty). Decisions are saved, but they take effect once lookup is on, and searching the catalogue needs it.
+        </MudText>
+    </div>
+}
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_error</MudAlert>
+}
+else if (_items is null || _decided is null)
+{
+    <LoadingState Layout="LoadingState.LoadingLayout.List" Count="5" />
+}
+else
+{
+    <div class="section-title">
+        <MudText Typo="Typo.h6">To review</MudText>
+        <span class="count-badge">@_items.Count</span>
+    </div>
+    @if (_items.Count == 0)
+    {
+        <EmptyState Title="Nothing to review" Icon="@Icons.Material.Rounded.TaskAlt">
+            Every title the podcasts mentioned is either matched with confidence or already decided.
+        </EmptyState>
+    }
+    else
+    {
+        <div class="d-flex flex-column gap-4">
+            @foreach (var item in _items)
+            {
+                var busy = _busyKey == item.LookupKey;
+                <div class="surface-card pa-4" @key="item.LookupKey">
+                    <div class="d-flex gap-4 align-start">
+                        @if (Display.HttpsOrNull(item.Book?.CoverUrl) is { } cover)
+                        {
+                            <img src="@cover" alt="" loading="lazy" referrerpolicy="no-referrer" class="mention-cover" />
+                        }
+                        else
+                        {
+                            <span class="mention-cover-blank"><MudIcon Icon="@Icons.Material.Rounded.AutoStories" Size="Size.Small" /></span>
+                        }
+                        <div style="min-width: 0; flex: 1;">
+                            <MudText Typo="Typo.subtitle1" Style="font-weight: 650;">@item.Title</MudText>
+                            <MudText Typo="Typo.body2" Class="muted">@(item.Author ?? "No author given")</MudText>
+                            @if (item.Book is not null)
+                            {
+                                <MudText Typo="Typo.body2" Class="mt-1">
+                                    Matched to <a href="@($"books/{item.Book.Id}")" class="card-title-link">@item.Book.Title</a>
+                                    @if (item.Book.Authors.Length > 0)
+                                    {
+                                        <span class="muted"> by @item.Book.Authors</span>
+                                    }
+                                </MudText>
+                            }
+                            <div class="d-flex flex-wrap gap-1 mt-2">
+                                @foreach (var reason in Display.ReasonLabels(item.Reasons))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Text" Class="state-chip ma-0">@reason</MudChip>
+                                }
+                            </div>
+                            <span class="stat-row mt-2">
+                                <span class="stat"><strong>@item.Mentions</strong> mention(s)</span>
+                                <span class="stat"><strong>@item.Episodes</strong> episode(s)</span>
+                                <span class="stat"><strong>@item.Podcasts</strong> podcast(s)</span>
+                            </span>
+                        </div>
+                    </div>
+
+                    @foreach (var quote in item.Quotes)
+                    {
+                        <blockquote class="quote mt-3">
+                            <MudText Typo="Typo.body2">"@quote.Quote"</MudText>
+                            <MudText Typo="Typo.caption" Class="muted d-block mt-1">
+                                <a href="@($"episodes/{quote.EpisodeId}")" class="card-title-link">@quote.EpisodeTitle</a>
+                                @(quote.PodcastTitle is null ? "" : $" · {quote.PodcastTitle}")
+                                @if (quote.StartTime is not null)
+                                {
+                                    <span class="timestamp ml-1">@Display.Timestamp(quote.StartTime)</span>
+                                }
+                            </MudText>
+                        </blockquote>
+                    }
+
+                    <div class="d-flex flex-wrap gap-2 align-center mt-4">
+                        @if (item.Book is not null)
+                        {
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" StartIcon="@Icons.Material.Rounded.Check"
+                                       Disabled="busy" OnClick="@(() => ConfirmAsync(item))">Confirm</MudButton>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.SwapHoriz"
+                                       Disabled="busy" OnClick="@(() => RejectAsync(item, ReviewVerdict.WrongBook))">Wrong book</MudButton>
+                        }
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Block"
+                                   Disabled="busy" OnClick="@(() => RejectAsync(item, ReviewVerdict.NotABook))">Not a book</MudButton>
+                        <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.ManageSearch"
+                                   Disabled="@(busy || !_lookupOn)" OnClick="@(() => OpenSearch(item))">Find the book</MudButton>
+                        @* Opens the same panel as "Find the book", where the text can be fixed before "Save as a book". *@
+                        <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.BookmarkAdd"
+                                   Disabled="busy" OnClick="@(() => OpenSearch(item))">Keep as is</MudButton>
+                        <MudTextField T="string" @bind-Value="_notes[item.LookupKey]" Placeholder="Note (optional)" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                      MaxLength="ReviewDecision.MaxNoteLength" Class="flex-grow-1" Style="min-width: 14rem;" />
+                    </div>
+
+                    @if (_search is { } search && search.Key == item.LookupKey)
+                    {
+                        <div class="surface-card pa-3 mt-4">
+                            <div class="d-flex flex-wrap gap-2 align-center">
+                                <MudTextField T="string" @bind-Value="search.Title" Label="Title" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                              MaxLength="BookMention.MaxTitleLength" Style="min-width: 14rem;" Class="flex-grow-1" />
+                                <MudTextField T="string" @bind-Value="search.Author" Label="Author" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                              MaxLength="BookMention.MaxAuthorLength" Style="min-width: 10rem;" />
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" Disabled="@(search.Waiting || !_lookupOn)" OnClick="@(() => SearchAsync(search))">
+                                    Search
+                                </MudButton>
+                                <MudTooltip Text="No catalogue has it: keep this title and author as a book without a link">
+                                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.BookmarkAdd"
+                                               Disabled="@(busy || search.Waiting)" OnClick="@(() => KeepAsIsAsync(item, search))">Save as a book</MudButton>
+                                </MudTooltip>
+                                <MudIconButton Icon="@Icons.Material.Rounded.Close" aria-label="Close search" OnClick="@(() => _search = null)" />
+                            </div>
+                            @if (search.Waiting)
+                            {
+                                <div class="d-flex align-center gap-2 mt-3">
+                                    <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                                    <MudText Typo="Typo.body2" Class="muted">Asking the catalogue…</MudText>
+                                </div>
+                            }
+                            else
+                            {
+                                @* A partial answer has both: the results that came back and a note that some catalogues didn't. *@
+                                @if (search.Message is not null)
+                                {
+                                    <MudText Typo="Typo.body2" Class="muted mt-3">@search.Message</MudText>
+                                }
+
+                                @foreach (var result in search.Results ?? [])
+                                {
+                                    <div class="mention" @key="result.CatalogId">
+                                        @if (Display.HttpsOrNull(result.CoverUrl) is { } resultCover)
+                                        {
+                                            <img src="@resultCover" alt="" loading="lazy" referrerpolicy="no-referrer" class="mention-cover" />
+                                        }
+                                        else
+                                        {
+                                            <span class="mention-cover-blank"><MudIcon Icon="@Icons.Material.Rounded.AutoStories" Size="Size.Small" /></span>
+                                        }
+                                        <div style="min-width: 0;">
+                                            <MudText Typo="Typo.subtitle2">@result.Title@(result.Subtitle is null ? "" : $": {result.Subtitle}")</MudText>
+                                            <MudText Typo="Typo.caption" Class="muted d-block">
+                                                @string.Join(", ", result.Authors)@(result.FirstPublishYear is { } year ? $" · {year}" : "")@(result.EditionCount is { } editions ? $" · {editions} edition(s)" : "") · @BookLookupProviders.Label(result.ProviderOrDefault)
+                                            </MudText>
+                                            @if (Display.HttpsOrNull(result.InfoUrl) is { } info)
+                                            {
+                                                <a href="@info" target="_blank" rel="noopener noreferrer" class="card-title-link"><MudText Typo="Typo.caption">View on @BookLookupProviders.Label(result.ProviderOrDefault)</MudText></a>
+                                            }
+                                        </div>
+                                        <div class="mention-meta">
+                                            <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" Size="Size.Small" Disabled="busy"
+                                                       OnClick="@(() => PickAsync(item, search, result.CatalogId))">This one</MudButton>
+                                        </div>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+
+    <div class="section-title">
+        <MudText Typo="Typo.h6">Decided</MudText>
+        <span class="count-badge">@_decided.Count</span>
+    </div>
+    @if (_decided.Count == 0)
+    {
+        <EmptyState Title="No decisions yet" Icon="@Icons.Material.Rounded.FactCheck">Decisions you make above are listed here, with a way to undo them.</EmptyState>
+    }
+    else
+    {
+        <div class="surface-card">
+            @foreach (var decision in _decided)
+            {
+                <div class="mention" @key="decision.Id">
+                    <MudChip T="string" Size="Size.Small" Color="Display.VerdictColor(decision.Verdict)" Variant="Variant.Text" Class="state-chip ma-0">
+                        @Display.VerdictLabel(decision.Verdict)
+                    </MudChip>
+                    <div style="min-width: 0;">
+                        <MudText Typo="Typo.subtitle2">@decision.Title</MudText>
+                        <MudText Typo="Typo.caption" Class="muted d-block">
+                            @(decision.Author ?? "No author given") · decided @Display.LocalTime(decision.DecidedAt)
+                        </MudText>
+                        @if (decision.Book is not null)
+                        {
+                            <MudText Typo="Typo.caption" Class="d-block">
+                                Book: <a href="@($"books/{decision.Book.Id}")" class="card-title-link">@decision.Book.Title</a>
+                            </MudText>
+                        }
+                        else if (decision.Pick is not null)
+                        {
+                            <MudText Typo="Typo.caption" Class="d-block">Book: @decision.Pick.Title (being added)</MudText>
+                        }
+                        @if (decision.Note is not null)
+                        {
+                            <MudText Typo="Typo.caption" Class="muted d-block" Style="font-style: italic;">@decision.Note</MudText>
+                        }
+                    </div>
+                    <div class="mention-meta">
+                        <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Rounded.Undo" Disabled="@(_busyKey == decision.LookupKey)"
+                                   OnClick="@(() => UndoAsync(decision))">Undo</MudButton>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    /// <summary>Set by MainLayout, so the nav badge drops as soon as a decision is saved.</summary>
+    [CascadingParameter(Name = "RefreshReviewCount")]
+    public Func<Task>? RefreshReviewCount { get; set; }
+
+    /// <summary>The page stops waiting for the Worker's answer after this. The Worker drops a search after two minutes.</summary>
+    private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(30);
+
+    private readonly CancellationTokenSource _closing = new();
+    private readonly Dictionary<string, string?> _notes = [];
+    private IReadOnlyList<ReviewItem>? _items;
+    private IReadOnlyList<ReviewDecision>? _decided;
+    private SearchState? _search;
+    private string? _busyKey;
+    private bool _lookupOn;
+    private string? _error;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await ReviewBacklog.LoadAsync(db, _closing.Token);
+            _decided = await ReviewBacklog.LoadDecidedAsync(db, _closing.Token);
+            _lookupOn = await db.WorkerStatuses.AnyAsync(s => s.Name == BackendHealth.BookLookup, _closing.Token);
+            foreach (var item in _items)
+            {
+                _notes.TryAdd(item.LookupKey, null);
+            }
+
+            _error = null;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _error = Logger.LoadFailed(ex, "the review list");
+        }
+    }
+
+    private Task ConfirmAsync(ReviewItem item) =>
+        DecideAsync(item.LookupKey, "Confirmed.", (db, now) => ReviewActions.ConfirmAsync(db, item.LookupKey, _notes.GetValueOrDefault(item.LookupKey), now, _closing.Token));
+
+    private Task RejectAsync(ReviewItem item, ReviewVerdict verdict) =>
+        DecideAsync(item.LookupKey, verdict == ReviewVerdict.NotABook ? "Marked as not a book." : "Marked as the wrong book.",
+            (db, now) => ReviewActions.RejectAsync(db, item.LookupKey, verdict, _notes.GetValueOrDefault(item.LookupKey), now, _closing.Token));
+
+    private Task PickAsync(ReviewItem item, SearchState search, string catalogId) =>
+        DecideAsync(item.LookupKey, "Book picked. It's added within a few seconds.",
+            (db, now) => ReviewActions.CorrectAsync(db, item.LookupKey, search.SearchId!.Value, catalogId, _notes.GetValueOrDefault(item.LookupKey), now, _closing.Token));
+
+    private Task KeepAsIsAsync(ReviewItem item, SearchState search) =>
+        DecideAsync(item.LookupKey, _lookupOn ? "Kept as is. The book is added within a few seconds." : "Kept as is. The book is added once book lookup is back on.",
+            (db, now) => ReviewActions.KeepAsIsAsync(db, item.LookupKey, search.Title, search.Author, _notes.GetValueOrDefault(item.LookupKey), now, _closing.Token));
+
+    private Task UndoAsync(ReviewDecision decision) =>
+        DecideAsync(decision.LookupKey, "Decision undone. The title is matched normally again.",
+            (db, now) => ReviewActions.UndoAsync(db, decision.Id, now, _closing.Token));
+
+    /// <summary>
+    /// Saves a decision (with its Worker command, in one write), then reloads. The Worker re-matches the title's mentions
+    /// within a few seconds; the list changes at once because a decided title leaves it whatever the mentions say.
+    /// </summary>
+    private async Task DecideAsync(string key, string done, Func<AppDbContext, DateTime, Task<WorkerCommand>> action)
+    {
+        _busyKey = key;
+        try
+        {
+            await using (var db = await DbFactory.CreateDbContextAsync())
+            {
+                var command = await action(db, Time.GetUtcNow().UtcDateTime);
+                Commands.Watch(command.Id);
+            }
+
+            Snackbar.Add(done, Severity.Success);
+            _notes.Remove(key);
+            if (_search?.Key == key)
+            {
+                _search = null;
+            }
+
+            await LoadAsync();
+            if (RefreshReviewCount is not null)
+            {
+                await RefreshReviewCount();
+            }
+        }
+        catch (ReviewActionException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Warning);
+        }
+        // Only the unique key (two decisions on one title at once, SQLITE_CONSTRAINT_UNIQUE) or undoing a row already gone
+        // means someone else got there first. Anything else, such as a lock timeout, saved nothing and gets the general
+        // message below.
+        catch (DbUpdateException ex) when (ex is DbUpdateConcurrencyException || ex.InnerException is Microsoft.Data.Sqlite.SqliteException { SqliteExtendedErrorCode: 2067 })
+        {
+            Snackbar.Add("This title was decided somewhere else just now. Refresh and try again.", Severity.Warning);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.ActionFailed(ex, "review decision");
+            Snackbar.Add("Couldn't save that. The web app's log has the details.", Severity.Error);
+        }
+        finally
+        {
+            _busyKey = null;
+        }
+    }
+
+    private void OpenSearch(ReviewItem item) => _search = new SearchState(item.LookupKey) { Title = item.Title, Author = item.Author };
+
+    /// <summary>Asks the Worker to search and waits for its answer, checking twice a second.</summary>
+    private async Task SearchAsync(SearchState search)
+    {
+        search.Waiting = true;
+        search.Message = null;
+        search.Results = null;
+        try
+        {
+            await using (var db = await DbFactory.CreateDbContextAsync())
+            {
+                search.SearchId = await ReviewActions.RequestSearchAsync(db, search.Title ?? "", search.Author, Time.GetUtcNow().UtcDateTime, _closing.Token);
+            }
+
+            var until = Time.GetUtcNow() + SearchTimeout;
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(500), Time);
+            while (await timer.WaitForNextTickAsync(_closing.Token))
+            {
+                if (_search != search)
+                {
+                    return;
+                }
+
+                await using var db = await DbFactory.CreateDbContextAsync();
+                var row = await db.CatalogSearches.AsNoTracking().SingleOrDefaultAsync(s => s.Id == search.SearchId, _closing.Token);
+                if (row?.CompletedAt is not null)
+                {
+                    search.Results = row.Results;
+                    search.Message = row.Error ?? (row.Results is { Count: > 0 } ? null : "The catalogue has nothing under that title. Try a shorter title or no author, or save it as a book.");
+                    return;
+                }
+
+                if (row is null || Time.GetUtcNow() >= until)
+                {
+                    search.Message = "The Worker didn't answer in time. Check the Status page, then try again.";
+                    return;
+                }
+            }
+        }
+        catch (ReviewActionException ex)
+        {
+            search.Message = ex.Message;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Logger.ActionFailed(ex, "catalogue search");
+            search.Message = "Couldn't search. The web app's log has the details.";
+        }
+        finally
+        {
+            search.Waiting = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _closing.Cancel();
+        _closing.Dispose();
+    }
+
+    private sealed class SearchState(string key)
+    {
+        public string Key { get; } = key;
+        public string? Title { get; set; }
+        public string? Author { get; set; }
+        public Guid? SearchId { get; set; }
+        public bool Waiting { get; set; }
+        public string? Message { get; set; }
+        public List<CatalogBook>? Results { get; set; }
+    }
+}

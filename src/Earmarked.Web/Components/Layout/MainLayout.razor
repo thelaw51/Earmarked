@@ -1,0 +1,139 @@
+@inherits LayoutComponentBase
+@using Earmarked.Core.Books
+@implements IDisposable
+@inject NavigationManager Navigation
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject SchemaStatus Schema
+
+<MudThemeProvider Theme="AppTheme.Theme" @bind-IsDarkMode="_darkMode" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout Class="app-shell">
+    <MudAppBar Elevation="0" Class="app-bar">
+        <MudIconButton Icon="@Icons.Material.Rounded.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="@(() => _drawerOpen = !_drawerOpen)" aria-label="Toggle navigation" />
+        <a href="" class="brand ml-2">
+            <span class="brand-mark"><MudIcon Icon="@Icons.Material.Rounded.AutoStories" Size="Size.Small" /></span>
+            <span class="brand-name">Earmarked</span>
+        </a>
+        <MudSpacer />
+        <MudTooltip Text="@(_darkMode ? "Light mode" : "Dark mode")">
+            <MudIconButton Icon="@(_darkMode ? Icons.Material.Rounded.LightMode : Icons.Material.Rounded.DarkMode)" Color="Color.Inherit"
+                           OnClick="@(() => _darkMode = !_darkMode)" aria-label="Toggle dark mode" Class="theme-toggle" />
+        </MudTooltip>
+        <AuthorizeView>
+            <span class="user-pill d-none d-sm-flex ml-2">
+                <MudAvatar Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled">@Initial(context.User.Identity?.Name)</MudAvatar>
+                <MudText Typo="Typo.body2" Class="ml-2 mr-1">@context.User.Identity?.Name</MudText>
+            </span>
+        </AuthorizeView>
+        @* A full page load, because the sign-out page renders without a circuit. *@
+        <MudTooltip Text="Sign out">
+            <MudIconButton Icon="@Icons.Material.Rounded.Logout" Color="Color.Inherit" Href="account/logout" Target="_self" aria-label="Sign out" />
+        </MudTooltip>
+    </MudAppBar>
+    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="0" Variant="DrawerVariant.Responsive" Class="app-drawer">
+        <MudText Typo="Typo.overline" Class="nav-heading">Library</MudText>
+        <MudNavMenu Class="app-nav">
+            <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Rounded.Podcasts">Podcasts</MudNavLink>
+            <MudNavLink Href="books" Icon="@Icons.Material.Rounded.MenuBook">Books</MudNavLink>
+            <MudNavLink Href="review" Icon="@Icons.Material.Rounded.FactCheck">
+                Review
+                @if (_reviewCount > 0)
+                {
+                    <span class="count-badge ml-2" aria-label="@($"{_reviewCount} to review")">@_reviewCount</span>
+                }
+            </MudNavLink>
+        </MudNavMenu>
+        <MudText Typo="Typo.overline" Class="nav-heading">System</MudText>
+        <MudNavMenu Class="app-nav">
+            <MudNavLink Href="status" Icon="@Icons.Material.Rounded.MonitorHeart">Status</MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
+    <MudMainContent Class="app-main">
+        <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6 px-4 px-md-8">
+            <SchemaGate>
+                @* Keyed on the path so every navigation to another page mounts it fresh and replays the entrance
+                   animation. The query string is left out, so a page that keeps filters there doesn't remount. *@
+                <CascadingValue Name="RefreshReviewCount" Value="_refreshReviewCount" IsFixed="true">
+                    <div class="page-enter" @key="PagePath">@Body</div>
+                </CascadingValue>
+            </SchemaGate>
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private bool _drawerOpen = true;
+    private int? _reviewCount;
+    private int _reviewCountRequest;
+    private Func<Task> _refreshReviewCount = null!;
+    private readonly CancellationTokenSource _closing = new();
+
+    protected override void OnInitialized()
+    {
+        _refreshReviewCount = RefreshReviewCountAsync;
+        Navigation.LocationChanged += OnLocationChanged;
+        // Not awaited: the shell renders straight away and the badge appears when the count arrives.
+        _ = RefreshReviewCountAsync();
+    }
+
+    /// <summary>
+    /// Counts the titles waiting for review. Runs on every navigation and when the review page saves a decision, so the
+    /// badge needs no polling. Only the newest request's answer is shown, since an older, slower count can finish last.
+    /// The layout sits outside SchemaGate, so it asks SchemaStatus first: opening a database the Worker hasn't created
+    /// yet would create an empty file.
+    /// </summary>
+    private async Task RefreshReviewCountAsync()
+    {
+        var request = Interlocked.Increment(ref _reviewCountRequest);
+        int? count = null;
+        try
+        {
+            if (await Schema.IsReadyAsync(_closing.Token))
+            {
+                await using var db = await DbFactory.CreateDbContextAsync(_closing.Token);
+                count = await ReviewBacklog.CountAsync(db, _closing.Token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception)
+        {
+            // A badge isn't worth an error: leave it hidden.
+        }
+
+        if (request != _reviewCountRequest || _closing.IsCancellationRequested)
+        {
+            return;
+        }
+
+        _reviewCount = count;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e) => _ = InvokeAsync(RefreshReviewCountAsync);
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+        _closing.Cancel();
+        _closing.Dispose();
+    }
+
+    private string PagePath => new Uri(Navigation.Uri).AbsolutePath;
+
+    // Dark by default, whatever the browser prefers. The toggle lasts until the page is reloaded.
+    private bool _darkMode = true;
+
+    private static string Initial(string? name) => string.IsNullOrEmpty(name) ? "?" : name[..1].ToUpperInvariant();
+}

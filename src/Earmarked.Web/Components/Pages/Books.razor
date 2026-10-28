@@ -1,0 +1,287 @@
+@page "/books"
+@using Earmarked.Core.Backends
+@using Earmarked.Core.Books
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject NavigationManager Navigation
+@inject ILogger<Books> Logger
+
+<PageTitle>Books</PageTitle>
+
+@* Books that mentions were matched to in the catalogue, most widely discussed first (BookRanking). *@
+<PageHeader Eyebrow="Library" Title="Books" Subtitle="Every book the podcasts mentioned, ranked by how many podcasts and episodes brought it up.">
+    <Actions>
+        @if (_rows is { Count: > 0 })
+        {
+            @* Plain downloads with the page's filters. "download" stops Blazor's router from handling the link. *@
+            <MudMenu Icon="@Icons.Material.Rounded.Download" AriaLabel="Export the list" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                <MudMenuItem Href="@ExportHref("books/export.csv")" download="" Icon="@Icons.Material.Rounded.TableView">CSV</MudMenuItem>
+                <MudMenuItem Href="@ExportHref("books/export-goodreads.csv")" download="" Icon="@Icons.Material.Rounded.LibraryAdd">Goodreads import (CSV)</MudMenuItem>
+                <MudMenuItem Href="@ExportHref("books/export.json")" download="" Icon="@Icons.Material.Rounded.DataObject">JSON with mentions</MudMenuItem>
+            </MudMenu>
+        }
+        <MudTooltip Text="Refresh">
+            <MudIconButton Icon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
+        </MudTooltip>
+    </Actions>
+</PageHeader>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_error</MudAlert>
+}
+else if (_rows is null)
+{
+    <LoadingState Layout="LoadingState.LoadingLayout.Cards" Count="9" />
+}
+else
+{
+    @if (_pending > 0 || _unmatched > 0)
+    {
+        <div class="notice">
+            <MudIcon Icon="@Icons.Material.Outlined.Info" Size="Size.Small" />
+            <MudText Typo="Typo.body2">
+                @if (_pending > 0 && _lookupOn)
+                {
+                    <text>@_pending mention(s) still being checked against the catalogue. </text>
+                }
+                else if (_pending > 0)
+                {
+                    <text>Book lookup is off (<code>BookLookup:Provider</code> is empty), so @_pending mention(s) haven't been checked against a catalogue. </text>
+                }
+                @if (_unmatched > 0)
+                {
+                    <text>@_unmatched mention(s) weren't found in the catalogue and aren't listed. <a href="review" class="card-title-link">Review them</a> to rule them out or pick the right book.</text>
+                }
+            </MudText>
+        </div>
+    }
+
+    @if (_rows.Count > 0 || !_parameters.IsEmpty)
+    {
+        @* Filters live in the query string: changing one navigates, and OnParametersSetAsync reloads from the URL. *@
+        <div class="surface-card filter-bar">
+            @* Sizes go on wrappers: the date range picker passes its flex value down to its inputs. *@
+            <div class="filter-text">
+                <MudTextField T="string" Value="_text" ValueChanged="OnTextChanged" DebounceInterval="300" Placeholder="Title or author"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="BookListParameters.MaxTextLength" Clearable="true"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Rounded.Search" />
+            </div>
+            <div class="filter-podcasts">
+                <MudSelect T="Guid" MultiSelection="true" SelectedValues="_parameters.Podcasts" SelectedValuesChanged="OnPodcastsChanged"
+                           MultiSelectionTextFunc="PodcastsText" Placeholder="All podcasts" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Dense="true" Clearable="true">
+                    @foreach (var podcast in _podcasts)
+                    {
+                        <MudSelectItem T="Guid" Value="podcast.Id">@podcast.Title</MudSelectItem>
+                    }
+                </MudSelect>
+            </div>
+            <div class="filter-dates">
+                <MudDateRangePicker DateRange="_range" DateRangeChanged="OnRangeChanged" PlaceholderStart="From" PlaceholderEnd="To"
+                                    Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" />
+            </div>
+            <MudSwitch T="bool" Value="_parameters.RecommendedOnly" ValueChanged="OnRecommendedChanged" Color="Color.Primary" Class="ma-0">
+                Recommended only
+            </MudSwitch>
+            @if (!_parameters.IsEmpty)
+            {
+                <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.FilterAltOff" OnClick="ClearFilters">Clear</MudButton>
+            }
+        </div>
+    }
+
+    @if (_rows.Count == 0 && _parameters.IsEmpty)
+    {
+        <EmptyState Title="No books yet" Icon="@Icons.Material.Rounded.MenuBook">
+            Books appear here once episodes have been searched for books and the titles found in the catalogue.
+        </EmptyState>
+    }
+    else if (_rows.Count == 0)
+    {
+        <EmptyState Title="No books match" Icon="@Icons.Material.Rounded.FilterAltOff">
+            Nothing in the list fits these filters. Widen the dates, pick other podcasts, or clear the filters.
+        </EmptyState>
+    }
+    else
+    {
+        @if (!_parameters.IsEmpty)
+        {
+            <MudText Typo="Typo.caption" Class="muted d-block mb-3">
+                @_rows.Count book(s) match. Counts and ranks cover only the chosen podcasts and dates.
+            </MudText>
+        }
+        <MudGrid Spacing="3" Class="stagger">
+            @foreach (var row in _rows)
+            {
+                <MudItem xs="12" sm="6" lg="4" @key="row.Book.Id">
+                    <a href="@($"books/{row.Book.Id}")" class="card-link surface-card hover-lift book-card">
+                        <span class="rank @(row.Rank <= 3 ? "rank-top" : "")">@row.Rank</span>
+                        @if (Display.HttpsOrNull(row.Book.CoverUrl) is { } cover)
+                        {
+                            <img src="@cover" alt="" loading="lazy" referrerpolicy="no-referrer" class="book-cover" />
+                        }
+                        else
+                        {
+                            <span class="book-cover book-cover-blank"><MudIcon Icon="@Icons.Material.Rounded.AutoStories" /></span>
+                        }
+                        <span class="book-card-body">
+                            <MudText Typo="Typo.subtitle1" Class="clamp-2" Style="font-weight: 650; line-height: 1.3;">@row.Book.Title</MudText>
+                            <MudText Typo="Typo.body2" Class="muted clamp-2">
+                                @row.Book.Authors@(row.Book.FirstPublishYear is { } year ? $" · {year}" : "")
+                            </MudText>
+                            <span class="stat-row mt-2">
+                                <span class="stat"><strong>@row.Ranking.Podcasts</strong> podcast(s)</span>
+                                <span class="stat"><strong>@row.Ranking.Episodes</strong> episode(s)</span>
+                                @if (row.Ranking.RecommendedIn > 0)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Text" Icon="@Icons.Material.Rounded.ThumbUp" Class="state-chip ma-0">
+                                        Recommended in @row.Ranking.RecommendedIn
+                                    </MudChip>
+                                }
+                            </span>
+                            <MudText Typo="Typo.caption" Class="muted mt-auto">Last mentioned @Display.LocalDate(row.Ranking.LastMentioned)</MudText>
+                        </span>
+                    </a>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "podcast")]
+    public string[]? PodcastQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "rec")]
+    public string? RecommendedQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "from")]
+    public string? FromQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "to")]
+    public string? ToQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "q")]
+    public string? TextQuery { get; set; }
+
+    private List<BookListRow>? _rows;
+    private List<(Guid Id, string Title)> _podcasts = [];
+    private BookListParameters _parameters = BookListParameters.None;
+    private string? _text;
+    private DateRange? _range;
+    private int _pending;
+    private bool _lookupOn;
+    private int _unmatched;
+    private string? _error;
+    private int _loadRequest;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _parameters = BookListParameters.Parse(PodcastQuery, RecommendedQuery, FromQuery, ToQuery, TextQuery);
+        // The box keeps what the person typed (a trailing space, say) when it means the same filter.
+        var typed = string.IsNullOrWhiteSpace(_text) ? null : _text.Trim();
+        if (typed != _parameters.Text)
+        {
+            _text = _parameters.Text;
+        }
+
+        // The picker raises DateRangeChanged whenever it's handed a different DateRange object, so it only gets a new
+        // one when the dates really changed. Otherwise an old range and a new one can chase each other through the URL.
+        if (DayOf(_range?.Start) != _parameters.From || DayOf(_range?.End) != _parameters.To)
+        {
+            _range = _parameters.From is null && _parameters.To is null
+                ? null
+                : new DateRange(_parameters.From?.ToDateTime(TimeOnly.MinValue), _parameters.To?.ToDateTime(TimeOnly.MinValue));
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        // Filters can change faster than a load finishes; only the latest load may show its rows.
+        var request = ++_loadRequest;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var rows = await BookListQuery.LoadAsync(db, _parameters.ToFilter(TimeZoneInfo.Local), CancellationToken.None);
+            var podcasts = await db.PodcastFeeds.AsNoTracking()
+                .Select(f => new { f.Id, f.Title, f.FeedUrl })
+                .ToListAsync();
+            var pending = await db.BookMentions.CountAsync(m => m.MatchState == MatchState.Pending);
+            var lookupOn = await db.WorkerStatuses.AnyAsync(s => s.Name == BackendHealth.BookLookup);
+            var unmatched = await db.BookMentions.CountAsync(m => m.MatchState == MatchState.NoMatch || m.MatchState == MatchState.LookupFailed);
+            if (request != _loadRequest)
+            {
+                return;
+            }
+
+            _rows = rows.ToList();
+            _podcasts = podcasts
+                .Select(p => (p.Id, p.Title ?? FeedUrlRedactor.Redact(p.FeedUrl)))
+                .OrderBy(p => p.Item2, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+            _pending = pending;
+            _lookupOn = lookupOn;
+            _unmatched = unmatched;
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            var message = Logger.LoadFailed(ex, "books");
+            if (request == _loadRequest)
+            {
+                _error = message;
+            }
+        }
+    }
+
+    // The select would show each chosen value's text, which for a Guid is the ID itself.
+    private string PodcastsText(IReadOnlyList<string> selected) => selected.Count switch
+    {
+        0 => "",
+        1 => _podcasts.FirstOrDefault(p => p.Id == _parameters.Podcasts.FirstOrDefault()).Title ?? "1 podcast",
+        var n => $"{n} podcasts",
+    };
+
+    private void OnTextChanged(string? text)
+    {
+        _text = text;
+        Apply(_parameters with { Text = string.IsNullOrWhiteSpace(text) ? null : text.Trim() });
+    }
+
+    private void OnPodcastsChanged(IEnumerable<Guid>? podcasts) => Apply(_parameters with { Podcasts = podcasts?.ToList() ?? [] });
+
+    private void OnRangeChanged(DateRange? range)
+    {
+        _range = range;
+        Apply(_parameters with { From = DayOf(range?.Start), To = DayOf(range?.End) });
+    }
+
+    private void OnRecommendedChanged(bool on) => Apply(_parameters with { RecommendedOnly = on });
+
+    private void ClearFilters()
+    {
+        _text = null;
+        Apply(BookListParameters.None);
+    }
+
+    /// <summary>
+    /// Puts the filters in the URL, replacing the history entry so typing doesn't fill the back button. The layout keys
+    /// pages on the path alone, so this re-runs OnParametersSetAsync instead of mounting the page again. A URL that
+    /// wouldn't change isn't navigated to, so a control echoing its value back can't start a loop.
+    /// </summary>
+    private void Apply(BookListParameters parameters)
+    {
+        var uri = Navigation.GetUriWithQueryParameters(parameters.ToQuery());
+        if (uri != Navigation.Uri)
+        {
+            Navigation.NavigateTo(uri, replace: true);
+        }
+    }
+
+    /// <summary>A download link for the list as filtered now.</summary>
+    private string ExportHref(string path) => Navigation.GetUriWithQueryParameters(path, _parameters.ToQuery());
+
+    private static DateOnly? DayOf(DateTime? date) => date is { } value ? DateOnly.FromDateTime(value) : null;
+}

@@ -1,0 +1,20 @@
+@using System.Net.Http
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Routing
+@using Microsoft.AspNetCore.Components.Web
+@using static Microsoft.AspNetCore.Components.Web.RenderMode
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
+@using MudBlazor
+@using Earmarked.Core.Data
+@using Earmarked.Core.Feeds
+@using Earmarked.Web
+@using Earmarked.Web.Components
+@using Earmarked.Web.Components.Layout
+@using Earmarked.Web.Components.Shared
+@using Earmarked.Web.Services
+@using Earmarked.Web.Components.Account
+@* AuthorizeRouteView only checks attributes, not the fallback policy, so every page carries this. Opt out with [AllowAnonymous]. *@
+@attribute [Authorize]

@@ -1,0 +1,183 @@
+@page "/podcasts/{Id:guid}"
+@using Earmarked.Core.Pipeline
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject CommandFeedback Commands
+@inject ILogger<PodcastDetail> Logger
+
+<PageTitle>@(_podcast?.Title ?? "Podcast")</PageTitle>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_error</MudAlert>
+}
+else if (_loading)
+{
+    <LoadingState Layout="LoadingState.LoadingLayout.Detail" Count="8" />
+}
+else if (_podcast is null)
+{
+    <EmptyState Title="Podcast not found" Icon="@Icons.Material.Rounded.SearchOff">Podcast @Id doesn't exist.</EmptyState>
+}
+else
+{
+    var artwork = Display.HttpOrHttpsOrNull(_podcast.ImageUrl);
+    <div class="crumbs"><MudBreadcrumbs Items="_breadcrumbs" /></div>
+    <section class="hero">
+        @if (artwork is not null)
+        {
+            <img src="@artwork" alt="" class="hero-backdrop" referrerpolicy="no-referrer" />
+        }
+        <div class="hero-body">
+            <span class="artwork artwork-lg">
+                @if (artwork is not null)
+                {
+                    <img src="@artwork" alt="" referrerpolicy="no-referrer" />
+                }
+                else
+                {
+                    <MudIcon Icon="@Icons.Material.Rounded.Podcasts" Size="Size.Large" />
+                }
+            </span>
+            <div class="hero-text">
+                <MudText Typo="Typo.overline" Color="Color.Primary">Podcast</MudText>
+                <MudText Typo="Typo.h4">@(_podcast.Title ?? FeedUrlRedactor.Redact(_podcast.FeedUrl))</MudText>
+                @if (_podcast.Author is not null)
+                {
+                    <MudText Typo="Typo.subtitle1" Class="muted mt-1">@_podcast.Author</MudText>
+                }
+                <div class="hero-meta">
+                    <span><MudIcon Icon="@Icons.Material.Rounded.RssFeed" Size="Size.Small" /> @FeedUrlRedactor.Redact(_podcast.FeedUrl)</span>
+                    <span><MudIcon Icon="@Icons.Material.Rounded.Schedule" Size="Size.Small" /> Polled @Display.LocalTime(_podcast.LastPolledAt)</span>
+                    <span><MudIcon Icon="@Icons.Material.Rounded.Headphones" Size="Size.Small" /> @(_episodes.Count - SkippedCount) episode(s)</span>
+                </div>
+            </div>
+            <div class="hero-actions">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Sync" OnClick="PollAsync" DropShadow="false">Poll now</MudButton>
+                <MudTooltip Text="Refresh">
+                    <MudIconButton Icon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
+                </MudTooltip>
+            </div>
+        </div>
+    </section>
+
+    @if (_podcast.LastPollError is not null)
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-4">Last poll failed: @_podcast.LastPollError</MudAlert>
+    }
+
+    <div class="section-title">
+        <MudText Typo="Typo.h6">Episodes</MudText>
+        <span class="count-badge">@VisibleEpisodes.Count</span>
+        <MudSpacer />
+        @if (SkippedCount > 0)
+        {
+            <MudSwitch T="bool" @bind-Value="_showSkipped" Label="@($"Show {SkippedCount} skipped by the backfill window")" Color="Color.Primary" Size="Size.Small" />
+        }
+    </div>
+
+    @if (SkippedCount > 0)
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-4">
+            <MudText Typo="Typo.body2" Class="muted">Include the newest</MudText>
+            <MudNumericField T="int" @bind-Value="_includeCount" Min="1" Max="IncludeMax" Variant="Variant.Outlined" Margin="Margin.Dense"
+                             Style="width: 7rem;" aria-label="Number of skipped episodes to include" />
+            <MudText Typo="Typo.body2" Class="muted">skipped episodes</MudText>
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.PlaylistAdd" OnClick="IncludeSkippedAsync">Include</MudButton>
+        </MudStack>
+    }
+
+    @if (VisibleEpisodes.Count == 0)
+    {
+        <EmptyState Title="No episodes to show" Icon="@Icons.Material.Rounded.Headphones">
+            @(_podcast.FirstPolledAt is null ? "This feed hasn't been polled yet. Poll it now, or wait for the next scheduled poll." : "Every episode is outside the backfill window. Show skipped episodes to include one.")
+        </EmptyState>
+    }
+    else
+    {
+        <MudTable Items="VisibleEpisodes" Hover="true" Elevation="0" Class="surface-card" RowsPerPage="50" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>Episode</MudTh>
+                <MudTh Style="width: 9rem;">Published</MudTh>
+                <MudTh Style="width: 6rem;">Length</MudTh>
+                <MudTh Style="width: 14rem;">State</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Episode"><a href="@($"episodes/{context.Id}")" class="card-title-link"><MudText Typo="Typo.body2" Style="font-weight: 550;">@context.Title</MudText></a></MudTd>
+                <MudTd DataLabel="Published"><MudText Typo="Typo.body2" Class="muted">@Display.LocalDate(context.PublishedAt)</MudText></MudTd>
+                <MudTd DataLabel="Length"><MudText Typo="Typo.body2" Class="muted">@Display.Timestamp(context.Duration)</MudText></MudTd>
+                <MudTd DataLabel="State">
+                    <EpisodeStateChip State="context.State" />
+                    @if (context.LastError is not null)
+                    {
+                        <MudTooltip Text="@context.LastError">
+                            <MudIcon Icon="@Icons.Material.Rounded.Info" Size="Size.Small" Color="Color.Warning" Style="vertical-align: middle;" />
+                        </MudTooltip>
+                    }
+                </MudTd>
+            </RowTemplate>
+            <PagerContent>
+                @if (VisibleEpisodes.Count > 50)
+                {
+                    <MudTablePager PageSizeOptions="@(new[] { 50, 100, 250 })" />
+                }
+            </PagerContent>
+        </MudTable>
+    }
+}
+
+@code {
+    [Parameter]
+    public Guid Id { get; set; }
+
+    private sealed record EpisodeRow(Guid Id, string Title, DateTime? PublishedAt, TimeSpan? Duration, EpisodeState State, string? LastError);
+
+    private PodcastFeed? _podcast;
+    private List<EpisodeRow> _episodes = [];
+    private List<BreadcrumbItem> _breadcrumbs = [];
+    private bool _loading = true;
+    private bool _showSkipped;
+    private int _includeCount = 10;
+    private string? _error;
+
+    private int SkippedCount => _episodes.Count(e => e.State == EpisodeState.Skipped);
+
+    private int IncludeMax => Math.Min(SkippedCount, CommandProcessor.MaxIncludeCount);
+
+    private List<EpisodeRow> VisibleEpisodes => _showSkipped ? _episodes : _episodes.Where(e => e.State != EpisodeState.Skipped).ToList();
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _podcast = await db.PodcastFeeds.AsNoTracking().SingleOrDefaultAsync(p => p.Id == Id);
+            _episodes = await db.Episodes.AsNoTracking()
+                .Where(e => e.PodcastFeedId == Id)
+                .OrderByDescending(e => e.PublishedAt)
+                .Select(e => new EpisodeRow(e.Id, e.Title, e.PublishedAt, e.Duration, e.State, e.LastError))
+                .ToListAsync();
+            _breadcrumbs = [new("Podcasts", ""), new(_podcast?.Title ?? "Podcast", null, disabled: true)];
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = Logger.LoadFailed(ex, "this podcast");
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private Task IncludeSkippedAsync()
+    {
+        var count = Math.Clamp(_includeCount, 1, IncludeMax);
+        return Commands.QueueAsync(
+            new WorkerCommand { Type = WorkerCommandType.IncludeSkippedEpisodes, PodcastFeedId = Id, Count = count },
+            $"Including the {count} newest skipped episode(s). They join the queue in their normal place.");
+    }
+
+    private Task PollAsync() => Commands.QueueAsync(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastFeedId = Id }, "Poll queued.");
+}

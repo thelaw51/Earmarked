@@ -1,6 +1,6 @@
-# PodcastBookRecs
+# Earmarked
 
-[![CI](https://github.com/thelaw51/PodcastBookRecs/actions/workflows/ci.yml/badge.svg)](https://github.com/thelaw51/PodcastBookRecs/actions/workflows/ci.yml)
+[![CI](https://github.com/thelaw51/Earmarked/actions/workflows/ci.yml/badge.svg)](https://github.com/thelaw51/Earmarked/actions/workflows/ci.yml)
 
 A self-hosted tracker for books mentioned on podcasts. It watches the feeds you choose, gets a transcript for each episode, pulls out the books people mention, matches them to real books in [Open Library](https://openlibrary.org) (and, if you turn them on, Hardcover and Apple Books), and ranks them by how many different shows and episodes bring them up.
 
@@ -35,18 +35,18 @@ Episodes skipped by the backfill window when a podcast was added have an **Inclu
 
 ## Deploying with Portainer
 
-The image is public at `ghcr.io/thelaw51/podcastbookrecs`, so Portainer can pull it without logging in.
+The image is public at `ghcr.io/thelaw51/earmarked`, so Portainer can pull it without logging in.
 
 ### 1. Prepare the folders on the Docker host
 
 ```bash
-sudo mkdir -p /path/to/podcastbookrecs/config /path/to/podcastbookrecs/data
-sudo chown -R 1654:1654 /path/to/podcastbookrecs/data
+sudo mkdir -p /path/to/earmarked/config /path/to/earmarked/data
+sudo chown -R 1654:1654 /path/to/earmarked/data
 ```
 
 The container runs as the .NET image's non-root `app` user, UID 1654, so it needs to own `data`. Do this before the first deploy: if the folder doesn't exist, Docker creates it owned by root and the Worker can't write the database. Put `data` on the host's local disk, not a NAS share. SQLite locking isn't reliable over SMB or NFS.
 
-Copy [`config.example.json`](config.example.json) to `/path/to/podcastbookrecs/config/config.json` and edit it. The container mounts `config` read-only.
+Copy [`config.example.json`](config.example.json) to `/path/to/earmarked/config/config.json` and edit it. The container mounts `config` read-only.
 
 ### 2. Create the stack
 
@@ -54,9 +54,9 @@ Paste [`docker-compose.yml`](docker-compose.yml) into a new Portainer stack and 
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PBR_PORT` | `8742` | Host port for the UI |
-| `PBR_TAG` | `latest` | Image tag both containers run |
-| `PBR_HARDCOVER_TOKEN` | none | Hardcover API token, only if `Hardcover` is in `BookLookup:Fallbacks`. Also uncomment the `PBR_Hardcover__Token` line under the worker. See [Fallback catalogues](#fallback-catalogues). |
+| `EARMARKED_PORT` | `8742` | Host port for the UI |
+| `EARMARKED_TAG` | `latest` | Image tag both containers run |
+| `EARMARKED_HARDCOVER_TOKEN` | none | Hardcover API token, only if `Hardcover` is in `BookLookup:Fallbacks`. Also uncomment the `EARMARKED_Hardcover__Token` line under the worker. See [Fallback catalogues](#fallback-catalogues). |
 
 The UI is then at `http://<docker-host>:8742`.
 
@@ -67,11 +67,20 @@ Nothing updates automatically. To update:
 1. Back up the `data` folder. A new version may migrate the database, and migrations only go forwards.
 2. Open the stack in Portainer, tick **Re-pull image**, and click **Update the stack**. Always update the whole stack, not one container: the UI assumes both containers run the same build.
 
-Every image CI publishes (builds of `main` and of `v*` tags) is also tagged `sha-<first 7 characters of the commit>`. To roll back, set `PBR_TAG` to an earlier build's tag (for example `sha-1a2b3c4`) and update the stack again. The tags are listed on the package page on GitHub. Both containers read the same variable, so they never run different versions.
+Every image CI publishes (builds of `main` and of `v*` tags) is also tagged `sha-<first 7 characters of the commit>`. To roll back, set `EARMARKED_TAG` to an earlier build's tag (for example `sha-1a2b3c4`) and update the stack again. The tags are listed on the package page on GitHub. Both containers read the same variable, so they never run different versions.
 
 If the version you're leaving had added a migration, an older build won't understand the newer database. Stop the stack, restore the `data` backup you took before updating, then start the older tag.
 
 Version tags (`v1.2.0`) also publish `1.2.0` and `1.2`.
+
+### Upgrading from PodcastBookRecs
+
+The project used to be called PodcastBookRecs. An install from then keeps working on the new image:
+
+- The database stays `podcastbookrecs.db` until you rename it. To switch, stop the stack and rename `podcastbookrecs.db` to `earmarked.db`, along with its `-wal` and `-shm` files if they exist.
+- `PBR_` environment variables are still read. An `EARMARKED_` variable with the same name wins.
+- Everyone is signed out once, because the sign-in cookie and the data protection application name changed.
+- Authenticator apps keep working. Accounts enrolled after the rename show "Earmarked" as the issuer.
 
 ## Signing in
 
@@ -128,7 +137,7 @@ The app fetches any feed URL you add, so anyone who signs in can make the Worker
 4. Under **Access**, then **Applications**, add a self-hosted application for that hostname, with a policy that allows only your email address.
 5. Set `AllowedHosts` in `config.json` to the tunnel's hostname plus every name you use on the LAN, separated by semicolons, for example `"podcasts.example.com;localhost;docker-host.lan"`. The app answers other `Host` headers with 400, so a request can't make it build redirects to another site. Include whatever name your health probe uses; a probe inside the container usually sends `localhost`, so keep that in the list.
 
-cloudflared talks plain HTTP to the app and sends `X-Forwarded-Proto: https`. The app trusts that header from private addresses (`ForwardedHeaders:KnownNetworks`), which is how it knows to mark the sign-in cookie Secure and to redirect to `https://`. If cloudflared reaches the app from a public address, add that address to the list. To check, sign in through the tunnel and look at the `pbr.auth` cookie in the browser's developer tools: it should say Secure.
+cloudflared talks plain HTTP to the app and sends `X-Forwarded-Proto: https`. The app trusts that header from private addresses (`ForwardedHeaders:KnownNetworks`), which is how it knows to mark the sign-in cookie Secure and to redirect to `https://`. If cloudflared reaches the app from a public address, add that address to the list. To check, sign in through the tunnel and look at the `earmarked.auth` cookie in the browser's developer tools: it should say Secure.
 
 Blazor Server keeps a WebSocket open to the server. cloudflared passes WebSockets through without any extra setting.
 
@@ -156,8 +165,8 @@ The script:
 
 1. installs `whisper-cpp` and `ffmpeg` with Homebrew, if they aren't already installed
 2. downloads the model to `~/Library/Application Support/whisper-server/models/` and checks its SHA-256 against the published hash
-3. installs a launchd agent, `com.podcastbookrecs.whisper-server`, that starts the server at login and restarts it if it stops
-4. installs a second agent, `com.podcastbookrecs.whisper-watchdog`, that restarts the server when it stops accepting audio (see below)
+3. installs a launchd agent, `com.earmarked.whisper-server`, that starts the server at login and restarts it if it stops
+4. installs a second agent, `com.earmarked.whisper-watchdog`, that restarts the server when it stops accepting audio (see below)
 5. waits until the server answers, then prints its address
 
 It's safe to run again: it skips a model that's already verified and reinstalls the agent with the current settings. Options: `--port` (default `8178`) and `--model` (`large-v3-turbo`, or the smaller `large-v3-turbo-q8_0` and `large-v3-turbo-q5_0`).
@@ -167,9 +176,9 @@ Give the Mac a reserved IP address on your router, since the Worker's config poi
 ### Living with it
 
 - **Logs:** `~/Library/Logs/whisper-server.log`, and `~/Library/Logs/whisper-watchdog.log` for the watchdog
-- **Restart:** `launchctl kickstart -k gui/$(id -u)/com.podcastbookrecs.whisper-server`. Do this after `brew upgrade whisper-cpp` too.
+- **Restart:** `launchctl kickstart -k gui/$(id -u)/com.earmarked.whisper-server`. Do this after `brew upgrade whisper-cpp` too.
 - **The watchdog.** If the GPU runs out of memory mid-chunk (more likely with LM Studio on the same Mac), whisper.cpp's Metal backend stays broken: every request gets HTTP 500 `failed to process audio`, but the process keeps running, so launchd never restarts it. Every 3 minutes the watchdog sends a one-second test clip, and after two 500s in a row it restarts the server, so recovery takes about 6 minutes. A refused connection or a slow answer (the clip waits behind a real chunk) changes nothing. It writes a log line only when the clip fails. If the server restarts every 6 minutes and the log keeps saying so, it can't start working again on its own: look at `whisper-server.log`. The agent runs a copy of `mac/whisper-watchdog.sh` from `~/Library/Application Support/whisper-server/`, so re-run `setup.sh` after changing the script.
-- **Stop and remove:** `launchctl bootout gui/$(id -u)/com.podcastbookrecs.whisper-watchdog` and `launchctl bootout gui/$(id -u)/com.podcastbookrecs.whisper-server`, then delete both `.plist` files from `~/Library/LaunchAgents/`
+- **Stop and remove:** `launchctl bootout gui/$(id -u)/com.earmarked.whisper-watchdog` and `launchctl bootout gui/$(id -u)/com.earmarked.whisper-server`, then delete both `.plist` files from `~/Library/LaunchAgents/`
 - **After a reboot:** a launchd agent only runs once you're logged in. If FileVault keeps the Mac at the login screen, transcription waits until someone logs in. The Worker treats an unreachable server as "try again later", not as a failed episode.
 - **Test it:** `curl http://<mac-ip>:8178/v1/audio/transcriptions -F file=@some.mp3 -F response_format=verbose_json`
 
@@ -190,14 +199,14 @@ The Status page shows each backend as reachable or not, checked every 30 seconds
 
 ### Pointing at a different transcription backend
 
-The Worker talks to OpenAI's `POST /v1/audio/transcriptions` and needs `verbose_json` with timed `segments`. Any server that speaks it works by changing `Transcription:BaseUrl` (and `Model`, if the server cares): whisper.cpp on another machine, an MLX server, or a hosted API. Hosted APIs often cap uploads around 25 MB; 15 minutes of the WAV the Worker sends is about 29 MB, so set `Transcription:ChunkMinutes` to 10 for those. A backend with a different API needs a new adapter under `src/PodcastBookRecs.Core/Providers/Transcription/`, selected by a new `Provider` name.
+The Worker talks to OpenAI's `POST /v1/audio/transcriptions` and needs `verbose_json` with timed `segments`. Any server that speaks it works by changing `Transcription:BaseUrl` (and `Model`, if the server cares): whisper.cpp on another machine, an MLX server, or a hosted API. Hosted APIs often cap uploads around 25 MB; 15 minutes of the WAV the Worker sends is about 29 MB, so set `Transcription:ChunkMinutes` to 10 for those. A backend with a different API needs a new adapter under `src/Earmarked.Core/Providers/Transcription/`, selected by a new `Provider` name.
 
 ## Book extraction
 
 With `Extraction:Provider` set, the Worker looks for books in every episode that has a transcript:
 
 1. The transcript is cut into windows of `Extraction:WindowWords` words, each repeating the last `Extraction:OverlapWords` of the one before, so a mention at a boundary isn't cut in half.
-2. Each window goes to the language model with the podcast and episode titles (the episode title usually names the guest) and the instructions in [`book-mentions-v1.txt`](src/PodcastBookRecs.Core/Extraction/Prompts/book-mentions-v1.txt). The model answers in JSON, held to a schema: title, author, a short quote, the kind of mention, and a confidence.
+2. Each window goes to the language model with the podcast and episode titles (the episode title usually names the guest) and the instructions in [`book-mentions-v1.txt`](src/Earmarked.Core/Extraction/Prompts/book-mentions-v1.txt). The model answers in JSON, held to a schema: title, author, a short quote, the kind of mention, and a confidence.
 3. Small models invent books, so a mention is kept only if its quote is really in the transcript. Matching ignores case and punctuation and allows small slips. The stored quote and timestamp come from the transcript, not the model.
 4. Repeats of the same title within an episode are merged, keeping the earliest mention.
 5. The mentions are stored with the provider, model and prompt version that produced them. *Re-run book extraction* on the episode page deletes them and extracts again from the stored transcript, without transcribing again.
@@ -222,7 +231,7 @@ The Status page shows an *extraction* row, which turns red if LM Studio can't be
 
 ### Pointing at a different language model
 
-The Worker uses OpenAI's `POST /v1/chat/completions` with `response_format` set to a JSON schema. Ollama, llama.cpp's server, vLLM and hosted APIs speak it: change `Extraction:BaseUrl` and `Extraction:Model`. A server that can't hold its answer to a schema will produce more failed requests. A backend with a different API needs a new adapter under `src/PodcastBookRecs.Core/Providers/Extraction/`, selected by a new `Provider` name.
+The Worker uses OpenAI's `POST /v1/chat/completions` with `response_format` set to a JSON schema. Ollama, llama.cpp's server, vLLM and hosted APIs speak it: change `Extraction:BaseUrl` and `Extraction:Model`. A server that can't hold its answer to a schema will produce more failed requests. A backend with a different API needs a new adapter under `src/Earmarked.Core/Providers/Extraction/`, selected by a new `Provider` name.
 
 ## Matching books in Open Library
 
@@ -264,7 +273,7 @@ Open Library is missing a lot of new and self-published books. List more catalog
 "AppleBooks": { "Country": "gb" }
 ```
 
-- **Hardcover** is a book catalogue with one entry per book and many recent titles. It needs a free account and a personal API token: in Hardcover's account settings, open *Hardcover API*, choose *New API Key*, and tick only the `read:catalog` scope, since a token with every scope can delete the account. Pass it to the Worker as the `PBR_Hardcover__Token` environment variable rather than putting it in `config.json`; the Worker won't start with Hardcover listed and no token. Searches go out at most one a second, inside Hardcover's 60 a minute. Its Status row sends one small search every 30 minutes to check the token, about 48 of the free plan's 5,000 requests a day, and says when the token has expired or lacks the scope. Hardcover's covers are uploaded by its users, which is fine for a private instance; if you make yours public, take that into account.
+- **Hardcover** is a book catalogue with one entry per book and many recent titles. It needs a free account and a personal API token: in Hardcover's account settings, open *Hardcover API*, choose *New API Key*, and tick only the `read:catalog` scope, since a token with every scope can delete the account. Pass it to the Worker as the `EARMARKED_Hardcover__Token` environment variable rather than putting it in `config.json`; the Worker won't start with Hardcover listed and no token. Searches go out at most one a second, inside Hardcover's 60 a minute. Its Status row sends one small search every 30 minutes to check the token, about 48 of the free plan's 5,000 requests a day, and says when the token has expired or lacks the scope. Hardcover's covers are uploaded by its users, which is fine for a private instance; if you make yours public, take that into account.
 - **Apple Books** searches the Apple Books store through Apple's public search API, with no key or account. `AppleBooks:Country` picks the store (`us` by default), because stores list different books. Requests go out at most one every 3 seconds, inside Apple's limit of about 20 a minute.
 - A fallback is asked only when the model named an author, because neither fallback reports how many editions a book has, so the author's surname is all that confirms the match. If one fallback fails, the next is still asked. Every fallback match goes to the *Review* page as *Found in a fallback catalogue*, where one click confirms it.
 - Because Apple lists each edition separately, two mentions of one book found only through a fallback can land on two different books (say, a paperback and an anniversary edition), and the *Books* page then ranks each on its own count. Confirming one and pointing the other at it with *Find the book* merges them.
@@ -291,11 +300,11 @@ The files are built from the same query as the page, at `/books/export.csv`, `/b
 
 ### Pointing at a different catalogue
 
-The matching rules live in `CatalogMatcher` and know nothing about Open Library. Another catalogue (Google Books, say) needs a new adapter under `src/PodcastBookRecs.Core/Providers/BookLookup/` that implements `IBookCatalog`, a new name in `BookLookupProviders`, and its registration in `AddPbrBookLookup`; it can then be the `BookLookup:Provider` or one of the `BookLookup:Fallbacks`. Each stored book records the catalogue it came from, and each match the version of the rules (`CatalogMatcher.Version`) that made it; changing the rules and bumping the version re-matches every mention.
+The matching rules live in `CatalogMatcher` and know nothing about Open Library. Another catalogue (Google Books, say) needs a new adapter under `src/Earmarked.Core/Providers/BookLookup/` that implements `IBookCatalog`, a new name in `BookLookupProviders`, and its registration in `AddEarmarkedBookLookup`; it can then be the `BookLookup:Provider` or one of the `BookLookup:Fallbacks`. Each stored book records the catalogue it came from, and each match the version of the rules (`CatalogMatcher.Version`) that made it; changing the rules and bumping the version re-matches every mention.
 
 ## Configuration
 
-Settings come from `/config/config.json`, then environment variables prefixed `PBR_` override them. Nested keys use a double underscore: `PBR_Polling__IntervalMinutes=30`.
+Settings come from `/config/config.json`, then environment variables prefixed `EARMARKED_` override them. Nested keys use a double underscore: `EARMARKED_Polling__IntervalMinutes=30`.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -305,7 +314,7 @@ Settings come from `/config/config.json`, then environment variables prefixed `P
 | `Feeds` | `[]` | Feeds imported on Worker startup if missing. Feeds added in the UI live in the database. |
 | `BookLookup:Provider` | `OpenLibrary` | The book catalogue mentions are matched against; empty turns matching off |
 | `BookLookup:Fallbacks` | none | Catalogues to try, in order, when the first finds nothing, e.g. `["Hardcover", "AppleBooks"]` |
-| `Hardcover:Token` | none | Personal API token with the `read:catalog` scope, needed only when `Hardcover` is listed. Set it as `PBR_Hardcover__Token`. |
+| `Hardcover:Token` | none | Personal API token with the `read:catalog` scope, needed only when `Hardcover` is listed. Set it as `EARMARKED_Hardcover__Token`. |
 | `AppleBooks:Country` | `us` | The Apple Books store to search, as a two-letter country code |
 | `OpenLibrary:ContactEmail` | | Sent in the User-Agent so Open Library can get in touch about heavy use. Optional. |
 | `AllowedHosts` | `*` | Host names the web app answers, separated by semicolons. Anything else gets 400. Set it before exposing the app; see Cloudflare Tunnel above. |
@@ -349,24 +358,24 @@ The ffmpeg tests need `ffmpeg` on your `PATH` (`brew install ffmpeg`). They're s
 To run locally, put a config file at `.local/config/config.json` (git ignores `.local/`), then start each app in its own terminal:
 
 ```bash
-dotnet run --project src/PodcastBookRecs.Worker
+dotnet run --project src/Earmarked.Worker
 ```
 
 ```bash
-dotnet run --project src/PodcastBookRecs.Web
+dotnet run --project src/Earmarked.Web
 ```
 
-The UI is at http://localhost:5237. The Worker creates the database at `.local/data/podcastbookrecs.db`. Once it exists, add a user:
+The UI is at http://localhost:5237. The Worker creates the database at `.local/data/earmarked.db`. Once it exists, add a user:
 
 ```bash
-dotnet run --project src/PodcastBookRecs.Web -- users add you@example.com
+dotnet run --project src/Earmarked.Web -- users add you@example.com
 ```
 
 To add a migration after changing the model:
 
 ```bash
 dotnet tool restore
-dotnet ef migrations add <Name> -p src/PodcastBookRecs.Core -s src/PodcastBookRecs.Core -o Data/Migrations
+dotnet ef migrations add <Name> -p src/Earmarked.Core -s src/Earmarked.Core -o Data/Migrations
 ```
 
 Only the Worker applies migrations, at startup. The UI shows a waiting message until the database is current.
@@ -375,10 +384,10 @@ Only the Worker applies migrations, at startup. The UI shows a waiting message u
 
 | Project | Contents |
 |---|---|
-| `src/PodcastBookRecs.Core` | EF Core model and migrations, feed and transcript parsing, pipeline services, the transcription, extraction and book catalogue interfaces and their providers, the extraction prompt, matching rules, ranking and review, user accounts, ffmpeg chunking |
-| `src/PodcastBookRecs.Worker` | Background loops: commands from the UI, feed polling, transcript fetching, transcription, book extraction, book matching, review-page catalogue searches, heartbeat, backend status |
-| `src/PodcastBookRecs.Web` | Blazor Server UI built with MudBlazor, the exports and the `users` command |
-| `tests/PodcastBookRecs.Tests` | xUnit v3 tests with small invented fixtures |
+| `src/Earmarked.Core` | EF Core model and migrations, feed and transcript parsing, pipeline services, the transcription, extraction and book catalogue interfaces and their providers, the extraction prompt, matching rules, ranking and review, user accounts, ffmpeg chunking |
+| `src/Earmarked.Worker` | Background loops: commands from the UI, feed polling, transcript fetching, transcription, book extraction, book matching, review-page catalogue searches, heartbeat, backend status |
+| `src/Earmarked.Web` | Blazor Server UI built with MudBlazor, the exports and the `users` command |
+| `tests/Earmarked.Tests` | xUnit v3 tests with small invented fixtures |
 | `docker/` | The image's entrypoint |
 | `mac/` | Setup script, launchd agents and watchdog for the [transcription Mac](#transcription-server-on-a-mac) |
 

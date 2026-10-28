@@ -481,7 +481,7 @@ $RECYCLE.BIN/
 # Vim temporary swap files
 *.swp
 
-# PodcastBookRecs: local state and real config never go in git
+# Earmarked: local state and real config never go in git
 .local/
 config.json
 *.db

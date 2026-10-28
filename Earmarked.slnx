@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Earmarked.Core/Earmarked.Core.csproj" />
+    <Project Path="src/Earmarked.Web/Earmarked.Web.csproj" />
+    <Project Path="src/Earmarked.Worker/Earmarked.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Earmarked.Tests/Earmarked.Tests.csproj" />
+  </Folder>
+</Solution>
