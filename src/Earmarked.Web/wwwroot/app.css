@@ -856,6 +856,58 @@ a.timestamp-link:focus-visible {
     text-align: right;
 }
 
+/* A bar row on the Status page opens the list of episodes in that state. */
+a.bar-row {
+    border-radius: var(--mud-default-borderradius);
+    color: inherit;
+    margin-inline: -0.4rem;
+    padding: 0.15rem 0.4rem;
+    text-decoration: none;
+}
+
+a.bar-row:hover {
+    background: var(--mud-palette-action-default-hover);
+}
+
+a.bar-row:focus-visible,
+.state-pick:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}
+
+/* ---------- Episode list state picker ---------- */
+
+.state-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.state-pick {
+    align-items: center;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 999px;
+    color: inherit;
+    display: inline-flex;
+    gap: 0.35rem;
+    min-height: 2.25rem;
+    padding: 0 0.75rem 0 0.25rem;
+    text-decoration: none;
+}
+
+.state-pick:first-child {
+    padding-left: 0.75rem;
+}
+
+.state-pick:hover {
+    background: var(--mud-palette-action-default-hover);
+}
+
+.state-pick-current {
+    border-color: var(--mud-palette-primary);
+    box-shadow: inset 0 0 0 1px var(--mud-palette-primary);
+}
+
 .backend-row {
     align-items: center;
     display: flex;

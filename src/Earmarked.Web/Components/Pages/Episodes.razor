@@ -1,0 +1,139 @@
+@page "/episodes"
+@using Earmarked.Core.Pipeline
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ILogger<Episodes> Logger
+
+<PageTitle>@Heading</PageTitle>
+
+<PageHeader Eyebrow="Status" Title="@Heading" Subtitle="Episodes from every podcast at this stage. Prioritised ones first, then the most recently changed.">
+    <Actions>
+        <MudTooltip Text="Refresh">
+            <MudIconButton Icon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
+        </MudTooltip>
+    </Actions>
+</PageHeader>
+
+<div class="crumbs"><MudBreadcrumbs Items="_breadcrumbs" /></div>
+
+@* The picker is plain links, so a state change navigates and OnParametersSetAsync reloads from the URL. *@
+<nav class="state-picker mb-4" aria-label="Episode states">
+    <a href="@EpisodeStateParameter.Link(null)" class="state-pick @(_state is null ? "state-pick-current" : "")" aria-current="@(_state is null ? "page" : null)">
+        <MudText Typo="Typo.body2">All but skipped</MudText>
+    </a>
+    @foreach (var (state, count) in _counts)
+    {
+        <a href="@EpisodeStateParameter.Link(state)" class="state-pick @(_state == state ? "state-pick-current" : "")" aria-current="@(_state == state ? "page" : null)">
+            <EpisodeStateChip State="state" />
+            <span class="bar-count">@count</span>
+        </a>
+    }
+</nav>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_error</MudAlert>
+}
+else if (_loading)
+{
+    <LoadingState Layout="LoadingState.LoadingLayout.Detail" Count="8" />
+}
+else if (_page.Rows.Count == 0)
+{
+    <EmptyState Title="No episodes here" Icon="@Icons.Material.Rounded.Headphones">
+        @(_state is null ? "No podcast has episodes outside the backfill window yet." : $"Nothing is \"{Display.StateLabel(_state.Value)}\" right now.")
+    </EmptyState>
+}
+else
+{
+    <div class="section-title">
+        <MudText Typo="Typo.h6">Episodes</MudText>
+        <span class="count-badge">@_page.Total</span>
+    </div>
+    @if (_page.Total > _page.Rows.Count)
+    {
+        <MudText Typo="Typo.body2" Class="muted mb-2">Showing the first @_page.Rows.Count of @_page.Total.</MudText>
+    }
+    <MudTable Items="_page.Rows" Hover="true" Elevation="0" Class="surface-card" RowsPerPage="50" Breakpoint="Breakpoint.Sm">
+        <HeaderContent>
+            <MudTh>Episode</MudTh>
+            <MudTh Style="width: 14rem;">Podcast</MudTh>
+            @if (_state is null)
+            {
+                <MudTh Style="width: 14rem;">State</MudTh>
+            }
+            <MudTh Style="width: 10rem;">Changed</MudTh>
+            <MudTh Style="width: 6rem;">Attempts</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Episode">
+                <a href="@($"episodes/{context.Id}")" class="card-title-link"><MudText Typo="Typo.body2" Style="font-weight: 550;">@context.Title</MudText></a>
+                @if (context.PrioritisedAt is not null)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Primary" Class="d-block">Do this next, asked @Display.LocalTime(context.PrioritisedAt)</MudText>
+                }
+                @if (context.NextAttemptAt is not null)
+                {
+                    <MudText Typo="Typo.caption" Class="muted d-block">Next try @Display.LocalTime(context.NextAttemptAt)</MudText>
+                }
+                @if (context.LastError is not null)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Error" Class="d-block">@context.LastError</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="Podcast"><a href="@($"podcasts/{context.PodcastId}")" class="card-title-link"><MudText Typo="Typo.body2" Class="muted">@context.Podcast</MudText></a></MudTd>
+            @if (_state is null)
+            {
+                <MudTd DataLabel="State"><EpisodeStateChip State="context.State" /></MudTd>
+            }
+            <MudTd DataLabel="Changed"><MudText Typo="Typo.body2" Class="muted">@Display.LocalTime(context.UpdatedAt)</MudText></MudTd>
+            <MudTd DataLabel="Attempts"><MudText Typo="Typo.body2" Class="muted">@context.Attempts</MudText></MudTd>
+        </RowTemplate>
+        <PagerContent>
+            @if (_page.Rows.Count > 50)
+            {
+                <MudTablePager PageSizeOptions="@(new[] { 50, 100, 250, 500 })" />
+            }
+        </PagerContent>
+    </MudTable>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "state")]
+    public string? StateQuery { get; set; }
+
+    private EpisodeState? _state;
+    private EpisodeStatePage _page = new([], 0);
+    private IReadOnlyList<(EpisodeState State, int Count)> _counts = [];
+    private List<BreadcrumbItem> _breadcrumbs = [];
+    private bool _loading = true;
+    private string? _error;
+
+    private string Heading => _state is { } s ? Display.StateLabel(s) : "All episodes";
+
+    protected override Task OnParametersSetAsync()
+    {
+        _state = EpisodeStateParameter.Parse(StateQuery);
+        _breadcrumbs = [new("Status", "status"), new(Heading, null, disabled: true)];
+        _loading = true;
+        return LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _counts = await EpisodeStateList.CountAsync(db, CancellationToken.None);
+            _page = await EpisodeStateList.LoadAsync(db, _state, EpisodeStateList.MaxRows, CancellationToken.None);
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = Logger.LoadFailed(ex, "these episodes");
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}
