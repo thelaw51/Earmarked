@@ -29,10 +29,12 @@ Most podcasts publish no transcript, so most episodes go through speech-to-text.
 
 | Project | Contents |
 |---|---|
-| `src/PodcastBookRecs.Core` | EF Core model and migrations (`Data/`), feed parsing (`Feeds/`), transcript parsing (`Transcripts/`), pipeline services (`Pipeline/`), user admin (`Accounts/`), shared config, logging and Identity settings (`Configuration/`), backend contracts (`Backends/`), the transcription and extraction interfaces (`Transcription/`, `Extraction/`, which also holds the versioned prompts and the windowing, quote-matching and merging helpers), the book catalogue interface and matching rules (`BookLookup/`), ranking (`Books/`) and their adapters (`Providers/`), ffmpeg chunking (`Audio/`), the private-address guard (`Net/`) |
-| `src/PodcastBookRecs.Worker` | Hosts the pipeline: `DatabaseMigrator` runs first, then `PipelineService` runs its loops (UI commands every 5 s, due feed polls every minute, transcript fetching, heartbeat, and transcription, extraction and book matching when their providers are set; without extraction, `PriorityRelease`). `BackendStatusPublisher` writes backend health rows every 30 s. |
-| `src/PodcastBookRecs.Web` | Blazor Server UI |
+| `src/PodcastBookRecs.Core` | EF Core model and migrations (`Data/`), feed parsing (`Feeds/`), transcript parsing (`Transcripts/`), pipeline services (`Pipeline/`), user admin (`Accounts/`), shared config, logging and Identity settings (`Configuration/`), backend contracts (`Backends/`), the transcription and extraction interfaces (`Transcription/`, `Extraction/`, which also holds the versioned prompts and the windowing, quote-matching and merging helpers), the book catalogue interface and matching rules (`BookLookup/`), ranking, the book list query and the review backlog and actions (`Books/`), and their adapters (`Providers/`), ffmpeg chunking (`Audio/`), the private-address guard (`Net/`) |
+| `src/PodcastBookRecs.Worker` | Hosts the pipeline: `DatabaseMigrator` runs first, then `PipelineService` runs its loops (UI commands every 5 s, due feed polls every minute, transcript fetching, heartbeat, and transcription, extraction and book matching when their providers are set; without extraction, `PriorityRelease`; with book lookup, `CatalogSearchRunner` every 1 s). `BackendStatusPublisher` writes backend health rows every 30 s. |
+| `src/PodcastBookRecs.Web` | Blazor Server UI: pages and shared components (`Components/`), and the services behind them (`Services/`: list parameters, exports, transcript links, display helpers, the `users` commands) |
 | `tests/PodcastBookRecs.Tests` | Unit and integration tests |
+| `docker/` | `entrypoint.sh`, which starts `worker` or `web`, or runs `users` |
+| `mac/` | `setup.sh`, the launchd plist templates and `whisper-watchdog.sh` for the transcription Mac |
 
 The UI and the Worker never call each other. They share only the SQLite database: the UI writes `WorkerCommands` rows that the Worker polls, and the Worker writes `WorkerStatus` heartbeats that the UI reads.
 
