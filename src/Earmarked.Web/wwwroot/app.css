@@ -856,6 +856,20 @@ a.timestamp-link:focus-visible {
     text-align: right;
 }
 
+/* A bar row on the Status page opens the list of episodes in that state. */
+a.bar-row {
+    border-radius: var(--mud-default-borderradius);
+    color: inherit;
+    margin-inline: -0.4rem;
+    padding: 0.15rem 0.4rem;
+    text-decoration: none;
+}
+
+a.bar-row:hover {
+    background: var(--mud-palette-action-default-hover);
+}
+
+a.bar-row:focus-visible,
 .state-pick:focus-visible {
     outline: 2px solid var(--mud-palette-primary);
     outline-offset: 2px;

@@ -1,5 +1,6 @@
 @page "/status"
 @using Earmarked.Core.Configuration
+@using Earmarked.Core.Pipeline
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject TimeProvider Time
 @inject ILogger<Status> Logger
@@ -66,16 +67,42 @@ else
                 @{ var max = _counts.Count == 0 ? 1 : _counts.Max(c => c.Count); }
                 @foreach (var (state, count) in _counts)
                 {
-                    <div class="bar-row">
+                    <a class="bar-row" href="@EpisodeStateParameter.Link(state)" aria-label="@($"{count} {Display.StateLabel(state)}: show these episodes")">
                         <EpisodeStateChip State="state" />
                         <div class="bar-track mud-@(Display.StateColor(state).ToString().ToLowerInvariant())-text">
                             <div class="bar-fill" style="width: @(Math.Max(2, count * 100 / max))%;"></div>
                         </div>
                         <span class="bar-count">@count</span>
-                    </div>
+                    </a>
+                }
+                @if (_counts.Count > 0)
+                {
+                    <MudText Typo="Typo.caption" Class="muted d-block mt-2">Pick a row to see its episodes.</MudText>
                 }
             </div>
         </MudItem>
+        @if (_working.Count > 0)
+        {
+            <MudItem xs="12">
+                <div class="section-title mt-2">
+                    <MudText Typo="Typo.h6">Working on now</MudText>
+                    <span class="count-badge">@_working.Count</span>
+                </div>
+                <div class="surface-card">
+                    @foreach (var episode in _working)
+                    {
+                        <div class="backend-row">
+                            <EpisodeStateChip State="episode.State" />
+                            <div class="flex-grow-1" style="min-width: 0;">
+                                <a href="@($"episodes/{episode.Id}")" class="card-title-link"><MudText Typo="Typo.subtitle2">@episode.Title</MudText></a>
+                                <MudText Typo="Typo.caption" Class="muted d-block">@episode.Podcast</MudText>
+                            </div>
+                            <MudText Typo="Typo.caption" Class="muted">since @Display.LocalTime(episode.UpdatedAt)</MudText>
+                        </div>
+                    }
+                </div>
+            </MudItem>
+        }
         <MudItem xs="12">
             <div class="section-title mt-2">
                 <MudText Typo="Typo.h6">Backends</MudText>
@@ -123,9 +150,13 @@ else
 @code {
     private WorkerStatus? _worker;
     private List<WorkerStatus> _backends = [];
-    private List<(EpisodeState State, int Count)> _counts = [];
+    private IReadOnlyList<(EpisodeState State, int Count)> _counts = [];
+    private List<EpisodeStateRow> _working = [];
     private int _pendingCommands;
     private bool _loading = true;
+
+    /// <summary>The Worker runs one transcription and one extraction at a time, so more than this means stuck claims.</summary>
+    private const int WorkingLimit = 5;
     private string? _error;
 
     protected override Task OnInitializedAsync() => LoadAsync();
@@ -138,10 +169,12 @@ else
             var statuses = await db.WorkerStatuses.AsNoTracking().OrderBy(s => s.Name).ToListAsync();
             _worker = statuses.SingleOrDefault(s => s.Name == WorkerStatusNames.Worker);
             _backends = statuses.Where(s => s.Name != WorkerStatusNames.Worker).ToList();
-            _counts = (await db.Episodes.GroupBy(e => e.State).Select(g => new { g.Key, Count = g.Count() }).ToListAsync())
-                .OrderBy(x => x.Key)
-                .Select(x => (x.Key, x.Count))
-                .ToList();
+            _counts = await EpisodeStateList.CountAsync(db, CancellationToken.None);
+            _working = [];
+            foreach (var busy in new[] { EpisodeState.Transcribing, EpisodeState.Extracting })
+            {
+                _working.AddRange((await EpisodeStateList.LoadAsync(db, busy, WorkingLimit, CancellationToken.None)).Rows);
+            }
             _pendingCommands = await db.WorkerCommands.CountAsync(c => c.CompletedAt == null);
             _error = null;
         }
