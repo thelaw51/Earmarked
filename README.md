@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/thelaw51/PodcastBookRecs/actions/workflows/ci.yml/badge.svg)](https://github.com/thelaw51/PodcastBookRecs/actions/workflows/ci.yml)
 
-A self-hosted tracker for books mentioned on podcasts. It watches the feeds you choose, gets a transcript for each episode, pulls out the books people mention, matches them to real books in [Open Library](https://openlibrary.org), and ranks them by how many different shows and episodes bring them up.
+A self-hosted tracker for books mentioned on podcasts. It watches the feeds you choose, gets a transcript for each episode, pulls out the books people mention, matches them to real books in [Open Library](https://openlibrary.org) (and, if you turn them on, Hardcover and Apple Books), and ranks them by how many different shows and episodes bring them up.
 
 It runs as two containers from one image: a **Worker** that polls feeds and processes episodes, and a **Blazor Server UI**. They share a SQLite database on the `/data` volume.
 
@@ -25,7 +25,7 @@ Most podcasts don't publish transcripts, so most episodes go through speech-to-t
 4. An episode with a `<podcast:transcript>` link is fetched in the best available format: VTT, then SRT, then JSON, then HTML, then plain text. A dead or unparseable link moves on to the next one. Network errors retry with exponential backoff, up to `Polling:MaxAttempts`.
 5. Episodes with no usable transcript are transcribed, one at a time, newest first, if `Transcription:Provider` is set (see [Transcription in the Worker](#transcription-in-the-worker)). Shows that have published transcripts before get a grace period first, in case one turns up late.
 6. Episodes with a transcript are searched for book mentions, one at a time, newest first, if `Extraction:Provider` is set (see [Book extraction](#book-extraction)). Extraction runs alongside transcription, unless `Extraction:WaitForTranscription` is on.
-7. Each book mention is looked up in Open Library, and mentions of the same book from any episode point at one book (see [Matching books in Open Library](#matching-books-in-open-library)). The *Books* page ranks them.
+7. Each book mention is looked up in Open Library, then in any [fallback catalogues](#fallback-catalogues), and mentions of the same book from any episode point at one book (see [Matching books in Open Library](#matching-books-in-open-library)). The *Books* page ranks them.
 
 ### Moving an episode up the queue
 
@@ -50,12 +50,13 @@ Copy [`config.example.json`](config.example.json) to `/path/to/podcastbookrecs/c
 
 ### 2. Create the stack
 
-Paste [`docker-compose.yml`](docker-compose.yml) into a new Portainer stack and replace the `/path/to/...` host paths. Two stack environment variables are optional:
+Paste [`docker-compose.yml`](docker-compose.yml) into a new Portainer stack and replace the `/path/to/...` host paths. The Worker's `/podcasts` mount (an Audiobookshelf podcast library, read-only) isn't used yet, so you can point it anywhere or remove it. Three stack environment variables are optional:
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `PBR_PORT` | `8742` | Host port for the UI |
 | `PBR_TAG` | `latest` | Image tag both containers run |
+| `PBR_HARDCOVER_TOKEN` | none | Hardcover API token, only if `Hardcover` is in `BookLookup:Fallbacks`. Also uncomment the `PBR_Hardcover__Token` line under the worker. See [Fallback catalogues](#fallback-catalogues). |
 
 The UI is then at `http://<docker-host>:8742`.
 
@@ -66,7 +67,7 @@ Nothing updates automatically. To update:
 1. Back up the `data` folder. A new version may migrate the database, and migrations only go forwards.
 2. Open the stack in Portainer, tick **Re-pull image**, and click **Update the stack**. Always update the whole stack, not one container: the UI assumes both containers run the same build.
 
-Every CI build is also tagged `sha-<first 7 characters of the commit>`. To roll back, set `PBR_TAG` to an earlier build's tag (for example `sha-1a2b3c4`) and update the stack again. The tags are listed on the package page on GitHub. Both containers read the same variable, so they never run different versions.
+Every image CI publishes (builds of `main` and of `v*` tags) is also tagged `sha-<first 7 characters of the commit>`. To roll back, set `PBR_TAG` to an earlier build's tag (for example `sha-1a2b3c4`) and update the stack again. The tags are listed on the package page on GitHub. Both containers read the same variable, so they never run different versions.
 
 If the version you're leaving had added a migration, an older build won't understand the newer database. Stop the stack, restore the `data` backup you took before updating, then start the older tag.
 
@@ -374,10 +375,12 @@ Only the Worker applies migrations, at startup. The UI shows a waiting message u
 
 | Project | Contents |
 |---|---|
-| `src/PodcastBookRecs.Core` | EF Core model and migrations, feed and transcript parsing, pipeline services, the transcription and extraction interfaces and their providers, the extraction prompt, ffmpeg chunking |
-| `src/PodcastBookRecs.Worker` | Background loops: commands from the UI, feed polling, transcript fetching, transcription, book extraction, heartbeat, backend status |
-| `src/PodcastBookRecs.Web` | Blazor Server UI built with MudBlazor |
+| `src/PodcastBookRecs.Core` | EF Core model and migrations, feed and transcript parsing, pipeline services, the transcription, extraction and book catalogue interfaces and their providers, the extraction prompt, matching rules, ranking and review, user accounts, ffmpeg chunking |
+| `src/PodcastBookRecs.Worker` | Background loops: commands from the UI, feed polling, transcript fetching, transcription, book extraction, book matching, review-page catalogue searches, heartbeat, backend status |
+| `src/PodcastBookRecs.Web` | Blazor Server UI built with MudBlazor, the exports and the `users` command |
 | `tests/PodcastBookRecs.Tests` | xUnit v3 tests with small invented fixtures |
+| `docker/` | The image's entrypoint |
+| `mac/` | Setup script, launchd agents and watchdog for the [transcription Mac](#transcription-server-on-a-mac) |
 
 The UI asks the Worker to do things ("poll now", "retry episode", "re-run book extraction") by inserting rows into a `WorkerCommands` table, which the Worker checks every 5 seconds.
 
