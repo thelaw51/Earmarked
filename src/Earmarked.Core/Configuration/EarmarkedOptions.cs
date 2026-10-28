@@ -10,7 +10,19 @@ public sealed class PathsOptions
     [Required]
     public string Data { get; set; } = "/data";
 
-    public string DatabaseFile => Path.Combine(Data, "earmarked.db");
+    /// <summary>
+    /// The SQLite file. An install from before the rename keeps using its <c>podcastbookrecs.db</c>
+    /// until that file is renamed, so upgrading never starts an empty database beside the real one.
+    /// </summary>
+    public string DatabaseFile
+    {
+        get
+        {
+            var current = Path.Combine(Data, "earmarked.db");
+            var legacy = Path.Combine(Data, "podcastbookrecs.db");
+            return !File.Exists(current) && File.Exists(legacy) ? legacy : current;
+        }
+    }
     public string KeysDirectory => Path.Combine(Data, "keys");
 }
 

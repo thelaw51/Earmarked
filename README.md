@@ -73,6 +73,15 @@ If the version you're leaving had added a migration, an older build won't unders
 
 Version tags (`v1.2.0`) also publish `1.2.0` and `1.2`.
 
+### Upgrading from PodcastBookRecs
+
+The project used to be called PodcastBookRecs. An install from then keeps working on the new image:
+
+- The database stays `podcastbookrecs.db` until you rename it. To switch, stop the stack and rename `podcastbookrecs.db` to `earmarked.db`, along with its `-wal` and `-shm` files if they exist.
+- `PBR_` environment variables are still read. An `EARMARKED_` variable with the same name wins.
+- Everyone is signed out once, because the sign-in cookie and the data protection application name changed.
+- Authenticator apps keep working. Accounts enrolled after the rename show "Earmarked" as the issuer.
+
 ## Signing in
 
 Every page needs a signed-in user. There is no sign-up page and no "forgot password" email. You create accounts from a shell inside the web container, after the Worker has created the database:

@@ -26,6 +26,9 @@ namespace Earmarked.Core.Configuration;
 public static class ServiceCollectionExtensions
 {
     public const string EnvironmentPrefix = "EARMARKED_";
+
+    /// <summary>The prefix from before the rename, still read so an existing stack keeps its settings.</summary>
+    public const string LegacyEnvironmentPrefix = "PBR_";
     public const string FeedHttpClient = "feeds";
     public const string EnclosureHttpClient = "enclosures";
 
@@ -34,12 +37,16 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Adds <c>config.json</c> from the config directory (<c>/config</c> unless <c>EARMARKED_CONFIG_DIR</c> says otherwise),
     /// then <c>EARMARKED_</c> environment variables on top, e.g. <c>EARMARKED_Polling__IntervalMinutes=30</c>.
+    /// Variables with the old <c>PBR_</c> prefix still apply, below <c>EARMARKED_</c> ones.
     /// </summary>
     public static IConfigurationBuilder AddEarmarkedSources(this IConfigurationBuilder configuration)
     {
-        var configDir = Environment.GetEnvironmentVariable(EnvironmentPrefix + "CONFIG_DIR") ?? "/config";
+        var configDir = Environment.GetEnvironmentVariable(EnvironmentPrefix + "CONFIG_DIR")
+            ?? Environment.GetEnvironmentVariable(LegacyEnvironmentPrefix + "CONFIG_DIR")
+            ?? "/config";
         return configuration
             .AddJsonFile(Path.Combine(Path.GetFullPath(configDir), "config.json"), optional: true, reloadOnChange: false)
+            .AddEnvironmentVariables(LegacyEnvironmentPrefix)
             .AddEnvironmentVariables(EnvironmentPrefix);
     }
 
