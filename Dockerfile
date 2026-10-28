@@ -12,19 +12,19 @@ RUN echo "linux-$([ "$TARGETARCH" = arm64 ] && echo arm64 || echo x64)" > /tmp/r
 # Publish below restores again on purpose: the SDK only adds the package holding blazor.web.js once it can
 # see the .razor files, and those aren't copied yet at this point.
 COPY global.json Directory.Build.props Directory.Packages.props .editorconfig ./
-COPY src/PodcastBookRecs.Core/PodcastBookRecs.Core.csproj src/PodcastBookRecs.Core/
-COPY src/PodcastBookRecs.Worker/PodcastBookRecs.Worker.csproj src/PodcastBookRecs.Worker/
-COPY src/PodcastBookRecs.Web/PodcastBookRecs.Web.csproj src/PodcastBookRecs.Web/
-RUN dotnet restore src/PodcastBookRecs.Worker -r $(cat /tmp/rid) && dotnet restore src/PodcastBookRecs.Web -r $(cat /tmp/rid)
+COPY src/Earmarked.Core/Earmarked.Core.csproj src/Earmarked.Core/
+COPY src/Earmarked.Worker/Earmarked.Worker.csproj src/Earmarked.Worker/
+COPY src/Earmarked.Web/Earmarked.Web.csproj src/Earmarked.Web/
+RUN dotnet restore src/Earmarked.Worker -r $(cat /tmp/rid) && dotnet restore src/Earmarked.Web -r $(cat /tmp/rid)
 
 COPY src/ src/
 
 # VERSION is only passed for v* tag builds; other builds keep the version in Directory.Build.props.
 ARG VERSION=
 ARG SOURCE_REVISION=
-RUN dotnet publish src/PodcastBookRecs.Worker -c Release -r $(cat /tmp/rid) --self-contained false -o /app/worker \
+RUN dotnet publish src/Earmarked.Worker -c Release -r $(cat /tmp/rid) --self-contained false -o /app/worker \
         ${VERSION:+-p:Version=$VERSION} -p:SourceRevisionId=$SOURCE_REVISION \
- && dotnet publish src/PodcastBookRecs.Web -c Release -r $(cat /tmp/rid) --self-contained false -o /app/web \
+ && dotnet publish src/Earmarked.Web -c Release -r $(cat /tmp/rid) --self-contained false -o /app/web \
         ${VERSION:+-p:Version=$VERSION} -p:SourceRevisionId=$SOURCE_REVISION
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
@@ -44,8 +44,8 @@ COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 USER $APP_UID
 
 ENV ASPNETCORE_HTTP_PORTS=8080 \
-    PBR_CONFIG_DIR=/config \
-    PBR_Paths__Data=/data
+    EARMARKED_CONFIG_DIR=/config \
+    EARMARKED_Paths__Data=/data
 EXPOSE 8080
 
 ENTRYPOINT ["entrypoint.sh"]

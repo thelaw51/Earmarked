@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Installs whisper.cpp's server on an Apple Silicon Mac as a launchd agent for PodcastBookRecs.
+# Installs whisper.cpp's server on an Apple Silicon Mac as a launchd agent for Earmarked.
 # Safe to re-run: it reinstalls the agent with the current settings and skips a model that is already verified.
 #
 # Usage: mac/setup.sh --host <this Mac's LAN IP> [--port 8178] [--model large-v3-turbo]
 set -euo pipefail
 
-LABEL="com.podcastbookrecs.whisper-server"
-WATCHDOG_LABEL="com.podcastbookrecs.whisper-watchdog"
+LABEL="com.earmarked.whisper-server"
+WATCHDOG_LABEL="com.earmarked.whisper-watchdog"
 HOST=""
 PORT="8178"
 MODEL="large-v3-turbo"

@@ -1,0 +1,157 @@
+@page "/status"
+@using Earmarked.Core.Configuration
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject TimeProvider Time
+@inject ILogger<Status> Logger
+
+<PageTitle>Status</PageTitle>
+
+<PageHeader Eyebrow="System" Title="Status" Subtitle="Whether the Worker and its backends are up, and where every episode is in the pipeline.">
+    <Actions>
+        <MudTooltip Text="Refresh">
+            <MudIconButton Icon="@Icons.Material.Rounded.Refresh" OnClick="LoadAsync" aria-label="Refresh" />
+        </MudTooltip>
+    </Actions>
+</PageHeader>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_error</MudAlert>
+}
+else if (_loading)
+{
+    <LoadingState Layout="LoadingState.LoadingLayout.Cards" Count="3" />
+}
+else
+{
+    var now = Time.GetUtcNow().UtcDateTime;
+    var workerStale = _worker is not null && now - _worker.UpdatedAt > WorkerStatusNames.StaleAfter;
+    <MudGrid Spacing="3" Class="stagger">
+        <MudItem xs="12" md="5">
+            <div class="surface-card status-card">
+                <div class="status-hero">
+                    <span class="status-light @(_worker is null ? "status-light-warn" : workerStale ? "status-light-bad" : "status-light-ok")"></span>
+                    <div>
+                        <MudText Typo="Typo.overline" Class="muted d-block">Worker</MudText>
+                        <MudText Typo="Typo.h5">@(_worker is null ? "No heartbeat yet" : workerStale ? "Not responding" : "Running")</MudText>
+                    </div>
+                </div>
+                @if (_worker is null)
+                {
+                    <MudText Typo="Typo.body2" Class="muted mb-3">Is the Worker container running?</MudText>
+                }
+                <dl class="kv">
+                    @if (_worker is not null)
+                    {
+                        <dt>Last heartbeat</dt>
+                        <dd>@Display.LocalTime(_worker.UpdatedAt)</dd>
+                        <dt>Worker version</dt>
+                        <dd>@_worker.Version</dd>
+                    }
+                    <dt>UI version</dt>
+                    <dd>@AppVersion.Display</dd>
+                    <dt>Commands waiting</dt>
+                    <dd>@_pendingCommands</dd>
+                </dl>
+            </div>
+        </MudItem>
+        <MudItem xs="12" md="7">
+            <div class="surface-card status-card">
+                <MudText Typo="Typo.overline" Class="muted d-block">Pipeline</MudText>
+                <MudText Typo="Typo.h5" Class="mb-4">@_counts.Sum(c => c.Count) episode(s)</MudText>
+                @if (_counts.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="muted">No episodes yet.</MudText>
+                }
+                @{ var max = _counts.Count == 0 ? 1 : _counts.Max(c => c.Count); }
+                @foreach (var (state, count) in _counts)
+                {
+                    <div class="bar-row">
+                        <EpisodeStateChip State="state" />
+                        <div class="bar-track mud-@(Display.StateColor(state).ToString().ToLowerInvariant())-text">
+                            <div class="bar-fill" style="width: @(Math.Max(2, count * 100 / max))%;"></div>
+                        </div>
+                        <span class="bar-count">@count</span>
+                    </div>
+                }
+            </div>
+        </MudItem>
+        <MudItem xs="12">
+            <div class="section-title mt-2">
+                <MudText Typo="Typo.h6">Backends</MudText>
+                <span class="count-badge">@_backends.Count</span>
+            </div>
+            @if (_backends.Count == 0)
+            {
+                <EmptyState Title="No backends configured" Icon="@Icons.Material.Rounded.Hub">
+                    Set a <code>Transcription:Provider</code> to enable speech-to-text.
+                </EmptyState>
+            }
+            else
+            {
+                <div class="surface-card">
+                    @foreach (var backend in _backends)
+                    {
+                        var stale = now - backend.UpdatedAt > WorkerStatusNames.StaleAfter;
+                        <div class="backend-row">
+                            <span class="status-light @(stale ? "status-light-warn" : backend.Healthy ? "status-light-ok" : "status-light-bad")"></span>
+                            <div class="flex-grow-1" style="min-width: 0;">
+                                <MudText Typo="Typo.subtitle2">@backend.Name</MudText>
+                                @if (!string.IsNullOrEmpty(backend.Detail))
+                                {
+                                    <MudText Typo="Typo.caption" Class="muted d-block">@backend.Detail</MudText>
+                                }
+                            </div>
+                            <div class="d-flex flex-column align-end">
+                                <MudText Typo="Typo.body2" Color="@(stale ? Color.Warning : backend.Healthy ? Color.Success : Color.Error)" Style="font-weight: 600;">
+                                    @(stale ? "No recent check" : backend.Healthy ? "Reachable" : "Unreachable")
+                                </MudText>
+                                <MudText Typo="Typo.caption" Class="muted">checked @Display.LocalTime(backend.UpdatedAt)</MudText>
+                            </div>
+                        </div>
+                    }
+                </div>
+                @if (_backends.Any(b => now - b.UpdatedAt > WorkerStatusNames.StaleAfter))
+                {
+                    <MudText Typo="Typo.caption" Class="muted d-block mt-2">"No recent check" usually means the Worker isn't running.</MudText>
+                }
+            }
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private WorkerStatus? _worker;
+    private List<WorkerStatus> _backends = [];
+    private List<(EpisodeState State, int Count)> _counts = [];
+    private int _pendingCommands;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var statuses = await db.WorkerStatuses.AsNoTracking().OrderBy(s => s.Name).ToListAsync();
+            _worker = statuses.SingleOrDefault(s => s.Name == WorkerStatusNames.Worker);
+            _backends = statuses.Where(s => s.Name != WorkerStatusNames.Worker).ToList();
+            _counts = (await db.Episodes.GroupBy(e => e.State).Select(g => new { g.Key, Count = g.Count() }).ToListAsync())
+                .OrderBy(x => x.Key)
+                .Select(x => (x.Key, x.Count))
+                .ToList();
+            _pendingCommands = await db.WorkerCommands.CountAsync(c => c.CompletedAt == null);
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = Logger.LoadFailed(ex, "status");
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

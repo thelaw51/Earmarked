@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Restarts whisper-server when it answers but rejects all audio. After a GPU out-of-memory error, whisper.cpp's Metal
 # backend stays broken and every request gets HTTP 500, but the process keeps running, so launchd's KeepAlive never
-# restarts it. launchd runs this every few minutes (com.podcastbookrecs.whisper-watchdog); setup.sh installs both.
+# restarts it. launchd runs this every few minutes (com.earmarked.whisper-watchdog); setup.sh installs both.
 #
-# Each run sends a one-second clip with the same form fields PodcastBookRecs sends. Two 500s in a row restart the
+# Each run sends a one-second clip with the same form fields Earmarked sends. Two 500s in a row restart the
 # server. Anything else changes nothing: a refused connection is KeepAlive's job, and a timeout means the server is
 # busy on a real chunk (it handles one request at a time, so the clip waits behind it).
 #
