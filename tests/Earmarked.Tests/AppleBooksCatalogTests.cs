@@ -127,6 +127,46 @@ public sealed class AppleBooksCatalogTests
         Assert.Equal(HealthStatus.Unhealthy, (await check.CheckHealthAsync(new HealthCheckContext(), Ct)).Status);
     }
 
+    [Fact]
+    public void Reads_a_lookup_as_plain_text_with_genres_and_rating()
+    {
+        var details = AppleBooksCatalog.ParseLookup(Fixtures.Read("applebooks-lookup.json"), "900000001");
+
+        Assert.NotNull(details);
+        Assert.Equal("A year of weather notes.\n\nKept on a small island.", details.Description);
+        Assert.Equal(["Nature", "Travel & Adventure"], details.Subjects);
+        Assert.Equal(4.5, details.Rating);
+        Assert.Equal(1234, details.RatingCount);
+        Assert.Null(details.PageCount);
+    }
+
+    [Fact]
+    public void A_lookup_without_the_book_is_null() =>
+        Assert.Null(AppleBooksCatalog.ParseLookup("""{"resultCount":0,"results":[]}""", "900000001"));
+
+    [Fact]
+    public void A_rating_with_no_ratings_behind_it_is_dropped()
+    {
+        var details = AppleBooksCatalog.ParseLookup("""{"results":[{"trackId":5,"averageUserRating":5,"userRatingCount":0}]}""", "5");
+
+        Assert.Null(details!.Rating);
+        Assert.Null(details.RatingCount);
+    }
+
+    [Fact]
+    public async Task Looks_up_the_track_id_in_the_configured_country()
+    {
+        var handler = new Recorder(HttpStatusCode.OK, Fixtures.Read("applebooks-lookup.json"));
+
+        await Catalog(handler, "gb").GetDetailsAsync("900000001", Ct);
+
+        Assert.Equal("?id=900000001&country=gb", handler.Uris.Single().Query);
+    }
+
+    [Fact]
+    public async Task Refuses_an_id_that_is_not_a_track_id() =>
+        await Assert.ThrowsAsync<CatalogLookupFailedException>(() => Catalog(new Recorder(HttpStatusCode.OK, "{}")).GetDetailsAsync("1&term=x", Ct));
+
     private static AppleBooksCatalog Catalog(HttpMessageHandler handler, string country = "us") =>
         new(new SingleClientFactory(new HttpClient(handler) { BaseAddress = new Uri("https://itunes.example.test/") }),
             Options.Create(new AppleBooksOptions { Country = country }), TimeProvider.System) { RequestGap = TimeSpan.Zero };

@@ -53,6 +53,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityUser
             b.HasIndex(e => new { e.PodcastFeedId, e.IdentityKey }).IsUnique();
             b.HasIndex(e => new { e.State, e.NextAttemptAt });
             b.Property(e => e.TranscriptLinks).HasConversion(JsonConverter<List<TranscriptLink>>(), JsonComparer<List<TranscriptLink>>());
+            b.Property(e => e.Description).HasMaxLength(Episode.MaxDescriptionLength);
             b.HasOne(e => e.Transcript).WithOne(t => t.Episode).HasForeignKey<Transcript>(t => t.EpisodeId).OnDelete(DeleteBehavior.Cascade);
         });
 
@@ -86,6 +87,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityUser
             b.Property(k => k.Authors).HasMaxLength(Book.MaxAuthorsLength);
             b.Property(k => k.InfoUrl).HasMaxLength(Book.MaxUrlLength);
             b.Property(k => k.CoverUrl).HasMaxLength(Book.MaxUrlLength);
+            b.Property(k => k.Description).HasMaxLength(Book.MaxDescriptionLength);
+            b.Property(k => k.Subjects).HasConversion(JsonConverter<List<string>>(), JsonComparer<List<string>>());
+            b.HasIndex(k => k.DetailsCheckedAt);
         });
 
         builder.Entity<ReviewDecision>(b =>

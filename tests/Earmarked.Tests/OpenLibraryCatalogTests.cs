@@ -130,6 +130,55 @@ public class OpenLibraryCatalogTests
         Assert.Equal(2, handler.Uris.Count);
     }
 
+    [Fact]
+    public void Reads_a_work_description_as_plain_text_and_skips_bookkeeping_subjects()
+    {
+        var details = OpenLibraryCatalog.ParseWork(Fixtures.Read("openlibrary-work.json"));
+
+        Assert.Equal("A year of weather notes kept on a small island.\n\nSee the companion volume and the notes [1/2].", details.Description);
+        Assert.Equal(["Lighthouses", "Weather", "Islands"], details.Subjects);
+        Assert.Null(details.PageCount);
+        Assert.Null(details.Rating);
+    }
+
+    [Fact]
+    public void A_work_with_a_plain_string_description_or_none_parses()
+    {
+        Assert.Equal("Just text.", OpenLibraryCatalog.ParseWork("""{"description":"Just text."}""").Description);
+        Assert.Null(OpenLibraryCatalog.ParseWork("""{"title":"No description"}""").Description);
+    }
+
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("[]")]
+    public void Rejects_a_body_that_is_not_a_work(string body) =>
+        Assert.Throws<CatalogLookupFailedException>(() => OpenLibraryCatalog.ParseWork(body));
+
+    [Fact]
+    public async Task Asks_for_the_work_record_by_its_id()
+    {
+        var handler = new Recorder(HttpStatusCode.OK, Fixtures.Read("openlibrary-work.json"));
+
+        await Catalog(handler).GetDetailsAsync("OL1001W", Ct);
+
+        Assert.Equal("/works/OL1001W.json", handler.Uris.Single().AbsolutePath);
+    }
+
+    [Fact]
+    public async Task A_work_that_is_gone_has_no_details() =>
+        Assert.Null(await Catalog(new Recorder(HttpStatusCode.NotFound, "")).GetDetailsAsync("OL1001W", Ct));
+
+    [Theory]
+    [InlineData("../authors/OL1A")]
+    [InlineData("OL1001W.json?x=1")]
+    public async Task Refuses_an_id_that_is_not_a_work_id(string id)
+    {
+        var handler = new Recorder(HttpStatusCode.OK, "{}");
+
+        await Assert.ThrowsAsync<CatalogLookupFailedException>(() => Catalog(handler).GetDetailsAsync(id, Ct));
+        Assert.Empty(handler.Uris);
+    }
+
     private static OpenLibraryCatalog Catalog(HttpMessageHandler handler) =>
         new(new SingleClientFactory(new HttpClient(handler) { BaseAddress = new Uri("https://catalog.test/") }), TimeProvider.System) { RequestGap = TimeSpan.Zero };
 

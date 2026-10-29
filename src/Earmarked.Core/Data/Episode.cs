@@ -3,6 +3,8 @@ namespace Earmarked.Core.Data;
 /// <summary>One item from a podcast feed, tracked as a job moving through <see cref="EpisodeState"/>.</summary>
 public class Episode
 {
+    public const int MaxDescriptionLength = 8000;
+
     public Guid Id { get; set; } = Guid.CreateVersion7();
     public Guid PodcastFeedId { get; set; }
     public PodcastFeed PodcastFeed { get; set; } = null!;
@@ -18,6 +20,12 @@ public class Episode
     public string? EnclosureType { get; set; }
     public long? EnclosureLength { get; set; }
     public string? Link { get; set; }
+
+    /// <summary>
+    /// The show notes from the feed, as plain text (<see cref="Text.PlainText"/>). Feed content, so untrusted: shown only
+    /// as text. Filled for episodes stored before notes were kept on the feed's next full download.
+    /// </summary>
+    public string? Description { get; set; }
 
     public List<TranscriptLink> TranscriptLinks { get; set; } = [];
 

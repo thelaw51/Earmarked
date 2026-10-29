@@ -1,3 +1,5 @@
+using Earmarked.Core.BookLookup;
+
 namespace Earmarked.Core.Data;
 
 /// <summary>
@@ -9,6 +11,7 @@ public class Book
     public const int MaxTitleLength = 300;
     public const int MaxAuthorsLength = 500;
     public const int MaxUrlLength = 300;
+    public const int MaxDescriptionLength = 4000;
 
     public Guid Id { get; set; } = Guid.CreateVersion7();
 
@@ -36,6 +39,26 @@ public class Book
     public string? InfoUrl { get; set; }
     public string? CoverUrl { get; set; }
     public DateTime CreatedAt { get; set; }
+
+    /// <summary>The catalogue's description of the book, as plain text. Null until fetched, or when it has none.</summary>
+    public string? Description { get; set; }
+
+    /// <summary>Subjects or genres the catalogue files the book under, at most <see cref="BookDetails.MaxSubjects"/>.</summary>
+    public List<string> Subjects { get; set; } = [];
+    public int? PageCount { get; set; }
+
+    /// <summary>The catalogue's average rating out of 5, from <see cref="RatingCount"/> of its users.</summary>
+    public double? Rating { get; set; }
+    public int? RatingCount { get; set; }
+
+    /// <summary>
+    /// When <c>BookDetailsFetcher</c> last asked the catalogue for the fields above. Null means never, so the book is
+    /// due; that covers books found before details were fetched as well as new ones.
+    /// </summary>
+    public DateTime? DetailsCheckedAt { get; set; }
+
+    /// <summary>The last ask failed, so it is tried again after <c>BookDetailsFetcher.RetryFailedAfter</c>.</summary>
+    public bool DetailsFailed { get; set; }
 
     public List<BookMention> Mentions { get; set; } = [];
 }
