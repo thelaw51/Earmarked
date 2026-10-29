@@ -210,6 +210,52 @@ public sealed class HardcoverCatalogTests
         Assert.DoesNotContain(provider.GetRequiredService<BookCatalogChain>().All, c => c.Provider == BookLookupProviders.Hardcover);
     }
 
+    [Fact]
+    public void Reads_book_details_with_genres_pages_and_rating()
+    {
+        var details = HardcoverCatalog.ParseDetails(Fixtures.Read("hardcover-book.json"));
+
+        Assert.NotNull(details);
+        Assert.Equal("A year of weather notes\nkept on a small island.", details.Description);
+        Assert.Equal(["Nonfiction", "Nature"], details.Subjects);
+        Assert.Equal(288, details.PageCount);
+        Assert.Equal(4.12, details.Rating);
+        Assert.Equal(57, details.RatingCount);
+    }
+
+    [Fact]
+    public void Details_for_a_missing_book_are_null() =>
+        Assert.Null(HardcoverCatalog.ParseDetails("""{"data":{"books":[]}}"""));
+
+    [Fact]
+    public void A_graphql_error_on_details_fails_with_only_its_code()
+    {
+        var ex = Assert.Throws<CatalogLookupFailedException>(() =>
+            HardcoverCatalog.ParseDetails("""{"errors":[{"message":"secret-value","extensions":{"code":"validation-failed"}}]}"""));
+
+        Assert.Equal("Hardcover returned an error (validation-failed).", ex.Message);
+    }
+
+    [Fact]
+    public async Task Sends_the_id_only_as_a_variable_of_the_fixed_details_query()
+    {
+        var handler = new Recorder(HttpStatusCode.OK, Fixtures.Read("hardcover-book.json"));
+
+        await Catalog(handler).GetDetailsAsync("123", Ct);
+
+        var sent = handler.Requests.Single();
+        Assert.Equal($"Bearer {Token}", sent.Authorization);
+        using var body = JsonDocument.Parse(sent.Body);
+        Assert.Equal(HardcoverCatalog.DetailsQuery, body.RootElement.GetProperty("query").GetString());
+        Assert.Equal(123, body.RootElement.GetProperty("variables").GetProperty("id").GetInt32());
+    }
+
+    [Theory]
+    [InlineData("12a")]
+    [InlineData("99999999999")]
+    public async Task Refuses_an_id_that_is_not_a_book_id(string id) =>
+        await Assert.ThrowsAsync<CatalogLookupFailedException>(() => Catalog(new Recorder(HttpStatusCode.OK, "{}")).GetDetailsAsync(id, Ct));
+
     private static HttpClient Client(HttpMessageHandler handler) => new(handler) { BaseAddress = new Uri("https://graphql.example.test/") };
 
     private static HardcoverCatalog Catalog(HttpMessageHandler handler) =>

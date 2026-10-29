@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using Earmarked.Core.BookLookup;
 using Earmarked.Core.Configuration;
 using Earmarked.Core.Data;
+using Earmarked.Core.Text;
 
 namespace Earmarked.Core.Providers.BookLookup.Hardcover;
 
@@ -16,8 +17,8 @@ namespace Earmarked.Core.Providers.BookLookup.Hardcover;
 /// search term goes only in its variables. Hardcover has one entry per book but its search doesn't return an edition
 /// count, so <see cref="CatalogBook.EditionCount"/> is always null. Requests are spaced at least a second apart,
 /// inside Hardcover's 60 a minute. A rejected token (401) or missing scope (403) fails only the title, so an expired
-/// token never stalls matching; the Status row says what's wrong. Nothing outside this folder knows Hardcover's
-/// URLs or JSON.
+/// token never stalls matching; the Status row says what's wrong. Details are a second fixed query for one book by
+/// its ID. Nothing outside this folder knows Hardcover's URLs or JSON.
 /// </summary>
 public sealed partial class HardcoverCatalog(IHttpClientFactory httpFactory, IOptions<HardcoverOptions> options, TimeProvider time)
     : IBookCatalog, IDisposable
@@ -25,6 +26,8 @@ public sealed partial class HardcoverCatalog(IHttpClientFactory httpFactory, IOp
     public const string HttpClientName = "hardcover";
 
     internal const string Query = """query Search($q: String!, $n: Int!) { search(query: $q, query_type: "Book", per_page: $n, page: 1) { results } }""";
+
+    internal const string DetailsQuery = """query Book($id: Int!) { books(where: {id: {_eq: $id}}, limit: 1) { description pages rating ratings_count cached_tags } }""";
 
     private const int MaxCandidates = 10;
     private const int MaxQueryLength = 200;
@@ -48,12 +51,29 @@ public sealed partial class HardcoverCatalog(IHttpClientFactory httpFactory, IOp
         return Parse(body);
     }
 
+    public async Task<BookDetails?> GetDetailsAsync(string catalogId, CancellationToken cancellationToken)
+    {
+        if (!IdPattern().IsMatch(catalogId) || !int.TryParse(catalogId, NumberStyles.None, CultureInfo.InvariantCulture, out var id))
+        {
+            throw new CatalogLookupFailedException("Not a Hardcover book ID.");
+        }
+
+        var body = await _pacer.RunAsync(
+            () => CatalogHttp.SendAsync(
+                httpFactory.CreateClient(HttpClientName), GraphQLRequest(DetailsQuery, new JsonObject { ["id"] = id }, options.Value.Token), "Hardcover", cancellationToken),
+            cancellationToken);
+        return ParseDetails(body);
+    }
+
     public void Dispose() => _pacer.Dispose();
 
     /// <summary>The search request, used by the health check too. The body is built as JSON, so the term can't change the query.</summary>
-    internal static HttpRequestMessage SearchRequest(string term, int count, string token)
+    internal static HttpRequestMessage SearchRequest(string term, int count, string token) =>
+        GraphQLRequest(Query, new JsonObject { ["q"] = term, ["n"] = count }, token);
+
+    private static HttpRequestMessage GraphQLRequest(string query, JsonObject variables, string token)
     {
-        var body = new JsonObject { ["query"] = Query, ["variables"] = new JsonObject { ["q"] = term, ["n"] = count } };
+        var body = new JsonObject { ["query"] = query, ["variables"] = variables };
         var request = new HttpRequestMessage(HttpMethod.Post, "v1/graphql")
         {
             Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
@@ -74,13 +94,7 @@ public sealed partial class HardcoverCatalog(IHttpClientFactory httpFactory, IOp
         {
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
-            if (root.TryGetProperty("errors", out var errors))
-            {
-                var code = errors.ValueKind == JsonValueKind.Array
-                    ? errors.EnumerateArray().Select(ErrorCodeOrNull).FirstOrDefault(c => c is not null)
-                    : null;
-                throw new CatalogLookupFailedException(code is null ? "Hardcover returned an error." : $"Hardcover returned an error ({code}).");
-            }
+            ThrowIfError(root);
 
             var books = new List<CatalogBook>();
             foreach (var hit in root.GetProperty("data").GetProperty("search").GetProperty("results").GetProperty("hits").EnumerateArray().Take(MaxCandidates))
@@ -120,6 +134,60 @@ public sealed partial class HardcoverCatalog(IHttpClientFactory httpFactory, IOp
 
         static string? String(JsonElement e, string name) =>
             e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(v.GetString()) ? v.GetString()!.Trim() : null;
+    }
+
+    /// <summary>
+    /// Reads a details response: null when Hardcover has no book with the ID. The description is plain text, but
+    /// goes through <see cref="PlainText"/> anyway for the cap and spacing. Genres come from <c>cached_tags</c>, most
+    /// tagged first as Hardcover orders them. A rating needs at least one rating behind it.
+    /// </summary>
+    internal static BookDetails? ParseDetails(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            ThrowIfError(root);
+            var book = root.GetProperty("data").GetProperty("books").EnumerateArray().FirstOrDefault();
+            if (book.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            var genres = book.TryGetProperty("cached_tags", out var tags) && tags.ValueKind == JsonValueKind.Object
+                && tags.TryGetProperty("Genre", out var genre) && genre.ValueKind == JsonValueKind.Array
+                ? genre.EnumerateArray()
+                    .Select(t => t.ValueKind == JsonValueKind.Object && t.TryGetProperty("tag", out var name) && name.ValueKind == JsonValueKind.String ? name.GetString()!.Trim() : "")
+                    .Where(t => t.Length > 0)
+                    .Select(t => CatalogText.Cap(t, BookDetails.MaxSubjectLength))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(BookDetails.MaxSubjects)
+                    .ToList()
+                : [];
+            var pages = book.TryGetProperty("pages", out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetInt32(out var n) && n is > 0 and < 100_000 ? n : (int?)null;
+            var count = book.TryGetProperty("ratings_count", out var c) && c.ValueKind == JsonValueKind.Number && c.TryGetInt32(out var rc) && rc > 0 ? rc : (int?)null;
+            var rating = count is not null && book.TryGetProperty("rating", out var r) && r.ValueKind == JsonValueKind.Number
+                && r.TryGetDouble(out var avg) && avg is > 0 and <= 5 ? avg : (double?)null;
+            var description = book.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null;
+
+            return new BookDetails(PlainText.FromHtml(description, Book.MaxDescriptionLength), genres, pages, rating, rating is null ? null : count);
+        }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
+        {
+            throw new CatalogLookupFailedException("Hardcover returned an answer that isn't the expected JSON.", ex);
+        }
+    }
+
+    /// <summary>A GraphQL error arrives with HTTP 200, and its message can echo the request, so this keeps only a short code.</summary>
+    private static void ThrowIfError(JsonElement root)
+    {
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("errors", out var errors))
+        {
+            var code = errors.ValueKind == JsonValueKind.Array
+                ? errors.EnumerateArray().Select(ErrorCodeOrNull).FirstOrDefault(c => c is not null)
+                : null;
+            throw new CatalogLookupFailedException(code is null ? "Hardcover returned an error." : $"Hardcover returned an error ({code}).");
+        }
     }
 
     /// <summary>The ID as digits, whether Hardcover sends it as a string (it does today) or a number.</summary>

@@ -285,7 +285,15 @@ A fallback only changes titles the primary catalogue can't place; titles that al
 
 ### The book list
 
-The *Books* page ranks every matched book by the number of different podcasts that mentioned it, then the number of episodes, then the most recent mention. The kind of mention (recommended, discussed and so on) doesn't change the order, because the model labels kinds unreliably; the list shows how many episodes recommended each book instead. Each book has its own page with every mention: podcast, episode, time and quote. A mention's time links to that moment in the episode's transcript, which scrolls into view and is highlighted; a transcript without timings links to the episode's list of books instead.
+The *Books* page ranks every matched book by the number of different podcasts that mentioned it, then the number of episodes, then the most recent mention. The kind of mention (recommended, discussed and so on) doesn't change the order, because the model labels kinds unreliably; the list shows how many episodes recommended each book instead.
+
+### The book page
+
+Each book has its own page. The top half comes from the catalogue the book was matched in: its description, subjects or genres, page count and rating, where that catalogue has them. Open Library has a description and subjects but no ratings or page counts; Apple Books has a description, genres and ratings; Hardcover has all four. The Worker fetches these by the book's catalogue ID after matching, one book every 5 seconds, and fills in books found before this existed the same way, so a large library takes a while the first time. A fetch that fails is tried again a day later. These requests share each catalogue's pace with matching, and for Hardcover they count against your account's daily limit like searches do. A book kept as is on the *Review* page has no catalogue, so it has none of this.
+
+The bottom half groups the mentions by podcast, then episode, newest first, with each podcast's artwork, each episode's date and length, and every moment the book came up: the kind of mention, the quote and its time. A mention's time links to that moment in the episode's transcript, which scrolls into view and is highlighted; a transcript without timings links to the episode's list of books instead. *Show notes* opens the episode's notes from the feed, and *In the show notes* marks an episode whose notes name the book (a one-word title needs the author's surname there too). *Episode page* links to the episode on the show's website when the feed gives one without a query string, since private feeds can carry a token in one.
+
+Show notes are kept from `content:encoded`, then `description`, then `itunes:summary`, turned into plain text. Episodes stored before notes were kept get theirs on their feed's next poll: upgrading forgets each feed's `ETag` and `Last-Modified` once, so that poll downloads the whole feed.
 
 Filters above the list narrow it by text in the title or author, by podcast, by the date episodes were published, and to books someone recommended. Podcast and date filters change the numbers: a book's counts and rank then cover only mentions in those podcasts and dates, so "the most-discussed books on one show last year" is one filter away. Text and *Recommended only* hide books without renumbering the rest. The filters are kept in the address (`/books?podcast=…&from=2026-01-01&to=2026-12-31&rec=1&q=…`), so a filtered list can be bookmarked or shared.
 
@@ -301,7 +309,7 @@ The files are built from the same query as the page, at `/books/export.csv`, `/b
 
 ### Pointing at a different catalogue
 
-The matching rules live in `CatalogMatcher` and know nothing about Open Library. Another catalogue (Google Books, say) needs a new adapter under `src/Earmarked.Core/Providers/BookLookup/` that implements `IBookCatalog`, a new name in `BookLookupProviders`, and its registration in `AddEarmarkedBookLookup`; it can then be the `BookLookup:Provider` or one of the `BookLookup:Fallbacks`. Each stored book records the catalogue it came from, and each match the version of the rules (`CatalogMatcher.Version`) that made it; changing the rules and bumping the version re-matches every mention.
+The matching rules live in `CatalogMatcher` and know nothing about Open Library. Another catalogue (Google Books, say) needs a new adapter under `src/Earmarked.Core/Providers/BookLookup/` that implements `IBookCatalog` (a search, and the book page's details by catalogue ID), a new name in `BookLookupProviders`, and its registration in `AddEarmarkedBookLookup`; it can then be the `BookLookup:Provider` or one of the `BookLookup:Fallbacks`. Each stored book records the catalogue it came from, and each match the version of the rules (`CatalogMatcher.Version`) that made it; changing the rules and bumping the version re-matches every mention.
 
 ## Notifications on your phone
 

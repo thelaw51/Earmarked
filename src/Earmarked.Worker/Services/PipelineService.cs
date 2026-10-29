@@ -9,8 +9,8 @@ namespace Earmarked.Worker.Services;
 
 /// <summary>
 /// Runs the Worker's loops side by side: UI commands, scheduled feed polls, transcript fetching, the heartbeat and,
-/// when their providers are configured, transcription, book extraction, book matching, review-page searches and
-/// notifications.
+/// when their providers are configured, transcription, book extraction, book matching, book details, review-page
+/// searches and notifications.
 /// A loop that throws logs the error and carries on after its delay, so one bad feed or a locked database
 /// doesn't stop the others.
 /// </summary>
@@ -26,6 +26,7 @@ internal sealed partial class PipelineService(
     EpisodeTranscriber? transcriber = null,
     EpisodeExtractor? extractor = null,
     MentionMatcher? matcher = null,
+    BookDetailsFetcher? details = null,
     CatalogSearchRunner? searches = null,
     NotificationDispatcher? notifications = null,
     DailySummary? summary = null) : BackgroundService
@@ -63,6 +64,12 @@ internal sealed partial class PipelineService(
             loops.Add(BackendLoop("book matching", null, matcher.ProcessNextAsync, stoppingToken));
         }
 
+        // Spaced out, because it shares each catalogue's pacing with matching.
+        if (details is not null)
+        {
+            loops.Add(BackendLoop("book details", null, details.ProcessNextAsync, stoppingToken, BookDetailsFetcher.Gap));
+        }
+
         // Its own loop, not a command: someone is waiting, and the command loop can be busy polling feeds for minutes.
         if (searches is not null)
         {
@@ -83,12 +90,13 @@ internal sealed partial class PipelineService(
     }
 
     /// <summary>
-    /// Processes episodes back to back while any are due, for a worker that depends on an external backend. When the
-    /// backend is unreachable or asks us to slow down (or the disk is full), waits 30 seconds, doubling up to 10
-    /// minutes, without counting anything against the work item.
+    /// Processes episodes back to back (or <paramref name="workedDelay"/> apart) while any are due, for a worker that
+    /// depends on an external backend. When the backend is unreachable or asks us to slow down (or the disk is full),
+    /// waits 30 seconds, doubling up to 10 minutes, without counting anything against the work item.
     /// </summary>
     private async Task BackendLoop(
-        string name, Func<CancellationToken, Task>? startup, Func<CancellationToken, Task<WorkOutcome>> processNext, CancellationToken stoppingToken)
+        string name, Func<CancellationToken, Task>? startup, Func<CancellationToken, Task<WorkOutcome>> processNext, CancellationToken stoppingToken,
+        TimeSpan workedDelay = default)
     {
         await Task.Yield();
         if (startup is not null)
@@ -112,7 +120,7 @@ internal sealed partial class PipelineService(
                 var outcome = await processNext(stoppingToken);
                 delay = outcome switch
                 {
-                    WorkOutcome.Worked => TimeSpan.Zero,
+                    WorkOutcome.Worked => workedDelay,
                     WorkOutcome.Idle => IdleDelay,
                     _ => pause,
                 };

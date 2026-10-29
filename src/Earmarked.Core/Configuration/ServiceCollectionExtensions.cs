@@ -205,6 +205,7 @@ public static class ServiceCollectionExtensions
         // Unknown names fail options validation at start-up, so every name here has an adapter.
         services.AddSingleton(sp => new BookCatalogChain([.. chain.Select(sp.GetRequiredKeyedService<IBookCatalog>)]));
         services.AddSingleton<MentionMatcher>();
+        services.AddSingleton<BookDetailsFetcher>();
         services.AddSingleton<CatalogSearchRunner>();
         return services;
     }

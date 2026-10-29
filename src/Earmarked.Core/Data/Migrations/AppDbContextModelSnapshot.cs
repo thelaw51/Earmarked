@@ -105,6 +105,16 @@ namespace Earmarked.Core.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Description")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DetailsCheckedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("DetailsFailed")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int?>("FirstPublishYear")
                         .HasColumnType("INTEGER");
 
@@ -112,9 +122,22 @@ namespace Earmarked.Core.Data.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("PageCount")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Provider")
                         .IsRequired()
                         .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("Rating")
+                        .HasColumnType("REAL");
+
+                    b.Property<int?>("RatingCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Subjects")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Title")
@@ -123,6 +146,8 @@ namespace Earmarked.Core.Data.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("DetailsCheckedAt");
 
                     b.HasIndex("Provider", "CatalogId")
                         .IsUnique();
@@ -258,6 +283,10 @@ namespace Earmarked.Core.Data.Migrations
 
                     b.Property<int>("Attempts")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(8000)
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime>("DiscoveredAt")
                         .HasColumnType("TEXT");

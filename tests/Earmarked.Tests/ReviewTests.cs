@@ -471,6 +471,8 @@ public sealed class ReviewTests : IAsyncLifetime
 
         public void Answer(string title, CatalogBook book, bool onlyWithoutAuthor = false) => _answers[title] = (book, onlyWithoutAuthor);
 
+        public Task<BookDetails?> GetDetailsAsync(string catalogId, CancellationToken cancellationToken) => Task.FromResult<BookDetails?>(null);
+
         public async Task<IReadOnlyList<CatalogBook>> SearchAsync(string title, string? author, CancellationToken cancellationToken)
         {
             Calls++;

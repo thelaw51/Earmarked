@@ -1,0 +1,15 @@
+{
+ "resultCount": 1,
+ "results": [
+  {
+   "kind": "ebook",
+   "trackId": 900000001,
+   "trackName": "The Lighthouse Keeper's Almanac",
+   "artistName": "Ines Calder",
+   "genres": ["Nature", "Books", "Travel & Adventure"],
+   "description": "<b>A year of weather</b>&#xa0;notes.<br /><br />Kept on a small island.<script>alert(1)</script>",
+   "averageUserRating": 4.5,
+   "userRatingCount": 1234
+  }
+ ]
+}
