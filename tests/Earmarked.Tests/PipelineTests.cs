@@ -86,6 +86,36 @@ public sealed class PipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Show_notes_fill_in_on_stored_episodes_in_any_state_without_touching_UpdatedAt()
+    {
+        var feed = Fixtures.Read("feed.xml");
+        var withoutNotes = System.Text.RegularExpressions.Regex.Replace(feed, "<(description|content:encoded|itunes:summary)>.*?</\\1>", "",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        _http.Respond(FeedUrl, withoutNotes);
+        await _poller.PollAsync(_podcastId, Ct);
+
+        DateTime updatedAt;
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            var episode = await db.Episodes.SingleAsync(e => e.IdentityKey == "ep-003", Ct);
+            Assert.Null(episode.Description);
+            episode.State = EpisodeState.Extracted;
+            await db.SaveChangesAsync(Ct);
+            updatedAt = episode.UpdatedAt;
+        }
+
+        _http.Respond(FeedUrl, feed);
+        await _poller.PollAsync(_podcastId, Ct);
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        var filled = await check.Episodes.SingleAsync(e => e.IdentityKey == "ep-003", Ct);
+        Assert.StartsWith("This week: paper & rivers.", filled.Description, StringComparison.Ordinal);
+        Assert.Equal(EpisodeState.Extracted, filled.State);
+        Assert.Equal(updatedAt, filled.UpdatedAt);
+        Assert.Equal("Only an iTunes summary.", (await check.Episodes.SingleAsync(e => e.IdentityKey == "ep-002", Ct)).Description);
+    }
+
+    [Fact]
     public async Task Fetches_the_preferred_transcript_and_stores_its_segments()
     {
         _http.Respond(FeedUrl, Fixtures.Read("feed.xml"));
