@@ -8,6 +8,7 @@ using Earmarked.Core.Audio;
 using Earmarked.Core.Backends;
 using Earmarked.Core.Configuration;
 using Earmarked.Core.Data;
+using Earmarked.Core.Notifications;
 using Earmarked.Core.Transcription;
 using Earmarked.Core.Transcripts;
 
@@ -41,7 +42,8 @@ public sealed partial class EpisodeTranscriber(
     IOptions<TranscriptionOptions> options,
     IOptions<PollingOptions> polling,
     TimeProvider time,
-    ILogger<EpisodeTranscriber> logger)
+    ILogger<EpisodeTranscriber> logger,
+    NotificationOutbox? notifications = null)
 {
     /// <summary>Downloads above this size are refused. A 4.5 hour MP3 is roughly 250 to 400 MB.</summary>
     internal const long MaxAudioBytes = 1536L * 1024 * 1024;
@@ -319,6 +321,11 @@ public sealed partial class EpisodeTranscriber(
             tracked.PrioritisedAt = null;
             tracked.LastError = $"Gave up after {tracked.Attempts} attempts: {error}";
             workspace.Delete(tracked.Id);
+            if (notifications is not null)
+            {
+                var podcast = await db.PodcastFeeds.Where(p => p.Id == tracked.PodcastFeedId).Select(p => p.Title).SingleOrDefaultAsync(cancellationToken);
+                notifications.EpisodeFailed(db, tracked.Id, podcast ?? "Unknown podcast", tracked.Title, "transcription", tracked.Attempts);
+            }
         }
         else
         {
