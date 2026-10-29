@@ -97,6 +97,17 @@ public sealed partial class FeedPoller(
                 }
             }
 
+            // Show notes for episodes stored before they were kept. Loaded after the waiting episodes, so any of those
+            // come back as the same tracked rows. Notes aren't state, so UpdatedAt stays as it was.
+            var described = feed.Episodes.Where(e => e.Description is not null).Select(e => e.IdentityKey).ToList();
+            var undescribed = await db.Episodes
+                .Where(e => e.PodcastFeedId == podcast.Id && e.Description == null && described.Contains(e.IdentityKey))
+                .ToListAsync(cancellationToken);
+            foreach (var episode in undescribed)
+            {
+                episode.Description = latestByKey[episode.IdentityKey].Description;
+            }
+
             foreach (var (item, state) in plan)
             {
                 db.Episodes.Add(new Episode
@@ -111,6 +122,7 @@ public sealed partial class FeedPoller(
                     EnclosureType = item.EnclosureType,
                     EnclosureLength = item.EnclosureLength,
                     Link = item.Link,
+                    Description = item.Description,
                     TranscriptLinks = [.. item.TranscriptLinks],
                     State = state,
                     DiscoveredAt = now,

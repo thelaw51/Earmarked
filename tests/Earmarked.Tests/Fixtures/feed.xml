@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"
      xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
-     xmlns:podcast="https://podcastindex.org/namespace/1.0">
+     xmlns:podcast="https://podcastindex.org/namespace/1.0"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/">
   <channel>
     <title>The Imaginary Bookshelf</title>
     <itunes:author>Example Productions</itunes:author>
@@ -14,6 +15,8 @@
       <enclosure url="https://cdn.example.com/ep3.mp3" length="32679392" type="audio/mpeg"/>
       <podcast:transcript url="https://example.com/ep3.html" type="text/html"/>
       <podcast:transcript url="https://example.com/ep3.vtt" type="text/vtt" language="en"/>
+      <description>Short summary.</description>
+      <content:encoded><![CDATA[<p>This week: paper &amp; rivers.</p><p>Books mentioned:</p><ul><li><a href="https://example.com/b">The Lighthouse Keeper's Almanac</a> by Ines Calder</li></ul>]]></content:encoded>
     </item>
     <item>
       <title>Episode 2: The Lantern Index</title>
@@ -21,6 +24,7 @@
       <pubDate>Mon, 19 Oct 2026 05:00:00 -0400</pubDate>
       <itunes:duration>2535</itunes:duration>
       <enclosure url="https://cdn.example.com/ep2.mp3" length="40567118" type="audio/mpeg"/>
+      <itunes:summary>Only an iTunes summary.</itunes:summary>
     </item>
     <item>
       <title>Episode 1: No GUID Here</title>

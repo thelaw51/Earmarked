@@ -44,6 +44,14 @@ public class FeedParserTests
         Assert.Empty(_feed.Episodes[1].TranscriptLinks);
     }
 
+    [Fact]
+    public void Reads_show_notes_as_plain_text_preferring_the_full_content()
+    {
+        Assert.Equal("This week: paper & rivers.\n\nBooks mentioned:\n\nThe Lighthouse Keeper's Almanac by Ines Calder", _feed.Episodes[0].Description);
+        Assert.Equal("Only an iTunes summary.", _feed.Episodes[1].Description);
+        Assert.Null(_feed.Episodes[2].Description);
+    }
+
     [Theory]
     [InlineData("34:02", 2042)]
     [InlineData("1:02:03", 3723)]

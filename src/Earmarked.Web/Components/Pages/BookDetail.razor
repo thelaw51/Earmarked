@@ -1,4 +1,5 @@
 @page "/books/{Id:guid}"
+@using System.Globalization
 @using Earmarked.Core.Configuration
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject ILogger<BookDetail> Logger
@@ -20,6 +21,7 @@ else if (_book is null)
 else
 {
     var cover = Display.HttpsOrNull(_book.CoverUrl);
+    var catalogue = BookLookupProviders.Label(_book.Provider);
     <div class="crumbs"><MudBreadcrumbs Items="_breadcrumbs" /></div>
     <section class="hero">
         @if (cover is not null)
@@ -47,52 +49,162 @@ else
                     {
                         <span><MudIcon Icon="@Icons.Material.Rounded.CalendarMonth" Size="Size.Small" /> First published @year</span>
                     }
-                    <span><MudIcon Icon="@Icons.Material.Rounded.Podcasts" Size="Size.Small" /> @_mentions.Select(m => m.Episode.PodcastFeedId).Distinct().Count() podcast(s)</span>
+                    @if (_book.PageCount is { } pages)
+                    {
+                        <span><MudIcon Icon="@Icons.Material.Rounded.MenuBook" Size="Size.Small" /> @pages.ToString("N0", CultureInfo.CurrentCulture) pages</span>
+                    }
+                    @if (_book.Rating is { } rating && _book.RatingCount is { } ratings)
+                    {
+                        <span title="@($"Average of {ratings:N0} rating(s) on {catalogue}")">
+                            <MudIcon Icon="@Icons.Material.Rounded.Star" Size="Size.Small" Color="Color.Warning" />
+                            @rating.ToString("0.0", CultureInfo.CurrentCulture) from @ratings.ToString("N0", CultureInfo.CurrentCulture) rating(s) on @catalogue
+                        </span>
+                    }
+                    <span><MudIcon Icon="@Icons.Material.Rounded.Podcasts" Size="Size.Small" /> @_podcasts.Count podcast(s)</span>
                     @if (_book.Provider == BookLookupProviders.Manual)
                     {
                         <span><MudIcon Icon="@Icons.Material.Rounded.BookmarkAdded" Size="Size.Small" /> Not in any catalogue, kept as is in review</span>
                     }
                 </div>
+                @if (_kinds.Count > 0)
+                {
+                    <div class="d-flex flex-wrap gap-1 mt-3">
+                        @foreach (var (kind, count) in _kinds)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Display.KindColor(kind)" Variant="Variant.Outlined" Class="ma-0">@Display.KindLabel(kind) × @count</MudChip>
+                        }
+                    </div>
+                }
                 @if (Display.HttpsOrNull(_book.InfoUrl) is { } info)
                 {
                     <MudButton Href="@info" Target="_blank" rel="noopener noreferrer" Variant="Variant.Outlined" Color="Color.Primary"
-                               EndIcon="@Icons.Material.Rounded.OpenInNew" Size="Size.Small" Class="mt-4">View on @BookLookupProviders.Label(_book.Provider)</MudButton>
+                               EndIcon="@Icons.Material.Rounded.OpenInNew" Size="Size.Small" Class="mt-4">View on @catalogue</MudButton>
                 }
             </div>
         </div>
     </section>
 
+    @if (_book.Description is not null || _book.Subjects.Count > 0)
+    {
+        <div class="section-title">
+            <MudText Typo="Typo.h6">About this book</MudText>
+            <span class="count-badge">From @catalogue</span>
+        </div>
+        <div class="surface-card about-book">
+            @if (_book.Description is { } description)
+            {
+                var shortened = !_descriptionOpen && description.Length > DescriptionPreview;
+                <MudText Typo="Typo.body1" Class="long-text">@(shortened ? PlainTextPreview(description) : description)</MudText>
+                @if (description.Length > DescriptionPreview)
+                {
+                    <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Primary" Class="align-self-start"
+                               OnClick="@(() => _descriptionOpen = !_descriptionOpen)">@(_descriptionOpen ? "Show less" : "Read more")</MudButton>
+                }
+            }
+            @if (_book.Subjects.Count > 0)
+            {
+                <div class="d-flex flex-wrap gap-1">
+                    @foreach (var subject in _book.Subjects)
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Class="ma-0">@subject</MudChip>
+                    }
+                </div>
+            }
+        </div>
+    }
+    else if (_book.Provider != BookLookupProviders.Manual && _book.DetailsCheckedAt is null)
+    {
+        <MudText Typo="Typo.body2" Class="muted mt-4">A description from @catalogue hasn't been fetched yet. The Worker fills it in after matching.</MudText>
+    }
+
     <div class="section-title">
         <MudText Typo="Typo.h6">Mentioned in</MudText>
-        <span class="count-badge">@_mentions.Select(m => m.EpisodeId).Distinct().Count() episode(s)</span>
+        <span class="count-badge">@_podcasts.Sum(p => p.Episodes.Count) episode(s)</span>
     </div>
-    <div class="surface-card stagger">
-        @foreach (var mention in _mentions)
+    <div class="d-flex flex-column gap-4 stagger">
+        @foreach (var podcast in _podcasts)
         {
-            <div class="mention" @key="mention.Id">
-                <MudChip T="string" Size="Size.Small" Color="Display.KindColor(mention.Kind)" Variant="Variant.Text" Class="state-chip ma-0">@Display.KindLabel(mention.Kind)</MudChip>
-                <div style="min-width: 0;">
-                    <a href="@($"episodes/{mention.EpisodeId}")" class="card-title-link"><MudText Typo="Typo.subtitle2">@mention.Episode.Title</MudText></a>
-                    <MudText Typo="Typo.caption" Class="muted d-block">
-                        @(mention.Episode.PodcastFeed.Title ?? "Podcast") · @Display.LocalDate(mention.Episode.PublishedAt)
-                    </MudText>
-                </div>
-                @* Each moment links to its row in the episode's transcript; untimed transcripts link to the episode's books. *@
-                <a href="@TranscriptLinks.Href(mention.EpisodeId, mention.StartTime)" class="timestamp timestamp-link"
-                   title="Show this moment in the transcript">@(mention.StartTime is null ? "In episode" : Display.Timestamp(mention.StartTime))</a>
-                <blockquote class="quote mention-quote"><MudText Typo="Typo.body2">"@mention.Quote"</MudText></blockquote>
+            var artwork = Display.HttpOrHttpsOrNull(podcast.Feed.ImageUrl);
+            <div class="surface-card podcast-mentions" @key="podcast.Feed.Id">
+                <a href="@($"podcasts/{podcast.Feed.Id}")" class="card-link podcast-mentions-head">
+                    <span class="artwork artwork-sm">
+                        @if (artwork is not null)
+                        {
+                            <img src="@artwork" alt="" loading="lazy" referrerpolicy="no-referrer" />
+                        }
+                        else
+                        {
+                            <MudIcon Icon="@Icons.Material.Rounded.Podcasts" />
+                        }
+                    </span>
+                    <span class="d-flex flex-column" style="min-width: 0;">
+                        <MudText Typo="Typo.subtitle1" Style="font-weight: 650;">@(podcast.Feed.Title ?? "Podcast")</MudText>
+                        <MudText Typo="Typo.caption" Class="muted">
+                            @(podcast.Feed.Author is { } author ? $"{author} · " : "")@podcast.Episodes.Count episode(s)
+                        </MudText>
+                    </span>
+                </a>
+                @foreach (var episode in podcast.Episodes)
+                {
+                    <div class="episode-mentions" @key="episode.Episode.Id">
+                        <div class="d-flex flex-wrap align-center gap-2">
+                            <a href="@($"episodes/{episode.Episode.Id}")" class="card-title-link"><MudText Typo="Typo.subtitle2">@episode.Episode.Title</MudText></a>
+                            @if (episode.InShowNotes)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Text" Icon="@Icons.Material.Rounded.FactCheck"
+                                         Class="state-chip ma-0">In the show notes</MudChip>
+                            }
+                        </div>
+                        <MudText Typo="Typo.caption" Class="muted d-block">
+                            @Display.LocalDate(episode.Episode.PublishedAt)@(episode.Episode.Duration is { } duration ? $" · {Display.Timestamp(duration)}" : "")
+                        </MudText>
+                        @foreach (var mention in episode.Mentions)
+                        {
+                            <div class="mention" @key="mention.Id">
+                                <MudChip T="string" Size="Size.Small" Color="Display.KindColor(mention.Kind)" Variant="Variant.Text" Class="state-chip ma-0">@Display.KindLabel(mention.Kind)</MudChip>
+                                <blockquote class="quote mention-quote-inline"><MudText Typo="Typo.body2">"@mention.Quote"</MudText></blockquote>
+                                @* Each moment links to its row in the episode's transcript; untimed transcripts link to the episode's books. *@
+                                <a href="@TranscriptLinks.Href(mention.EpisodeId, mention.StartTime)" class="timestamp timestamp-link"
+                                   title="Show this moment in the transcript">@(mention.StartTime is null ? "In episode" : Display.Timestamp(mention.StartTime))</a>
+                            </div>
+                        }
+                        <div class="d-flex flex-wrap gap-2 mt-1">
+                            @if (episode.Episode.Description is not null)
+                            {
+                                <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Primary"
+                                           StartIcon="@(_openNotes.Contains(episode.Episode.Id) ? Icons.Material.Rounded.ExpandLess : Icons.Material.Rounded.ExpandMore)"
+                                           OnClick="@(() => ToggleNotes(episode.Episode.Id))">Show notes</MudButton>
+                            }
+                            @if (Display.EpisodePageOrNull(episode.Episode.Link) is { } link)
+                            {
+                                <MudButton Href="@link" Target="_blank" rel="noopener noreferrer" Variant="Variant.Text" Size="Size.Small" Color="Color.Primary"
+                                           EndIcon="@Icons.Material.Rounded.OpenInNew">Episode page</MudButton>
+                            }
+                        </div>
+                        @if (_openNotes.Contains(episode.Episode.Id) && episode.Episode.Description is { } notes)
+                        {
+                            <MudText Typo="Typo.body2" Class="long-text show-notes">@notes</MudText>
+                        }
+                    </div>
+                }
             </div>
         }
     </div>
 }
 
 @code {
+    /// <summary>How much of a long description shows before "Read more".</summary>
+    private const int DescriptionPreview = 600;
+
     [Parameter]
     public Guid Id { get; set; }
 
     private Book? _book;
-    private List<BookMention> _mentions = [];
+    private List<PodcastMentions> _podcasts = [];
+    private List<(MentionKind Kind, int Count)> _kinds = [];
     private List<BreadcrumbItem> _breadcrumbs = [];
+    private readonly HashSet<Guid> _openNotes = [];
+    private bool _descriptionOpen;
     private bool _loading = true;
     private string? _error;
 
@@ -102,14 +214,19 @@ else
         {
             await using var db = await DbFactory.CreateDbContextAsync();
             _book = await db.Books.AsNoTracking().SingleOrDefaultAsync(b => b.Id == Id);
-            _mentions = _book is null
+            var mentions = _book is null
                 ? []
                 : await db.BookMentions.AsNoTracking()
                     .Include(m => m.Episode).ThenInclude(e => e.PodcastFeed)
                     .Where(m => m.BookId == Id)
                     .OrderByDescending(m => m.Episode.PublishedAt)
                     .ToListAsync();
+            _podcasts = _book is null ? [] : Group(mentions, _book);
+            _kinds = mentions.GroupBy(m => m.Kind).OrderByDescending(g => g.Key == MentionKind.Recommended).ThenByDescending(g => g.Count())
+                .Select(g => (g.Key, g.Count())).ToList();
             _breadcrumbs = [new("Books", "books"), new(_book?.Title ?? "Book", null, disabled: true)];
+            _openNotes.Clear();
+            _descriptionOpen = false;
             _error = null;
         }
         catch (Exception ex)
@@ -121,4 +238,36 @@ else
             _loading = false;
         }
     }
+
+    /// <summary>
+    /// Mentions by podcast, then by episode, newest episode first in both, and in the order they were said within an
+    /// episode. That last order is applied here because SQLite can't order by a <see cref="TimeSpan"/>.
+    /// </summary>
+    private static List<PodcastMentions> Group(List<BookMention> mentions, Book book) =>
+        mentions
+            .GroupBy(m => m.EpisodeId)
+            .Select(e => new EpisodeMentions(e.First().Episode, [.. e.OrderBy(m => m.StartTime)],
+                ShowNotes.MentionsBook(e.First().Episode.Description, book.Title, book.Authors)))
+            .GroupBy(e => e.Episode.PodcastFeedId)
+            .Select(p => new PodcastMentions(p.First().Episode.PodcastFeed, [.. p]))
+            .ToList();
+
+    private void ToggleNotes(Guid episodeId)
+    {
+        if (!_openNotes.Remove(episodeId))
+        {
+            _openNotes.Add(episodeId);
+        }
+    }
+
+    /// <summary>The start of a long description, cut at a word.</summary>
+    private static string PlainTextPreview(string text)
+    {
+        var cut = text.LastIndexOf(' ', DescriptionPreview);
+        return text[..(cut > DescriptionPreview / 2 ? cut : DescriptionPreview)].TrimEnd(' ', ',', ';', ':') + "…";
+    }
+
+    private sealed record PodcastMentions(PodcastFeed Feed, List<EpisodeMentions> Episodes);
+
+    private sealed record EpisodeMentions(Episode Episode, List<BookMention> Mentions, bool InShowNotes);
 }

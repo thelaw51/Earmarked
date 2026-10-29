@@ -54,4 +54,15 @@ public class DisplayTests
     {
         Assert.Equal((completed, false), Display.Progress(state, extractionOn: false));
     }
+
+    [Theory]
+    [InlineData("https://example.com/episodes/3", true)]
+    [InlineData("http://example.com/episodes/3", true)]
+    [InlineData("https://example.com/feed?token=abc", false)]
+    [InlineData("https://user:pass@example.com/episodes/3", false)]
+    [InlineData("https://example.com/episodes/3#key=abc", false)]
+    [InlineData("javascript:alert(1)", false)]
+    [InlineData(null, false)]
+    public void Episode_pages_drop_links_that_could_carry_a_token(string? url, bool allowed) =>
+        Assert.Equal(allowed ? url : null, Display.EpisodePageOrNull(url));
 }

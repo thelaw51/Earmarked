@@ -1,0 +1,9 @@
+{
+  "key": "/works/OL1001W",
+  "title": "The Lighthouse Keeper's Almanac",
+  "description": {
+    "type": "/type/text",
+    "value": "A year of **weather notes** kept on a small island.\r\n\r\nSee [the companion volume](https://openlibrary.org/works/OL1002W) and the [notes \\[1/2\\]][1].\r\n\r\n----------\r\n**Contains**\r\n- [Harbour Lights](https://openlibrary.org/works/OL1002W)\r\n\r\n[1]: https://example.com/notes"
+  },
+  "subjects": ["Lighthouses", "Accessible book", "Weather", "nyt:hardcover-nonfiction=2019-01-01", "weather", "Protected DAISY", 42, "Islands"]
+}

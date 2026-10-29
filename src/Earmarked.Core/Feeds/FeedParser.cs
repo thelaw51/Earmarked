@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Xml;
 using System.Xml.Linq;
 using Earmarked.Core.Data;
+using Earmarked.Core.Text;
 
 namespace Earmarked.Core.Feeds;
 
@@ -19,16 +20,20 @@ public sealed record ParsedEpisode(
     string? EnclosureType,
     long? EnclosureLength,
     string? Link,
-    IReadOnlyList<TranscriptLink> TranscriptLinks);
+    IReadOnlyList<TranscriptLink> TranscriptLinks,
+    string? Description = null);
 
 /// <summary>
 /// Parses RSS 2.0 podcast feeds, including the iTunes and Podcasting 2.0 namespaces.
-/// Items with neither a GUID nor an enclosure URL are dropped because nothing identifies them across polls.
+/// Items with neither a GUID nor an enclosure URL are dropped because nothing identifies them across polls. Show notes
+/// come from <c>content:encoded</c>, which usually has the full notes, then <c>description</c>, then
+/// <c>itunes:summary</c>, reduced to plain text.
 /// </summary>
 public static class FeedParser
 {
     private static readonly XNamespace Itunes = "http://www.itunes.com/dtds/podcast-1.0.dtd";
     private static readonly XNamespace Podcast = "https://podcastindex.org/namespace/1.0";
+    private static readonly XNamespace Content = "http://purl.org/rss/1.0/modules/content/";
 
     private static readonly XmlReaderSettings ReaderSettings = new()
     {
@@ -112,7 +117,9 @@ public static class FeedParser
             Clean(enclosure?.Attribute("type")?.Value),
             long.TryParse(enclosure?.Attribute("length")?.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var length) && length > 0 ? length : null,
             Clean(item.Element("link")?.Value),
-            transcripts);
+            transcripts,
+            PlainText.FromHtml(Clean(item.Element(Content + "encoded")?.Value) ?? Clean(item.Element("description")?.Value) ?? item.Element(Itunes + "summary")?.Value,
+                Episode.MaxDescriptionLength));
     }
 
     /// <summary>Parses <c>itunes:duration</c>, which is either whole seconds or <c>[h:]mm:ss</c>.</summary>

@@ -18,6 +18,30 @@ public interface IBookCatalog
     /// <exception cref="Backends.BackendUnavailableException">The catalogue can't be reached or asked us to slow down.</exception>
     /// <exception cref="CatalogLookupFailedException">The catalogue answered, but not with a usable result.</exception>
     Task<IReadOnlyList<CatalogBook>> SearchAsync(string title, string? author, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Returns what the catalogue says about one of its own books (<see cref="Data.Book.CatalogId"/>), or null when it no
+    /// longer has that book. Text comes back as plain text, already capped to what the database stores.
+    /// </summary>
+    /// <exception cref="Backends.BackendUnavailableException">The catalogue can't be reached or asked us to slow down.</exception>
+    /// <exception cref="CatalogLookupFailedException">The catalogue answered, but not with a usable result.</exception>
+    Task<BookDetails?> GetDetailsAsync(string catalogId, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// What a catalogue knows about a book beyond what its search returns, in our terms. Every field is optional because
+/// no catalogue has all of them: Open Library has no ratings or page count for a work, Apple Books no page count.
+/// <paramref name="Rating"/> is an average out of 5 from <paramref name="RatingCount"/> of the catalogue's own users.
+/// </summary>
+public sealed record BookDetails(
+    string? Description,
+    IReadOnlyList<string> Subjects,
+    int? PageCount,
+    double? Rating,
+    int? RatingCount)
+{
+    public const int MaxSubjects = 12;
+    public const int MaxSubjectLength = 60;
 }
 
 /// <summary>

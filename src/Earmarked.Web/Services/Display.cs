@@ -49,6 +49,17 @@ public static class Display
     public static string? HttpOrHttpsOrNull(string? url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp) ? url : null;
 
+    /// <summary>
+    /// An episode's web page from the feed, if it is http(s) with no query string, fragment or user info. Private feeds
+    /// put the subscriber token in a query or path, so a link that carries a query is dropped rather than risk showing
+    /// one. A token in the path can't be told from a page name; item links are the show's public pages in practice.
+    /// </summary>
+    public static string? EpisodePageOrNull(string? url) =>
+        HttpOrHttpsOrNull(url) is { } link && Uri.TryCreate(link, UriKind.Absolute, out var uri)
+        && uri.Query.Length == 0 && uri.Fragment.Length == 0 && uri.UserInfo.Length == 0
+            ? link
+            : null;
+
     /// <summary>A short note on a mention that isn't linked to a book, or null when it is.</summary>
     public static string? MatchNote(MatchState state, bool lookupOn) => state switch
     {

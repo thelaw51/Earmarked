@@ -17,7 +17,19 @@ internal static class CatalogHttp
     public const int MaxResponseBytes = 1024 * 1024;
 
     public static async Task<string> SendAsync(
-        HttpClient client, HttpRequestMessage request, string label, CancellationToken cancellationToken, IReadOnlyCollection<HttpStatusCode>? alsoUnavailable = null)
+        HttpClient client, HttpRequestMessage request, string label, CancellationToken cancellationToken, IReadOnlyCollection<HttpStatusCode>? alsoUnavailable = null) =>
+        (await SendCoreAsync(client, request, label, notFoundIsNull: false, alsoUnavailable, cancellationToken))!;
+
+    /// <summary>
+    /// Like <see cref="SendAsync"/>, for a request about one known entry: a 404 returns null, because the catalogue no
+    /// longer has it, and retrying won't change that.
+    /// </summary>
+    public static Task<string?> SendOrNullIfNotFoundAsync(
+        HttpClient client, HttpRequestMessage request, string label, CancellationToken cancellationToken, IReadOnlyCollection<HttpStatusCode>? alsoUnavailable = null) =>
+        SendCoreAsync(client, request, label, notFoundIsNull: true, alsoUnavailable, cancellationToken);
+
+    private static async Task<string?> SendCoreAsync(
+        HttpClient client, HttpRequestMessage request, string label, bool notFoundIsNull, IReadOnlyCollection<HttpStatusCode>? alsoUnavailable, CancellationToken cancellationToken)
     {
         using var sent = request;
         HttpResponseMessage response;
@@ -39,6 +51,11 @@ internal static class CatalogHttp
             if (IsUnavailable(response.StatusCode, alsoUnavailable))
             {
                 throw new BackendUnavailableException($"{label} returned HTTP {(int)response.StatusCode}.");
+            }
+
+            if (notFoundIsNull && response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return null;
             }
 
             if (!response.IsSuccessStatusCode)

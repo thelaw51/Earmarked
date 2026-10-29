@@ -1,0 +1,16 @@
+{
+  "data": {
+    "books": [
+      {
+        "description": "A year of weather notes\nkept on a small island.",
+        "pages": 288,
+        "rating": 4.12,
+        "ratings_count": 57,
+        "cached_tags": {
+          "Genre": [{"tag": "Nonfiction", "count": 9}, {"tag": "Nature", "count": 4}, {"count": 2}],
+          "Mood": [{"tag": "reflective", "count": 3}]
+        }
+      }
+    ]
+  }
+}
