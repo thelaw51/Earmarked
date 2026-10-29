@@ -1,4 +1,6 @@
 using System.ComponentModel.DataAnnotations;
+using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace Earmarked.Core.Configuration;
 
@@ -285,6 +287,127 @@ public static class BookLookupProviders
 
     /// <summary>The known name spelled as stored, for a name config gave in any case.</summary>
     public static string Canonical(string name) => Known.FirstOrDefault(k => string.Equals(k, name, StringComparison.OrdinalIgnoreCase)) ?? name;
+}
+
+/// <summary>
+/// Push notifications to a phone. Off unless <see cref="Provider"/> is set. Each kind of message has its own switch;
+/// all of them are on once a provider is set, except notices for episodes where no books were found.
+/// </summary>
+public sealed partial class NotificationsOptions : IValidatableObject
+{
+    public const string Section = "Notifications";
+
+    /// <summary>Which adapter to use, e.g. <c>Ntfy</c>. Empty disables notifications.</summary>
+    public string? Provider { get; set; }
+
+    /// <summary>The notification server, e.g. <c>https://ntfy.example.com</c>.</summary>
+    public string? BaseUrl { get; set; }
+
+    /// <summary>Where messages are published. On a public server the topic name is the only thing keeping it private.</summary>
+    public string? Topic { get; set; }
+
+    /// <summary>An access token, sent as a bearer token. Set it as <c>EARMARKED_Notifications__Token</c>, never in config.json.</summary>
+    public string? Token { get; set; }
+
+    /// <summary>For a server set up with user accounts instead of tokens. Ignored when <see cref="Token"/> is set.</summary>
+    public string? Username { get; set; }
+
+    public string? Password { get; set; }
+
+    /// <summary>The address the web app is reached at, e.g. <c>https://earmarked.example.com</c>. Tapping a notification opens the page it's about.</summary>
+    public string? AppUrl { get; set; }
+
+    /// <summary>A notice each time an episode's transcript has been searched for books.</summary>
+    public bool EpisodeExtracted { get; set; } = true;
+
+    /// <summary>Also send <see cref="EpisodeExtracted"/> notices for episodes with no books in them.</summary>
+    public bool EpisodesWithoutBooks { get; set; }
+
+    /// <summary>A notice when an episode runs out of transcription or extraction attempts.</summary>
+    public bool EpisodeFailures { get; set; } = true;
+
+    /// <summary>A notice when a backend (the Mac, LM Studio, a book catalogue) is down, and again when it's back.</summary>
+    public bool BackendAlerts { get; set; } = true;
+
+    /// <summary>How long a backend must stay unhealthy before it's reported, so a short blip or a sleeping Mac stays quiet.</summary>
+    [Range(0, 1440)]
+    public int BackendAlertAfterMinutes { get; set; } = 5;
+
+    /// <summary>One message a day counting what the pipeline did since the last one.</summary>
+    public bool DailySummary { get; set; } = true;
+
+    /// <summary>When the summary goes out, as <c>HH:mm</c> in the container's time zone (its <c>TZ</c>).</summary>
+    public string DailySummaryTime { get; set; } = "21:00";
+
+    public bool Enabled => !string.IsNullOrWhiteSpace(Provider);
+
+    /// <summary><see cref="DailySummaryTime"/> parsed. Validation guarantees it parses whenever notifications are on.</summary>
+    public TimeOnly SummaryTime => TimeOnly.TryParseExact(DailySummaryTime, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var t) ? t : new TimeOnly(21, 0);
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (!Enabled)
+        {
+            yield break;
+        }
+
+        if (!NotificationProviders.Known.Contains(Provider!, StringComparer.OrdinalIgnoreCase))
+        {
+            yield return new ValidationResult($"Unknown Notifications:Provider '{Provider}'. Known: {string.Join(", ", NotificationProviders.Known)}.");
+        }
+
+        if (!IsHttpUrl(BaseUrl))
+        {
+            yield return new ValidationResult("Notifications:BaseUrl must be an absolute http(s) URL when a provider is set.");
+        }
+
+        if (Topic is null || !TopicPattern().IsMatch(Topic))
+        {
+            yield return new ValidationResult("Notifications:Topic is needed: 1 to 64 letters, digits, '-' or '_'.");
+        }
+
+        if (!string.IsNullOrEmpty(Token) && !CredentialPattern().IsMatch(Token))
+        {
+            yield return new ValidationResult("Notifications:Token must be printable characters with no spaces.");
+        }
+
+        if (string.IsNullOrEmpty(Token) && (string.IsNullOrEmpty(Username) != string.IsNullOrEmpty(Password)))
+        {
+            yield return new ValidationResult("Notifications:Username and Notifications:Password must be set together.");
+        }
+
+        if (!string.IsNullOrEmpty(Username) && Username.Contains(':', StringComparison.Ordinal))
+        {
+            yield return new ValidationResult("Notifications:Username must not contain ':'.");
+        }
+
+        if (!string.IsNullOrEmpty(AppUrl) && (!IsHttpUrl(AppUrl) || AppUrl.Length > 300))
+        {
+            yield return new ValidationResult("Notifications:AppUrl must be an absolute http(s) URL of at most 300 characters.");
+        }
+
+        if (!TimeOnly.TryParseExact(DailySummaryTime, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+        {
+            yield return new ValidationResult("Notifications:DailySummaryTime must be a 24-hour time such as 21:00.");
+        }
+    }
+
+    private static bool IsHttpUrl(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    [GeneratedRegex("^[-_A-Za-z0-9]{1,64}$")]
+    private static partial Regex TopicPattern();
+
+    [GeneratedRegex(@"^[\x21-\x7E]{1,200}$")]
+    private static partial Regex CredentialPattern();
+}
+
+/// <summary>Names accepted in <see cref="NotificationsOptions.Provider"/>.</summary>
+public static class NotificationProviders
+{
+    public const string Ntfy = "Ntfy";
+
+    public static readonly IReadOnlyList<string> Known = [Ntfy];
 }
 
 /// <summary>Outbound HTTP settings for feed-supplied URLs.</summary>

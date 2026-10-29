@@ -27,6 +27,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityUser
     public DbSet<CatalogSearch> CatalogSearches => Set<CatalogSearch>();
     public DbSet<WorkerCommand> WorkerCommands => Set<WorkerCommand>();
     public DbSet<WorkerStatus> WorkerStatuses => Set<WorkerStatus>();
+    public DbSet<Notification> Notifications => Set<Notification>();
 
     /// <summary>
     /// SQLite has no date type, so DateTimes come back with Kind Unspecified. Every DateTime in this model
@@ -119,6 +120,16 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityUser
         });
 
         builder.Entity<WorkerStatus>(b => b.HasKey(s => s.Name));
+
+        builder.Entity<Notification>(b =>
+        {
+            b.HasIndex(n => new { n.State, n.CreatedAt });
+            b.HasIndex(n => n.DedupeKey).IsUnique();
+            b.Property(n => n.Title).HasMaxLength(Notification.MaxTitleLength);
+            b.Property(n => n.Body).HasMaxLength(Notification.MaxBodyLength);
+            b.Property(n => n.ClickUrl).HasMaxLength(Notification.MaxUrlLength);
+            b.Property(n => n.DedupeKey).HasMaxLength(Notification.MaxDedupeKeyLength);
+        });
     }
 
     private static ValueConverter<T, string> JsonConverter<T>() where T : new() =>

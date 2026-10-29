@@ -13,6 +13,7 @@ builder.Services.AddEarmarkedCore(builder.Configuration);
 builder.Services.AddEarmarkedTranscription(builder.Configuration);
 builder.Services.AddEarmarkedExtraction(builder.Configuration);
 builder.Services.AddEarmarkedBookLookup(builder.Configuration);
+builder.Services.AddEarmarkedNotifications(builder.Configuration);
 builder.Services.Configure<HealthCheckPublisherOptions>(o =>
 {
     o.Delay = TimeSpan.FromSeconds(10);

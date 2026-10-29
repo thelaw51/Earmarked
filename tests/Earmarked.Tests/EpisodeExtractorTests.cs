@@ -6,6 +6,7 @@ using Earmarked.Core.Backends;
 using Earmarked.Core.Configuration;
 using Earmarked.Core.Data;
 using Earmarked.Core.Extraction;
+using Earmarked.Core.Notifications;
 using Earmarked.Core.Pipeline;
 using Earmarked.Core.Transcripts;
 
@@ -176,6 +177,55 @@ public sealed class EpisodeExtractorTests : IAsyncLifetime
         Assert.NotNull(failed.Transcript);
     }
 
+    [Fact]
+    public async Task Queues_a_notification_listing_the_books_in_the_same_save_as_the_mentions()
+    {
+        Assert.Equal(WorkOutcome.Worked, await Extractor(waitForTranscription: false, notifications: Outbox()).ProcessNextAsync(Ct));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var notice = await db.Notifications.SingleAsync(Ct);
+        Assert.Equal((NotificationKind.EpisodeExtracted, NotificationState.Pending, "2 books found"), (notice.Kind, notice.State, notice.Title));
+        Assert.StartsWith("Ines Calder on lighthouses (A Show)", notice.Body, StringComparison.Ordinal);
+        Assert.Contains("- Small Rivers", notice.Body, StringComparison.Ordinal);
+        Assert.Contains("- The Lighthouse Keeper's Almanac", notice.Body, StringComparison.Ordinal);
+        Assert.Equal($"https://earmarked.example.com/episodes/{_episodeId}", notice.ClickUrl);
+    }
+
+    [Theory]
+    [InlineData(false, null)]
+    [InlineData(true, "No books found")]
+    public async Task Notifies_about_an_episode_without_books_only_when_asked(bool withoutBooks, string? expected)
+    {
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            var transcript = await db.Transcripts.SingleAsync(t => t.EpisodeId == _episodeId, Ct);
+            transcript.Segments = [new(TimeSpan.Zero, null, null, "Nothing about books here at all.")];
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await Extractor(waitForTranscription: false, notifications: Outbox(withoutBooks)).ProcessNextAsync(Ct);
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(expected, (await check.Notifications.SingleOrDefaultAsync(Ct))?.Title);
+    }
+
+    [Fact]
+    public async Task Queues_a_failure_notice_without_the_error_text_when_extraction_gives_up()
+    {
+        _backend.Failure = () => new ExtractionFailedException("Extraction backend returned HTTP 500: secret detail");
+        var extractor = Extractor(waitForTranscription: false, notifications: Outbox());
+
+        await extractor.ProcessNextAsync(Ct);
+        await SetAsync(e => e.NextAttemptAt = DateTime.UtcNow.AddMinutes(-1));
+        await extractor.ProcessNextAsync(Ct);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var notice = await db.Notifications.SingleAsync(Ct);
+        Assert.Equal((NotificationKind.EpisodeFailed, "An episode's book extraction gave up"), (notice.Kind, notice.Title));
+        Assert.Equal("Ines Calder on lighthouses (A Show) failed 2 times. The episode page has the last error.", notice.Body);
+        Assert.DoesNotContain("secret", notice.Body, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(EpisodeState.New)]
     [InlineData(EpisodeState.AwaitingTranscription)]
@@ -315,12 +365,16 @@ public sealed class EpisodeExtractorTests : IAsyncLifetime
         Assert.Equal(WorkOutcome.Worked, await Extractor(waitForTranscription: true, transcriptionProvider: null).ProcessNextAsync(Ct));
     }
 
-    private EpisodeExtractor Extractor(bool waitForTranscription, string? transcriptionProvider = "OpenAiCompatible") =>
+    private EpisodeExtractor Extractor(bool waitForTranscription, string? transcriptionProvider = "OpenAiCompatible", NotificationOutbox? notifications = null) =>
         new(_dbFactory, _backend, _lock,
             Options.Create(new ExtractionOptions { Provider = "OpenAiCompatible", WindowWords = 20, OverlapWords = 8, WaitForTranscription = waitForTranscription }),
             Options.Create(new TranscriptionOptions { Provider = transcriptionProvider, PublishedTranscriptGraceDays = 3 }),
             Options.Create(new PollingOptions { MaxAttempts = 2 }),
-            TimeProvider.System, NullLogger<EpisodeExtractor>.Instance);
+            TimeProvider.System, NullLogger<EpisodeExtractor>.Instance, notifications);
+
+    private static NotificationOutbox Outbox(bool withoutBooks = false) => new(
+        Options.Create(new NotificationsOptions { Provider = "Ntfy", AppUrl = "https://earmarked.example.com/", EpisodesWithoutBooks = withoutBooks }),
+        TimeProvider.System);
 
     /// <summary>Adds an episode waiting for speech-to-text, published an hour ago, on a podcast of its own.</summary>
     private async Task AddAwaitingAsync(bool publishesTranscripts)

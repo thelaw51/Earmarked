@@ -26,5 +26,12 @@
   },
   "AppleBooks": {
     "Country": "us"
+  },
+  "Notifications": {
+    "Provider": "Ntfy",
+    "BaseUrl": "https://ntfy.example.com",
+    "Topic": "earmarked",
+    "AppUrl": "https://earmarked.example.com",
+    "DailySummaryTime": "21:00"
   }
 }

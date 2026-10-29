@@ -5,6 +5,7 @@ using Earmarked.Core.Backends;
 using Earmarked.Core.Configuration;
 using Earmarked.Core.Data;
 using Earmarked.Core.Extraction;
+using Earmarked.Core.Notifications;
 
 namespace Earmarked.Core.Pipeline;
 
@@ -21,7 +22,8 @@ public sealed partial class EpisodeExtractor(
     IOptions<TranscriptionOptions> transcription,
     IOptions<PollingOptions> polling,
     TimeProvider time,
-    ILogger<EpisodeExtractor> logger)
+    ILogger<EpisodeExtractor> logger,
+    NotificationOutbox? notifications = null)
 {
     /// <summary>States an episode is in once it has a transcript and is ready for extraction.</summary>
     public static readonly EpisodeState[] ReadyStates = [EpisodeState.TranscriptFetched, EpisodeState.Transcribed];
@@ -189,6 +191,8 @@ public sealed partial class EpisodeExtractor(
             tracked.NextAttemptAt = null;
             tracked.LastError = null;
             tracked.UpdatedAt = now;
+            notifications?.EpisodeExtracted(db, episode.Id, podcast, episode.Title,
+                [.. merged.OrderByDescending(m => m.Mention.Confidence).Select(m => m.Mention.Title)]);
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
@@ -217,6 +221,7 @@ public sealed partial class EpisodeExtractor(
             tracked.NextAttemptAt = null;
             tracked.PrioritisedAt = null;
             tracked.LastError = $"Extraction gave up after {tracked.Attempts} attempts: {error}";
+            await AddFailureNoticeAsync(db, tracked, cancellationToken);
         }
         else
         {
@@ -226,6 +231,17 @@ public sealed partial class EpisodeExtractor(
 
         await db.SaveChangesAsync(cancellationToken);
         LogFailed(title, tracked.Attempts, error);
+    }
+
+    private async Task AddFailureNoticeAsync(AppDbContext db, Episode tracked, CancellationToken cancellationToken)
+    {
+        if (notifications is null)
+        {
+            return;
+        }
+
+        var podcast = await db.PodcastFeeds.Where(p => p.Id == tracked.PodcastFeedId).Select(p => p.Title).SingleOrDefaultAsync(cancellationToken);
+        notifications.EpisodeFailed(db, tracked.Id, podcast ?? "Unknown podcast", tracked.Title, "book extraction", tracked.Attempts);
     }
 
     private static string Cap(string value, int max) => value.Length <= max ? value : value[..max];

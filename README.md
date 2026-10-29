@@ -57,6 +57,7 @@ Paste [`docker-compose.yml`](docker-compose.yml) into a new Portainer stack and 
 | `EARMARKED_PORT` | `8742` | Host port for the UI |
 | `EARMARKED_TAG` | `latest` | Image tag both containers run |
 | `EARMARKED_HARDCOVER_TOKEN` | none | Hardcover API token, only if `Hardcover` is in `BookLookup:Fallbacks`. Also uncomment the `EARMARKED_Hardcover__Token` line under the worker. See [Fallback catalogues](#fallback-catalogues). |
+| `EARMARKED_NTFY_TOKEN` | none | ntfy access token, only if notifications are on and your server needs one. Also uncomment the `EARMARKED_Notifications__Token` line under the worker. See [Notifications on your phone](#notifications-on-your-phone). |
 
 The UI is then at `http://<docker-host>:8742`.
 
@@ -310,6 +311,25 @@ The files are built from the same query as the page, at `/books/export.csv`, `/b
 
 The matching rules live in `CatalogMatcher` and know nothing about Open Library. Another catalogue (Google Books, say) needs a new adapter under `src/Earmarked.Core/Providers/BookLookup/` that implements `IBookCatalog` (a search, and the book page's details by catalogue ID), a new name in `BookLookupProviders`, and its registration in `AddEarmarkedBookLookup`; it can then be the `BookLookup:Provider` or one of the `BookLookup:Fallbacks`. Each stored book records the catalogue it came from, and each match the version of the rules (`CatalogMatcher.Version`) that made it; changing the rules and bumping the version re-matches every mention.
 
+## Notifications on your phone
+
+The Worker can push notifications through [ntfy](https://ntfy.sh), either your own server or the public one. Set `Notifications:Provider` to `Ntfy`, with the server's `BaseUrl` and a `Topic`, and these go out:
+
+- **Books found.** One notice per episode once its transcript has been searched, with the podcast, the episode and up to five of the titles found. Episodes with no books stay quiet unless `EpisodesWithoutBooks` is `true`. Expect a burst when a new podcast's backfill goes through.
+- **An episode gave up.** When an episode runs out of transcription or extraction attempts. The notice says which episode and stage; the error itself stays on the episode page, because it can contain a private feed's audio link.
+- **Something is down.** When a backend's row on the Status page has been unhealthy for `BackendAlertAfterMinutes` (5 by default): the transcription server on the Mac, including the case where it answers but rejects all audio, the language model, or a book catalogue. A second notice says when it's healthy again and how long it was out. The wait keeps a sleeping Mac or a catalogue's rate limit from paging you.
+- **A daily summary** at `DailySummaryTime` (21:00 by default) in the container's time zone, so set `TZ` on the worker, as the compose file does. It counts the episodes searched for books, the books found and how many of those already have a catalogue match, the transcripts made and fetched, any episodes that gave up, and the review queue. It covers everything since the previous summary, and goes out even on a quiet day, which also tells you the Worker is alive. If the Worker is down at that time, the summary goes out when it starts again.
+
+Set `Notifications:AppUrl` to the address you open the web app at, and tapping a notice opens the episode, the Status page or the book list.
+
+Notices are stored in the database before they're sent, in the same save as the change they report. If ntfy is down they wait and go out when it's back, up to a day late; older ones are dropped rather than sent in a flood. A message ntfy refuses (a wrong token, or no write access to the topic) is retried a few times, then dropped. ntfy gets its own *notifications* row on the Status page, which also turns red when ntfy refuses messages. It never alerts about itself, because the alert couldn't arrive.
+
+For a server with access control, create a token with `ntfy token add <user>` and set it as `EARMARKED_Notifications__Token`, or use `Username` and `Password`. On the public ntfy.sh, anyone who knows the topic can read it, so pick a long random one. Notices carry podcast and episode titles, book titles and backend error messages, which can include the Mac's address. They never carry feed or audio links.
+
+### Pointing at a different notification service
+
+The pipeline writes notices through `NotificationOutbox` and knows nothing about ntfy. Another service (Pushover, Gotify, a webhook) needs a new adapter under `src/Earmarked.Core/Providers/Notifications/` that implements `INotificationSender`, a new name in `NotificationProviders`, and its registration in `AddEarmarkedNotifications`.
+
 ## Configuration
 
 Settings come from `/config/config.json`, then environment variables prefixed `EARMARKED_` override them. Nested keys use a double underscore: `EARMARKED_Polling__IntervalMinutes=30`.
@@ -345,6 +365,19 @@ Settings come from `/config/config.json`, then environment variables prefixed `E
 | `Extraction:OverlapWords` | `200` | Words each window repeats from the one before |
 | `Extraction:RequestTimeoutMinutes` | `10` | How long one request may take, including loading the model, before it counts as a failure |
 | `Extraction:WaitForTranscription` | `false` | Extract only while transcription has nothing waiting, for one GPU running both models |
+| `Notifications:Provider` | | `Ntfy`, or empty to turn notifications off |
+| `Notifications:BaseUrl` | | The ntfy server, e.g. `https://ntfy.example.com` |
+| `Notifications:Topic` | | The topic to publish to: letters, digits, `-` and `_`, up to 64 |
+| `Notifications:Token` | none | An ntfy access token. Set it as `EARMARKED_Notifications__Token`, not in `config.json`. |
+| `Notifications:Username`, `Notifications:Password` | none | For a server with user accounts instead of tokens. Set the password as an environment variable too. |
+| `Notifications:AppUrl` | none | Where you open the web app, so tapping a notice opens the right page |
+| `Notifications:EpisodeExtracted` | `true` | A notice when an episode's books have been found |
+| `Notifications:EpisodesWithoutBooks` | `false` | Also send that notice for episodes with no books |
+| `Notifications:EpisodeFailures` | `true` | A notice when an episode runs out of attempts |
+| `Notifications:BackendAlerts` | `true` | Notices when a backend goes down and comes back |
+| `Notifications:BackendAlertAfterMinutes` | `5` | How long a backend must stay down before it's reported |
+| `Notifications:DailySummary` | `true` | One summary a day |
+| `Notifications:DailySummaryTime` | `21:00` | When the summary goes out, 24-hour, in the container's `TZ` |
 | `Http:AllowPrivateNetworkFeeds` | `false` | Feeds, transcripts and audio on private or local addresses are refused unless this is `true` |
 
 Private feed URLs (for example a Supporting Cast subscriber feed) contain an access token. The app stores them as entered, but logs and the UI only ever show the host. Their audio URLs often carry the token too, so those are never shown either.

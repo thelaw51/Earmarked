@@ -24,6 +24,9 @@ public static class BackendHealth
     /// </summary>
     public const string Extraction = "extraction";
 
+    /// <summary>The notification server's check name and Status row. Never alerted on: the alert couldn't be delivered.</summary>
+    public const string Notifications = "notifications";
+
     /// <summary>The transcription check's name and Status row.</summary>
     public const string Transcription = "transcription";
 
