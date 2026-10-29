@@ -8,6 +8,7 @@
 #   EARMARKED_PORT  host port for the UI. Default 8742.
 #   EARMARKED_HARDCOVER_TOKEN  Hardcover API token, only if Hardcover is in BookLookup:Fallbacks. Keep it in the stack
 #             variables, not in this file or config.json, and uncomment the line under the worker below.
+#   EARMARKED_NTFY_TOKEN  ntfy access token, only if Notifications is configured and the server needs one. Same rules.
 
 services:
   worker:
@@ -19,6 +20,8 @@ services:
       # Only the Worker searches catalogues. No default on purpose: with Hardcover listed and the variable unset, the
       # Worker refuses to start with "Hardcover:Token is needed" instead of sending an empty token.
       # EARMARKED_Hardcover__Token: ${EARMARKED_HARDCOVER_TOKEN}
+      # Only the Worker sends notifications. TZ above sets when the daily summary goes out.
+      # EARMARKED_Notifications__Token: ${EARMARKED_NTFY_TOKEN}
     volumes:
       - /path/to/earmarked/config:/config:ro
       - /path/to/earmarked/data:/data
