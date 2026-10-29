@@ -11,12 +11,14 @@ using Earmarked.Core.BookLookup;
 using Earmarked.Core.Data;
 using Earmarked.Core.Extraction;
 using Earmarked.Core.Net;
+using Earmarked.Core.Notifications;
 using Earmarked.Core.Pipeline;
 using Earmarked.Core.Providers.BookLookup;
 using Earmarked.Core.Providers.BookLookup.AppleBooks;
 using Earmarked.Core.Providers.BookLookup.Hardcover;
 using Earmarked.Core.Providers.BookLookup.OpenLibrary;
 using Earmarked.Core.Providers.Extraction.OpenAiCompatible;
+using Earmarked.Core.Providers.Notifications.Ntfy;
 using Earmarked.Core.Providers.Transcription.OpenAiCompatible;
 using Earmarked.Core.Transcription;
 
@@ -204,6 +206,55 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp => new BookCatalogChain([.. chain.Select(sp.GetRequiredKeyedService<IBookCatalog>)]));
         services.AddSingleton<MentionMatcher>();
         services.AddSingleton<CatalogSearchRunner>();
+        return services;
+    }
+
+    /// <summary>
+    /// Registers push notifications for the Worker: the configured provider's adapter and health check, the outbox the
+    /// pipeline writes to, the dispatcher and daily summary the Worker's loops run, and, when backend alerts are on, a
+    /// second health-check publisher. Does nothing beyond binding options when no provider is configured.
+    /// </summary>
+    public static IServiceCollection AddEarmarkedNotifications(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddOptions<NotificationsOptions>().Bind(configuration.GetSection(NotificationsOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+        var notifications = configuration.GetSection(NotificationsOptions.Section).Get<NotificationsOptions>() ?? new NotificationsOptions();
+        if (!notifications.Enabled)
+        {
+            return services;
+        }
+
+        switch (notifications.Provider)
+        {
+            case var p when string.Equals(p, NotificationProviders.Ntfy, StringComparison.OrdinalIgnoreCase):
+                // The token or password goes in the Authorization header, which is redacted from HTTP logging.
+                services.AddHttpClient(NtfyNotificationSender.HttpClientName, client =>
+                    {
+                        client.BaseAddress = new Uri(notifications.BaseUrl!.TrimEnd('/') + "/");
+                        client.Timeout = TimeSpan.FromSeconds(20);
+                        client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+                    })
+                    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+                    {
+                        AllowAutoRedirect = false,
+                        ConnectCallback = OutboundConnections.ConnectWithTimeout(TimeSpan.FromSeconds(10)),
+                    })
+                    .RedactLoggedHeaders(["Authorization"]);
+
+                // One instance for both, so the health check sees whether the last message was refused.
+                services.AddSingleton<NtfyNotificationSender>();
+                services.AddSingleton<INotificationSender>(sp => sp.GetRequiredService<NtfyNotificationSender>());
+                services.AddHealthChecks().AddCheck<NtfyHealthCheck>(BackendHealth.Notifications, tags: [BackendHealth.Tag], timeout: BackendHealth.Timeout);
+                break;
+        }
+
+        services.AddSingleton<NotificationOutbox>();
+        services.AddSingleton<NotificationDispatcher>();
+        services.AddSingleton<DailySummary>();
+        if (notifications.BackendAlerts)
+        {
+            services.AddSingleton<IHealthCheckPublisher, BackendAlertPublisher>();
+        }
+
         return services;
     }
 

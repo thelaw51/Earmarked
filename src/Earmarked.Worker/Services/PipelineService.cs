@@ -2,13 +2,15 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Earmarked.Core.Configuration;
 using Earmarked.Core.Data;
+using Earmarked.Core.Notifications;
 using Earmarked.Core.Pipeline;
 
 namespace Earmarked.Worker.Services;
 
 /// <summary>
 /// Runs the Worker's loops side by side: UI commands, scheduled feed polls, transcript fetching, the heartbeat and,
-/// when their providers are configured, transcription, book extraction, book matching and review-page searches.
+/// when their providers are configured, transcription, book extraction, book matching, review-page searches and
+/// notifications.
 /// A loop that throws logs the error and carries on after its delay, so one bad feed or a locked database
 /// doesn't stop the others.
 /// </summary>
@@ -24,7 +26,9 @@ internal sealed partial class PipelineService(
     EpisodeTranscriber? transcriber = null,
     EpisodeExtractor? extractor = null,
     MentionMatcher? matcher = null,
-    CatalogSearchRunner? searches = null) : BackgroundService
+    CatalogSearchRunner? searches = null,
+    NotificationDispatcher? notifications = null,
+    DailySummary? summary = null) : BackgroundService
 {
     private static readonly TimeSpan IdleDelay = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MinPause = TimeSpan.FromSeconds(30);
@@ -63,6 +67,16 @@ internal sealed partial class PipelineService(
         if (searches is not null)
         {
             loops.Add(Loop("catalogue search", TimeSpan.FromSeconds(1), searches.RunPendingAsync, stoppingToken));
+        }
+
+        if (notifications is not null)
+        {
+            loops.Add(Loop("notifications", TimeSpan.FromSeconds(15), notifications.SendPendingAsync, stoppingToken));
+        }
+
+        if (summary is not null)
+        {
+            loops.Add(Loop("daily summary", TimeSpan.FromMinutes(1), summary.RunAsync, stoppingToken));
         }
 
         return Task.WhenAll(loops);
