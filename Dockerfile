@@ -1,7 +1,7 @@
 # One image holds both apps. Compose picks which one runs: `command: ["worker"]` or `command: ["web"]`.
 # Shipping them together keeps the UI and the Worker (which owns migrations) on the same schema version.
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 WORKDIR /src
 
 # Publish for the target platform only, so the image doesn't carry native SQLite builds for every OS and CPU.
