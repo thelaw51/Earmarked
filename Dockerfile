@@ -27,7 +27,7 @@ RUN dotnet publish src/Earmarked.Worker -c Release -r $(cat /tmp/rid) --self-con
  && dotnet publish src/Earmarked.Web -c Release -r $(cat /tmp/rid) --self-contained false -o /app/web \
         ${VERSION:+-p:Version=$VERSION} -p:SourceRevisionId=$SOURCE_REVISION
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM mcr.microsoft.com/dotnet/aspnet:11.0
 
 # ffmpeg splits episode audio into chunks for transcription. It comes before the app files so the layer stays
 # cached between commits; it is rebuilt when the aspnet base image changes.
