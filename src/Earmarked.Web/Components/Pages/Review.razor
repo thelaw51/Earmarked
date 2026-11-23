@@ -322,7 +322,17 @@ else
         {
             _self = DotNetObjectReference.Create(this);
             _module = await JS.InvokeAsync<IJSObjectReference>("import", _closing.Token, $"./{Assets["Components/Pages/Review.razor.js"]}");
-            _shortcuts = await _module.InvokeAsync<IJSObjectReference>("listen", _closing.Token, _self);
+            // No cancellation token: if the page closes mid-call, the listener is still added in the browser, so wait
+            // for its handle and remove it here rather than leave it to the next key press.
+            var shortcuts = await _module.InvokeAsync<IJSObjectReference>("listen", _self);
+            if (_closing.IsCancellationRequested)
+            {
+                await shortcuts.InvokeVoidAsync("dispose");
+                await shortcuts.DisposeAsync();
+                return;
+            }
+
+            _shortcuts = shortcuts;
         }
         catch (Exception ex) when (ex is JSDisconnectedException or OperationCanceledException)
         {

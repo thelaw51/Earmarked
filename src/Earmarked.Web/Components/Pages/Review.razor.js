@@ -15,7 +15,9 @@ export function listen(page) {
         }
 
         event.preventDefault();
-        page.invokeMethodAsync("OnShortcutAsync", key);
+        // A rejected call means the page is gone (its .NET reference was disposed, perhaps before it ever received
+        // this listener's handle), so the listener removes itself instead of swallowing keys for the whole circuit.
+        page.invokeMethodAsync("OnShortcutAsync", key).catch(() => document.removeEventListener("keydown", onKeyDown));
     };
 
     document.addEventListener("keydown", onKeyDown);
