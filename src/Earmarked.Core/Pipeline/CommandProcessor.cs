@@ -88,6 +88,10 @@ public sealed partial class CommandProcessor(
                 await IncludeSkippedAsync(podcastId, command.Count.Value, cancellationToken);
                 break;
 
+            case WorkerCommandType.ReextractEpisodesWithoutBooks when command.PodcastFeedId is Guid podcastId && command.Count is >= 1 and <= MaxIncludeCount:
+                await ReextractWithoutBooksAsync(podcastId, command.Count.Value, cancellationToken);
+                break;
+
             case WorkerCommandType.ReviewDecided when command.LookupKey is { Length: > 0 and <= MaxLookupKeyLength } key:
                 await RematchKeyAsync(key, command.CreatedAt, cancellationToken);
                 break;
@@ -170,7 +174,9 @@ public sealed partial class CommandProcessor(
         }
     }
 
-    /// <summary>The most skipped episodes one command includes, the same ceiling as <c>Polling:BackfillEpisodes</c>.</summary>
+    /// <summary>
+    /// The most episodes one command includes or re-extracts, the same ceiling as <c>Polling:BackfillEpisodes</c>.
+    /// </summary>
     public const int MaxIncludeCount = 1000;
 
     /// <summary>
@@ -258,13 +264,54 @@ public sealed partial class CommandProcessor(
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         await db.BookMentions.Where(m => m.EpisodeId == episodeId).ExecuteDeleteAsync(cancellationToken);
-        episode.State = episode.Transcript.Source == TranscriptSource.Transcribed ? EpisodeState.Transcribed : EpisodeState.TranscriptFetched;
+        QueueForExtraction(episode, episode.Transcript, time.GetUtcNow().UtcDateTime);
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// A podcast's extracted episodes that have a transcript and no book mentions: what
+    /// <see cref="WorkerCommandType.ReextractEpisodesWithoutBooks"/> re-queues, and what the podcast page counts.
+    /// </summary>
+    public static IQueryable<Episode> WithoutBooks(IQueryable<Episode> episodes, Guid podcastId) =>
+        episodes.Where(e => e.PodcastFeedId == podcastId && e.State == EpisodeState.Extracted && e.Transcript != null && !e.Mentions.Any());
+
+    /// <summary>
+    /// Queues a podcast's newest <paramref name="count"/> <see cref="WithoutBooks"/> episodes for extraction again. They
+    /// have no mentions to delete, and they take their normal place in the queue (newest first), not the front, so a
+    /// large batch doesn't hold back newly published episodes.
+    /// </summary>
+    private async Task ReextractWithoutBooksAsync(Guid podcastId, int count, CancellationToken cancellationToken)
+    {
+        using var _ = await stateLock.AcquireAsync(cancellationToken);
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var episodes = await WithoutBooks(db.Episodes, podcastId)
+            .Include(e => e.Transcript)
+            .OrderByDescending(e => e.PublishedAt)
+            .Take(count)
+            .ToListAsync(cancellationToken);
+        if (episodes.Count == 0)
+        {
+            throw new CommandRefusedException("This podcast has no extracted episodes without books left to re-run.");
+        }
+
+        var now = time.GetUtcNow().UtcDateTime;
+        foreach (var episode in episodes)
+        {
+            QueueForExtraction(episode, episode.Transcript!, now);
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>Puts an episode back where the extractor picks it up, by where its transcript came from.</summary>
+    private static void QueueForExtraction(Episode episode, Transcript transcript, DateTime now)
+    {
+        episode.State = transcript.Source == TranscriptSource.Transcribed ? EpisodeState.Transcribed : EpisodeState.TranscriptFetched;
         episode.Attempts = 0;
         episode.NextAttemptAt = null;
         episode.LastError = null;
-        episode.UpdatedAt = time.GetUtcNow().UtcDateTime;
-        await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        episode.UpdatedAt = now;
     }
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Command {Type} ({Id}) failed")]
