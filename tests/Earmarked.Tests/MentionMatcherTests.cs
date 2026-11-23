@@ -821,6 +821,69 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         Assert.Equal(1, _catalog.Calls);
     }
 
+    [Fact]
+    public async Task Skipping_keeps_the_catalogues_match_and_its_doubts()
+    {
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
+        await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", null);
+        await RunUntilIdleAsync();
+        var bookId = await BookIdAsync();
+
+        await DecideAsync("The Lighthouse Keeper's Almanac", null, ReviewVerdict.Skipped);
+        await AddMentionAsync(1, "Lighthouse Keepers Almanac", null);
+        await RunUntilIdleAsync();
+
+        Assert.Equal(WorkOutcome.Idle, await _matcher.ProcessNextAsync(Ct));
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.All(await db.BookMentions.ToListAsync(Ct), m => Assert.Equal(
+            (MatchState.Matched, (Guid?)bookId, MatchDoubts.NoAuthor, CatalogMatcher.Version), (m.MatchState, m.BookId, m.Doubts, m.MatcherVersion)));
+        Assert.Single(await db.Books.ToListAsync(Ct));
+    }
+
+    [Fact]
+    public async Task Skipping_keeps_a_title_the_catalogue_doesnt_have_as_no_match()
+    {
+        _catalog.Answer("The Harbour Case", Almanac);
+        await AddMentionAsync(0, "The Harbour Case", null);
+        await RunUntilIdleAsync();
+
+        await DecideAsync("The Harbour Case", null, ReviewVerdict.Skipped);
+
+        Assert.Equal(WorkOutcome.Idle, await _matcher.ProcessNextAsync(Ct));
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var mention = await db.BookMentions.SingleAsync(Ct);
+        Assert.Equal((MatchState.NoMatch, CatalogMatcher.Version), (mention.MatchState, mention.MatcherVersion));
+        Assert.Empty(await db.Books.ToListAsync(Ct));
+    }
+
+    [Fact]
+    public async Task A_lookup_for_a_skipped_title_is_dropped_when_the_skip_becomes_a_ruling()
+    {
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
+        await InsertDecisionAsync("The Lighthouse Keeper's Almanac", null, ReviewVerdict.Skipped, null, null);
+        await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", null);
+        _catalog.OnSearch = () =>
+        {
+            using var db = _dbFactory.CreateDbContext();
+            db.ReviewDecisions.ExecuteUpdate(s => s
+                .SetProperty(d => d.Verdict, ReviewVerdict.NotABook)
+                .SetProperty(d => d.DecidedAt, DateTime.UtcNow.AddSeconds(1)));
+        };
+
+        Assert.Equal(WorkOutcome.Worked, await _matcher.ProcessNextAsync(Ct));
+
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            var mention = await db.BookMentions.SingleAsync(Ct);
+            Assert.NotEqual(CatalogMatcher.Version, mention.MatcherVersion);
+        }
+
+        _catalog.OnSearch = null;
+        await RunUntilIdleAsync();
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(MatchState.Rejected, (await check.BookMentions.SingleAsync(Ct)).MatchState);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

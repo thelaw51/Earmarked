@@ -85,19 +85,24 @@ public static class Display
     /// <summary>Why a title is in the review list, one short phrase per reason.</summary>
     public static IEnumerable<string> ReasonLabels(ReviewReasons reasons) => ReasonText.Where(r => reasons.HasFlag(r.Reason)).Select(r => r.Label);
 
+    /// <summary>A review verdict as the decisions list names it.</summary>
     public static string VerdictLabel(ReviewVerdict verdict) => verdict switch
     {
         ReviewVerdict.Confirmed => "Confirmed",
         ReviewVerdict.Corrected => "Corrected",
         ReviewVerdict.NotABook => "Not a book",
         ReviewVerdict.KeptAsIs => "Kept as is",
-        _ => "Wrong book",
+        ReviewVerdict.WrongBook => "Wrong book",
+        ReviewVerdict.Skipped => "Skipped",
+        _ => verdict.ToString(),
     };
 
+    /// <summary>Green for a book, amber for a title ruled out, neutral for a skip that ruled on nothing.</summary>
     public static Color VerdictColor(ReviewVerdict verdict) => verdict switch
     {
         ReviewVerdict.Confirmed or ReviewVerdict.Corrected or ReviewVerdict.KeptAsIs => Color.Success,
-        _ => Color.Warning,
+        ReviewVerdict.NotABook or ReviewVerdict.WrongBook => Color.Warning,
+        _ => Color.Default,
     };
 
     public static string KindLabel(MentionKind kind) => kind switch

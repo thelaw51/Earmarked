@@ -50,6 +50,16 @@ public static class ReviewActions
     }
 
     /// <summary>
+    /// Takes a title off the review list without ruling on it. The matcher keeps matching its mentions as if there were
+    /// no decision, so whatever it found stands, and an undo puts the title back on the list if it still has doubts.
+    /// </summary>
+    public static async Task<WorkerCommand> SkipAsync(AppDbContext db, string key, string? note, DateTime now, CancellationToken cancellationToken)
+    {
+        var (title, author) = await MentionedAsync(db, key, cancellationToken);
+        return await SaveAsync(db, key, title, author, ReviewVerdict.Skipped, null, NoPick, Clean(note, ReviewDecision.MaxNoteLength), now, cancellationToken);
+    }
+
+    /// <summary>
     /// Points a title at a book the person picked from a search. The pick is copied from the stored search result with
     /// that catalogue ID, never from the page, and checked the way the matcher checks it.
     /// </summary>
