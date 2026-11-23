@@ -9,7 +9,7 @@ A book is listed when the excerpt names it or identifies it clearly enough to lo
 Never list these, even when they sound like titles:
 - films and TV shows: "we rewatched Harbour Lights last night"
 - devices, apps, products, brands and shops: an e-reader, a tablet, a phone, an outlet centre
-- newspapers, magazines, websites, journals, papers and articles: "I read it in the Morning Ledger", "a Wikipedia page", "Goodreads reviews"
+- newspapers, magazines, websites, journals, papers and articles: "I read it in the Morning Ledger", "a Wikipedia page", "the reviews on Goodreads"
 - podcasts and shows, including this one: never the podcast's own name from the context
 - ideas, effects, problems, experiments and illusions: "the bystander effect", "the trolley problem"
 - a person's name on its own: "I love Mara Quill" is about a person, not a book
