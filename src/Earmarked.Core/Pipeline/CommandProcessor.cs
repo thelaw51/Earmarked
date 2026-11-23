@@ -89,7 +89,7 @@ public sealed partial class CommandProcessor(
                 break;
 
             case WorkerCommandType.ReviewDecided when command.LookupKey is { Length: > 0 and <= MaxLookupKeyLength } key:
-                await RematchKeyAsync(key, cancellationToken);
+                await RematchKeyAsync(key, command.CreatedAt, cancellationToken);
                 break;
 
             default:
@@ -221,12 +221,17 @@ public sealed partial class CommandProcessor(
     /// state, and mentions keep their current answer until it does. A skip is no ruling, so the matcher's answer already
     /// stands: only <see cref="MatchState.Rejected"/> mentions, which only a ruling produces, are made due. Re-matching
     /// the rest would search every catalogue again for each skip, and a fallback that is down or has an expired token
-    /// could turn a match into a miss that review never sees again.
+    /// could turn a match into a miss that review never sees again. The skip counts only if it was decided no later than
+    /// <paramref name="queuedAt"/>: a command queued before it (an undo, say, with the skip pressed within the command
+    /// poll) still makes every mention due, or the undone pick would stay attached under the skip. <c>ReviewActions</c>
+    /// stamps a decision and its command with the same time, and both come from the web app's clock.
     /// </summary>
-    private async Task RematchKeyAsync(string key, CancellationToken cancellationToken)
+    private async Task RematchKeyAsync(string key, DateTime queuedAt, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var skipped = await db.ReviewDecisions.AnyAsync(d => d.LookupKey == key && d.Verdict == ReviewVerdict.Skipped, cancellationToken);
+        var skipped = await db.ReviewDecisions.AnyAsync(
+            d => d.LookupKey == key && d.Verdict == ReviewVerdict.Skipped && d.DecidedAt <= queuedAt,
+            cancellationToken);
         await db.BookMentions
             .Where(m => m.LookupKey == key && (!skipped || m.MatchState == MatchState.Rejected))
             .ExecuteUpdateAsync(s => s.SetProperty(m => m.MatcherVersion, (string?)null), cancellationToken);

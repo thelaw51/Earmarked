@@ -912,7 +912,7 @@ public sealed class MentionMatcherTests : IAsyncLifetime
             Assert.Equal(MatchState.Rejected, (await db.BookMentions.SingleAsync(Ct)).MatchState);
             await db.ReviewDecisions.ExecuteUpdateAsync(s => s
                 .SetProperty(d => d.Verdict, ReviewVerdict.Skipped)
-                .SetProperty(d => d.DecidedAt, DateTime.UtcNow.AddSeconds(1)), Ct);
+                .SetProperty(d => d.DecidedAt, DateTime.UtcNow), Ct);
         }
 
         await QueueReviewDecidedAsync(CatalogMatcher.LookupKey("The Lighthouse Keeper's Almanac", null));
@@ -921,6 +921,40 @@ public sealed class MentionMatcherTests : IAsyncLifetime
 
         await using var check = await _dbFactory.CreateDbContextAsync(Ct);
         Assert.Equal(MatchState.Matched, (await check.BookMentions.SingleAsync(Ct)).MatchState);
+    }
+
+    [Fact]
+    public async Task A_skip_pressed_before_an_undo_is_processed_still_drops_the_undone_pick()
+    {
+        await AddMentionAsync(0, "Keeper of the Lighthouse", null);
+        await RunUntilIdleAsync();
+        await DecideAsync("Keeper of the Lighthouse", null, ReviewVerdict.Corrected, pick: Almanac);
+        var key = CatalogMatcher.LookupKey("Keeper of the Lighthouse", null);
+
+        // The undo and the skip both land within one command poll: the undo's command runs with the skip already stored.
+        var undoneAt = DateTime.UtcNow;
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            Assert.Equal(MatchState.Matched, (await db.BookMentions.SingleAsync(Ct)).MatchState);
+            await db.ReviewDecisions.ExecuteDeleteAsync(Ct);
+            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.ReviewDecided, LookupKey = key, CreatedAt = undoneAt });
+            db.ReviewDecisions.Add(new ReviewDecision
+            {
+                LookupKey = key,
+                Title = "Keeper of the Lighthouse",
+                Verdict = ReviewVerdict.Skipped,
+                DecidedAt = undoneAt.AddSeconds(1),
+            });
+            db.WorkerCommands.Add(new WorkerCommand { Type = WorkerCommandType.ReviewDecided, LookupKey = key, CreatedAt = undoneAt.AddSeconds(1) });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await _commands.ProcessPendingAsync(Ct);
+        await RunUntilIdleAsync();
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        var mention = await check.BookMentions.SingleAsync(Ct);
+        Assert.Equal((MatchState.NoMatch, (Guid?)null), (mention.MatchState, mention.BookId));
     }
 
     [Fact]
