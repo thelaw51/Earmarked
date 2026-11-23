@@ -144,17 +144,33 @@ public sealed class EpisodeExtractorTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(null)]
-    [InlineData(" ")]
-    public async Task Drops_mentions_without_evidence_that_they_are_books(string? evidence)
+    [InlineData("Welcome Back", null, null)]
+    [InlineData("Welcome Back", null, " ")]
+    [InlineData("A Show", null, "the show")]
+    [InlineData("her book", null, "her book")]
+    [InlineData("Ines Calder", "Ines Calder", "wrote")]
+    public async Task Drops_mentions_that_are_not_books_before_storing(string title, string? author, string? evidence)
     {
-        _backend.Extra = new ExtractedMention("Welcome Back", null, "Welcome back to the show.", MentionKind.Passing, 0.9, evidence);
+        _backend.Extra = new ExtractedMention(title, author, "Welcome back to the show.", MentionKind.Passing, 0.9, evidence);
 
         await _extractor.ProcessNextAsync(Ct);
 
-        var titles = (await LoadAsync()).Mentions.Select(m => m.Title).ToList();
-        Assert.DoesNotContain("Welcome Back", titles);
-        Assert.Equal(2, titles.Count);
+        var episode = await LoadAsync();
+        Assert.Equal(EpisodeState.Extracted, episode.State);
+        Assert.Equal(["Small Rivers", "The Lighthouse Keeper's Almanac"], episode.Mentions.Select(m => m.Title).Order());
+    }
+
+    [Fact]
+    public async Task A_screened_mention_cannot_lend_its_author_to_a_real_book_with_the_same_title()
+    {
+        // Same title key as the real book, but no evidence: merging it first would give Small Rivers this author.
+        _backend.Extra = new ExtractedMention("Small Rivers", "Someone Else", "Welcome back to the show.", MentionKind.OwnBook, 1, null);
+
+        await _extractor.ProcessNextAsync(Ct);
+
+        var rivers = (await LoadAsync()).Mentions.Single(m => m.Title == "Small Rivers");
+        Assert.Null(rivers.Author);
+        Assert.Equal(MentionKind.Recommended, rivers.Kind);
     }
 
     [Fact]
