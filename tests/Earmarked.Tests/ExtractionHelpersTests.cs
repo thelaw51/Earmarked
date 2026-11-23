@@ -83,6 +83,29 @@ public class ExtractionHelpersTests
         Assert.NotNull(QuoteLocator.Find(words, "Red fox!", 0, words.Count));
     }
 
+    [Theory]
+    [InlineData("so I picked up Small Rivers ... it changed everything")]
+    [InlineData("so I picked up Small Rivers… it changed everything")]
+    public void Finds_a_quote_the_model_shortened_with_an_ellipsis(string quote)
+    {
+        var words = Words((0, "So I picked up Small Rivers, which my aunt had left on the train, and honestly"), (9, "it changed everything."));
+
+        var match = QuoteLocator.Find(words, quote, 0, words.Count);
+
+        Assert.Equal(new QuoteMatch(0, words.Count), match);
+    }
+
+    [Fact]
+    public void Ellipsis_pieces_must_be_in_order_and_close_together()
+    {
+        var filler = string.Join(' ', Enumerable.Repeat("and so on", 20));
+        var far = Words((0, $"I picked up Small Rivers {filler} it changed everything"));
+        var reversed = Words((0, "it changed everything, she said, years before I picked up Small Rivers"));
+
+        Assert.Null(QuoteLocator.Find(far, "I picked up Small Rivers ... it changed everything", 0, far.Count));
+        Assert.Null(QuoteLocator.Find(reversed, "I picked up Small Rivers ... it changed everything", 0, reversed.Count));
+    }
+
     [Fact]
     public void Only_searches_the_given_range()
     {
