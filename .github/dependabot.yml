@@ -11,7 +11,19 @@ updates:
     groups:
       dotnet:
         patterns: ["Microsoft.*", "System.*"]
+    # A major .NET version means changing global.json, TargetFramework and
+    # the Docker base images too, so it is done as one planned upgrade.
+    ignore:
+      - dependency-name: "Microsoft.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "System.*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    # See the nuget entry: the SDK and runtime images move with the rest of
+    # the toolchain, never on their own.
+    ignore:
+      - dependency-name: "dotnet/*"
+        update-types: ["version-update:semver-major"]
