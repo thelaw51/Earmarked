@@ -11,6 +11,7 @@ public sealed record QuoteMatch(int StartWord, int EndWord);
 /// mentions, and an invented one rarely comes with a quote that's actually there. Comparison ignores case,
 /// punctuation and <c>[mm:ss]</c> markers. An exact word-for-word match wins; otherwise a passage of the same length
 /// sharing at least 80% of the quote's words counts, which absorbs small slips such as "Calder" for "Caldor".
+/// A quote the model shortened with an ellipsis is found piece by piece, in order and close together.
 /// </summary>
 public static partial class QuoteLocator
 {
@@ -19,11 +20,56 @@ public static partial class QuoteLocator
     /// <summary>Quotes are compared on at most this many words, which bounds the fuzzy search's cost.</summary>
     internal const int MaxQuoteWords = 60;
 
+    /// <summary>The most transcript words an ellipsis may stand for between two pieces of a quote.</summary>
+    internal const int MaxEllipsisGapWords = 40;
+
     /// <summary>Quotes shorter than this must match exactly: a fuzzy match on two or three words means little.</summary>
     private const int MinFuzzyWords = 4;
 
-    /// <summary>Looks for <paramref name="quote"/> in words <paramref name="from"/> up to (not including) <paramref name="to"/>.</summary>
-    public static QuoteMatch? Find(TranscriptWords words, string quote, int from, int to)
+    /// <summary>
+    /// Looks for <paramref name="quote"/> in words <paramref name="from"/> up to (not including) <paramref name="to"/>.
+    /// The match always covers transcript words, so the stored quote comes from the transcript, never the model.
+    /// </summary>
+    public static QuoteMatch? Find(TranscriptWords words, string quote, int from, int to) =>
+        FindPassage(words, quote, from, to) ?? FindAroundEllipses(words, quote, from, to);
+
+    /// <summary>
+    /// Matches each piece of a quote split on "..." or "…" in turn, each starting within
+    /// <see cref="MaxEllipsisGapWords"/> of the previous piece's end. Pieces of one word are skipped, since a single
+    /// word proves nothing, and at least one piece must have <see cref="MinFuzzyWords"/> words or more: short pieces
+    /// match exactly, and filler such as "you know ... I think it's" is in almost any window, so short pieces alone
+    /// would let an invented mention through.
+    /// </summary>
+    private static QuoteMatch? FindAroundEllipses(TranscriptWords words, string quote, int from, int to)
+    {
+        var pieces = EllipsisPattern().Split(quote)
+            .Select(p => (Text: p, Count: Tokens(MarkerPattern().Replace(p, " ")).Count()))
+            .Where(p => p.Count >= 2)
+            .ToList();
+        if (pieces.Count < 2 || !pieces.Any(p => p.Count >= MinFuzzyWords))
+        {
+            return null;
+        }
+
+        QuoteMatch? first = null;
+        var end = from;
+        foreach (var (piece, _) in pieces)
+        {
+            var limit = first is null ? to : Math.Min(to, end + MaxEllipsisGapWords + MaxQuoteWords);
+            if (FindPassage(words, piece, end, limit) is not { } match || (first is not null && match.StartWord - end > MaxEllipsisGapWords))
+            {
+                return null;
+            }
+
+            first ??= match;
+            end = match.EndWord;
+        }
+
+        return new QuoteMatch(first!.StartWord, end);
+    }
+
+    /// <summary>Looks for the quote as one passage: word for word, or by <see cref="FuzzyThreshold"/>.</summary>
+    private static QuoteMatch? FindPassage(TranscriptWords words, string quote, int from, int to)
     {
         var target = Tokens(MarkerPattern().Replace(quote, " ")).Take(MaxQuoteWords).ToArray();
         if (target.Length == 0)
@@ -114,4 +160,7 @@ public static partial class QuoteLocator
 
     [GeneratedRegex(@"\[\d{1,2}(:\d{2}){1,2}\]")]
     private static partial Regex MarkerPattern();
+
+    [GeneratedRegex(@"\.{3,}|…")]
+    private static partial Regex EllipsisPattern();
 }

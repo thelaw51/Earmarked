@@ -11,7 +11,8 @@ namespace Earmarked.Core.Pipeline;
 
 /// <summary>
 /// Finds the books mentioned in one episode at a time: split the stored transcript into overlapping windows, ask the
-/// extractor about each, keep only mentions whose quote is really in the transcript, merge repeats, and store them.
+/// extractor about each, keep only mentions whose quote is really in the transcript and that pass
+/// <see cref="MentionScreen"/>, merge repeats, and store them.
 /// An episode takes a few minutes, so there is no checkpointing: a restart extracts the episode again.
 /// </summary>
 public sealed partial class EpisodeExtractor(
@@ -137,21 +138,30 @@ public sealed partial class EpisodeExtractor(
         var transcript = episode.Transcript!;
         var words = new TranscriptWords(transcript.Segments);
         var podcast = episode.PodcastFeed.Title ?? "Unknown podcast";
+        var context = new ExtractionContext(podcast, episode.Title, episode.Description);
 
         var located = new List<LocatedMention>();
         var rejected = 0;
+        var screened = 0;
         foreach (var window in TranscriptWindows.Split(words, o.WindowWords, o.OverlapWords))
         {
-            var found = await extractor.ExtractAsync(new ExtractionInput(podcast, episode.Title, window.Text), cancellationToken);
+            var found = await extractor.ExtractAsync(new ExtractionInput(context, window.Text), cancellationToken);
             foreach (var mention in found)
             {
-                if (QuoteLocator.Find(words, mention.Quote, window.StartWord, window.EndWord) is { } match)
+                if (QuoteLocator.Find(words, mention.Quote, window.StartWord, window.EndWord) is not { } match)
                 {
-                    located.Add(new LocatedMention(mention, match));
+                    rejected++;
+                    LogQuoteNotFound(mention.Title);
+                }
+                else if (MentionScreen.Check(mention, podcast) is { } reason)
+                {
+                    // Screened before merging, so junk can't lend its author or kind to a real book with the same key.
+                    screened++;
+                    LogScreened(mention.Title, reason);
                 }
                 else
                 {
-                    rejected++;
+                    located.Add(new LocatedMention(mention, match));
                 }
             }
         }
@@ -197,7 +207,7 @@ public sealed partial class EpisodeExtractor(
             await transaction.CommitAsync(cancellationToken);
         }
 
-        LogExtracted(episode.Title, merged.Count, rejected);
+        LogExtracted(episode.Title, merged.Count, rejected, screened);
     }
 
     /// <summary>Counts a failed attempt: back off, or give up after the last attempt. The transcript is kept either way.</summary>
@@ -246,8 +256,14 @@ public sealed partial class EpisodeExtractor(
 
     private static string Cap(string value, int max) => value.Length <= max ? value : value[..max];
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Extracted {Episode}: {Mentions} book mention(s), {Rejected} rejected because their quote isn't in the transcript")]
-    private partial void LogExtracted(string episode, int mentions, int rejected);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Extracted {Episode}: {Mentions} book mention(s), {Rejected} rejected because their quote isn't in the transcript, {Screened} screened out as not books")]
+    private partial void LogExtracted(string episode, int mentions, int rejected, int screened);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Dropped mention {Title}: its quote isn't in the transcript")]
+    private partial void LogQuoteNotFound(string title);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Dropped mention {Title}: {Reason}")]
+    private partial void LogScreened(string title, ScreenReason reason);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Extraction failed for {Episode} (attempt {Attempt}): {Error}")]
     private partial void LogFailed(string episode, int attempt, string error);

@@ -57,14 +57,16 @@ public sealed partial class MentionMatcher(
 
         var key = CatalogMatcher.LookupKey(next.Title, next.Author);
         var decision = await db.ReviewDecisions.AsNoTracking().Where(d => d.LookupKey == key).FirstOrDefaultAsync(cancellationToken);
-        if (decision is not null)
+        // A skip is no ruling: its mentions take the path below, and their saves are guarded on the skip itself.
+        if (decision is { Verdict: not ReviewVerdict.Skipped })
         {
             await ApplyAsync(db, next.Id, key, next.Title, decision, cancellationToken);
             return WorkOutcome.Worked;
         }
 
         // Mentions settled by a decision share this key, so this can reuse their answer. That is safe only because the
-        // decision check above runs first. After an undo, anything reused before ReviewDecided runs is cleared when it does.
+        // decision check above runs first (a skipped key's mentions were matched this way too). After an undo, anything
+        // reused before ReviewDecided runs is cleared when it does.
         // A "not found" is reused only while it is fresh, or a stale one would be copied instead of searched again.
         var noMatchFreshAfter = now - RetryNoMatchAfter;
         var known = await db.BookMentions
@@ -78,7 +80,7 @@ public sealed partial class MentionMatcher(
             // A copied "not found" keeps the time of the search it came from. Stamped with now, two mentions of one title
             // would keep each other fresh by copying in turn, and the title would never be searched again.
             var answeredAt = known.MatchState == MatchState.NoMatch ? known.MatchedAt : null;
-            await SaveAsync(db, next.Id, key, new Answer(known.MatchState, known.BookId, known.Doubts, answeredAt), null, cancellationToken);
+            await SaveAsync(db, next.Id, key, new Answer(known.MatchState, known.BookId, known.Doubts, answeredAt), decision, cancellationToken);
             return WorkOutcome.Worked;
         }
 
@@ -95,13 +97,13 @@ public sealed partial class MentionMatcher(
         catch (CatalogLookupFailedException ex)
         {
             LogLookupFailed(next.Title, ex.Message);
-            await SaveAsync(db, next.Id, key, new Answer(MatchState.LookupFailed, null, MatchDoubts.None), null, cancellationToken);
+            await SaveAsync(db, next.Id, key, new Answer(MatchState.LookupFailed, null, MatchDoubts.None), decision, cancellationToken);
             return WorkOutcome.Worked;
         }
 
         if (found is null)
         {
-            await SaveAsync(db, next.Id, key, new Answer(MatchState.NoMatch, null, MatchDoubts.None), null, cancellationToken);
+            await SaveAsync(db, next.Id, key, new Answer(MatchState.NoMatch, null, MatchDoubts.None), decision, cancellationToken);
             LogNoMatch(next.Title);
         }
         else
@@ -110,7 +112,7 @@ public sealed partial class MentionMatcher(
             var (book, catalog) = found;
             var bookId = await AddBookAsync(db, book with { Provider = catalog.Provider }, cancellationToken);
             var doubts = CatalogMatcher.Doubts(next.Title, next.Author, book) | (catalog == catalogs.Primary ? MatchDoubts.None : MatchDoubts.OtherCatalogue);
-            await SaveAsync(db, next.Id, key, new Answer(MatchState.Matched, bookId, doubts), null, cancellationToken);
+            await SaveAsync(db, next.Id, key, new Answer(MatchState.Matched, bookId, doubts), decision, cancellationToken);
             LogMatched(next.Title, book.Title);
         }
 
@@ -171,7 +173,9 @@ public sealed partial class MentionMatcher(
     /// stop the others or the mentions behind this one. If nothing matched and some fallback couldn't be reached, the
     /// title fails and is tried again after <see cref="RetryFailedAfter"/>, since that catalogue might have had it. A
     /// fallback that answered with an error (a rejected token, a bad answer) counts as not having the book: retrying
-    /// every such title daily would only spend requests on an error the Status page already shows.
+    /// every such title daily would only spend requests on an error the Status page already shows. Only when no
+    /// catalogue found the book, and none was unreachable, does <see cref="CatalogMatcher.PickDespiteAuthor"/> look at
+    /// everything they returned, so a book by the named author, in any catalogue, wins over one that only shares the title.
     /// </summary>
     private async Task<Found?> FindAsync(string title, string? author, CancellationToken cancellationToken)
     {
@@ -182,11 +186,12 @@ public sealed partial class MentionMatcher(
         }
 
         CatalogLookupFailedException? fallbackUnreachable = null;
+        var seen = new List<Found>();
         foreach (var catalog in CatalogMatcher.HasSurname(author) ? catalogs.All : [catalogs.Primary])
         {
             try
             {
-                var book = await SearchAsync(catalog, title, author, cancellationToken);
+                var book = await SearchAsync(catalog, title, author, seen, cancellationToken);
                 if (_failingFallbacks.TryRemove(catalog.Provider, out _))
                 {
                     LogFallbackRecovered(catalog.Provider);
@@ -216,30 +221,44 @@ public sealed partial class MentionMatcher(
             }
         }
 
-        return fallbackUnreachable is null ? null : throw fallbackUnreachable;
+        if (fallbackUnreachable is not null)
+        {
+            throw fallbackUnreachable;
+        }
+
+        return CatalogMatcher.PickDespiteAuthor(title, author, [.. seen.Select(f => f.Book)]) is { } sameTitle
+            ? seen.First(f => ReferenceEquals(f.Book, sameTitle))
+            : null;
     }
 
     /// <summary>
     /// Searches with the author when the model gave one, then by title alone, because catalogues file authors in ways
     /// the model doesn't repeat ("J. R. R." against "J.R.R."). <see cref="CatalogMatcher"/> still checks the surname.
+    /// Adds every candidate it is given to <paramref name="seen"/>, for <see cref="CatalogMatcher.PickDespiteAuthor"/>.
     /// </summary>
-    private static async Task<CatalogBook?> SearchAsync(IBookCatalog catalog, string title, string? author, CancellationToken cancellationToken)
+    private static async Task<CatalogBook?> SearchAsync(IBookCatalog catalog, string title, string? author, List<Found> seen, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(author)
-            && CatalogMatcher.Pick(title, author, await catalog.SearchAsync(title, author, cancellationToken)) is { } withAuthor)
+            && CatalogMatcher.Pick(title, author, Seen(await catalog.SearchAsync(title, author, cancellationToken))) is { } withAuthor)
         {
             return withAuthor;
         }
 
-        if (CatalogMatcher.Pick(title, author, await catalog.SearchAsync(title, null, cancellationToken)) is { } titleOnly)
+        if (CatalogMatcher.Pick(title, author, Seen(await catalog.SearchAsync(title, null, cancellationToken))) is { } titleOnly)
         {
             return titleOnly;
         }
 
         // Catalogues' title search finds nothing for "Title, Long Subtitle" when they list only "Title".
         return CatalogMatcher.MainTitle(title, author) is { } main
-            ? CatalogMatcher.Pick(title, author, await catalog.SearchAsync(main, string.IsNullOrWhiteSpace(author) ? null : author, cancellationToken))
+            ? CatalogMatcher.Pick(title, author, Seen(await catalog.SearchAsync(main, string.IsNullOrWhiteSpace(author) ? null : author, cancellationToken)))
             : null;
+
+        IReadOnlyList<CatalogBook> Seen(IReadOnlyList<CatalogBook> results)
+        {
+            seen.AddRange(results.Select(book => new Found(book, catalog)));
+            return results;
+        }
     }
 
     /// <summary>
@@ -305,7 +324,8 @@ public sealed partial class MentionMatcher(
     /// <summary>
     /// Stores an answer if the mention is still due. With <paramref name="decision"/> null the answer came from the
     /// catalogue or an earlier answer, and is dropped if a decision now exists for the key; otherwise it is dropped if
-    /// that decision has since been changed or undone.
+    /// that decision has since been changed or undone. For a <see cref="ReviewVerdict.Skipped"/> key the answer came from
+    /// the catalogue or reuse too, and is guarded on the skip, so changing it to a ruling mid-lookup drops the answer.
     /// </summary>
     private async Task SaveAsync(AppDbContext db, Guid mentionId, string key, Answer answer, ReviewDecision? decision, CancellationToken cancellationToken)
     {

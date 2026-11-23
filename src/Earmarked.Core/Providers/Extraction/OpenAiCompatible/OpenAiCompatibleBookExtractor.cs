@@ -22,8 +22,14 @@ public sealed class OpenAiCompatibleBookExtractor(IHttpClientFactory httpFactory
     /// <summary>More than this many books in one window means the answer has gone wrong; the rest are dropped.</summary>
     internal const int MaxMentionsPerWindow = 50;
 
+    /// <summary>Evidence is a few words and is never stored; anything longer is cut.</summary>
+    internal const int MaxEvidenceLength = 200;
+
     private const string CompletionsPath = "v1/chat/completions";
     private const int MaxAnswerTokens = 2048;
+
+    /// <summary>Qwen3's soft switch for answering without a reasoning phase. Other models read it as a stray line.</summary>
+    internal const string NoThinkSwitch = "/no_think";
 
     private static readonly JsonObject Schema = BuildSchema();
 
@@ -46,7 +52,7 @@ public sealed class OpenAiCompatibleBookExtractor(IHttpClientFactory httpFactory
             ["messages"] = new JsonArray
             {
                 new JsonObject { ["role"] = "system", ["content"] = ExtractionPrompt.Text },
-                new JsonObject { ["role"] = "user", ["content"] = ExtractionPrompt.UserMessage(input) },
+                new JsonObject { ["role"] = "user", ["content"] = UserContent(input) },
             },
             ["response_format"] = new JsonObject
             {
@@ -99,7 +105,18 @@ public sealed class OpenAiCompatibleBookExtractor(IHttpClientFactory httpFactory
     }
 
     /// <summary>
-    /// Reads the mentions out of a chat completion. Entries with an unknown kind or no title or quote are skipped;
+    /// The user message, ending with <see cref="NoThinkSwitch"/> when <see cref="ExtractionOptions.DisableThinking"/> is
+    /// on. It goes after the transcript block, where the model reads it last and transcript text can't reach it.
+    /// </summary>
+    private string UserContent(ExtractionInput input)
+    {
+        var message = ExtractionPrompt.UserMessage(input);
+        return options.Value.DisableThinking ? $"{message}\n\n{NoThinkSwitch}" : message;
+    }
+
+    /// <summary>
+    /// Reads the mentions out of a chat completion. Entries with an unknown kind or no title or quote are skipped
+    /// (a missing evidence field is kept as null, for the pipeline to drop);
     /// a body that isn't the expected shape fails the request. Lengths are capped to what the database stores.
     /// </summary>
     internal static IReadOnlyList<ExtractedMention> Parse(string body)
@@ -115,7 +132,7 @@ public sealed class OpenAiCompatibleBookExtractor(IHttpClientFactory httpFactory
 
             var content = choice.GetProperty("message").GetProperty("content").GetString()
                 ?? throw new ExtractionFailedException("The model's answer was empty.");
-            using var answer = JsonDocument.Parse(content);
+            using var answer = JsonDocument.Parse(WithoutReasoning(content));
             var mentions = new List<ExtractedMention>();
             foreach (var m in answer.RootElement.GetProperty("mentions").EnumerateArray().Take(MaxMentionsPerWindow))
             {
@@ -132,7 +149,8 @@ public sealed class OpenAiCompatibleBookExtractor(IHttpClientFactory httpFactory
                     String(m, "author") is { } author ? Cap(author, BookMention.MaxAuthorLength) : null,
                     Cap(quote, BookMention.MaxQuoteLength),
                     kind,
-                    confidence));
+                    confidence,
+                    String(m, "evidence") is { } evidence ? Cap(evidence, MaxEvidenceLength) : null));
             }
 
             return mentions;
@@ -146,6 +164,22 @@ public sealed class OpenAiCompatibleBookExtractor(IHttpClientFactory httpFactory
             e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(v.GetString()) ? v.GetString()!.Trim() : null;
 
         static string Cap(string value, int max) => value.Length <= max ? value : value[..max];
+    }
+
+    /// <summary>
+    /// Drops a leading <c>&lt;think&gt;...&lt;/think&gt;</c> block. A server that doesn't hold the answer to the schema
+    /// can put the model's reasoning (often an empty block, even with <c>/no_think</c>) in front of the JSON.
+    /// </summary>
+    internal static string WithoutReasoning(string content)
+    {
+        var trimmed = content.TrimStart();
+        if (!trimmed.StartsWith("<think>", StringComparison.Ordinal))
+        {
+            return content;
+        }
+
+        var end = trimmed.IndexOf("</think>", StringComparison.Ordinal);
+        return end < 0 ? content : trimmed[(end + "</think>".Length)..];
     }
 
     private static JsonObject BuildSchema()
@@ -167,15 +201,18 @@ public sealed class OpenAiCompatibleBookExtractor(IHttpClientFactory httpFactory
                     ["items"] = new JsonObject
                     {
                         ["type"] = "object",
+                        // Quote and evidence come first: servers that enforce the schema generate fields in this
+                        // order, so the model copies the passage before it names the book.
                         ["properties"] = new JsonObject
                         {
+                            ["quote"] = new JsonObject { ["type"] = "string" },
+                            ["evidence"] = new JsonObject { ["type"] = "string" },
                             ["title"] = new JsonObject { ["type"] = "string" },
                             ["author"] = new JsonObject { ["type"] = new JsonArray("string", "null") },
-                            ["quote"] = new JsonObject { ["type"] = "string" },
                             ["kind"] = new JsonObject { ["type"] = "string", ["enum"] = kinds },
                             ["confidence"] = new JsonObject { ["type"] = "number" },
                         },
-                        ["required"] = new JsonArray("title", "author", "quote", "kind", "confidence"),
+                        ["required"] = new JsonArray("quote", "evidence", "title", "author", "kind", "confidence"),
                         ["additionalProperties"] = false,
                     },
                 },

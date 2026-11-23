@@ -177,6 +177,39 @@ public sealed class ReviewTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Skipping_saves_the_decision_with_its_command_and_takes_the_key_off_the_backlog()
+    {
+        await AddMentionAsync(0, "Small Rivers", null, MatchState.NoMatch);
+        await AddMentionAsync(1, "The Lighthouse Keeper's Almanac", "Calder", MatchState.Matched, doubts: MatchDoubts.FewEditions);
+
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            await ReviewActions.SkipAsync(db, Key("Small Rivers", null), "  later ", Now, Ct);
+        }
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        var decision = await check.ReviewDecisions.SingleAsync(Ct);
+        var command = await check.WorkerCommands.SingleAsync(Ct);
+        Assert.Equal((ReviewVerdict.Skipped, "Small Rivers", "later", (Guid?)null, (CatalogBook?)null),
+            (decision.Verdict, decision.Title, decision.Note, decision.BookId, decision.Pick));
+        Assert.Equal((WorkerCommandType.ReviewDecided, decision.LookupKey), (command.Type, command.LookupKey));
+        Assert.Equal([Key("The Lighthouse Keeper's Almanac", "Calder")], (await ReviewBacklog.LoadAsync(check, Ct)).Select(i => i.LookupKey));
+        Assert.Equal(1, await ReviewBacklog.CountAsync(check, Ct));
+    }
+
+    [Fact]
+    public async Task Skipping_a_key_no_mention_has_is_refused()
+    {
+        await AddMentionAsync(0, "Small Rivers", null, MatchState.NoMatch);
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+
+        await Assert.ThrowsAsync<ReviewActionException>(() => ReviewActions.SkipAsync(db, "made up|key", null, Now, Ct));
+
+        Assert.Empty(await db.ReviewDecisions.ToListAsync(Ct));
+        Assert.Empty(await db.WorkerCommands.ToListAsync(Ct));
+    }
+
+    [Fact]
     public async Task Confirming_takes_the_book_from_the_mentions_and_needs_one()
     {
         await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", "Calder", MatchState.Matched, doubts: MatchDoubts.FewEditions);

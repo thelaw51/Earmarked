@@ -65,4 +65,11 @@ public enum ReviewVerdict
     /// typed, as a <c>Manual</c> entry with no link, and the matcher adds it as a <see cref="Book"/>.
     /// </summary>
     KeptAsIs = 4,
+
+    /// <summary>
+    /// The person doesn't want to rule on it. The matcher's own answer stands (a match stays matched, a title not found
+    /// stays not found) and the key leaves the review queue. The one verdict the matcher doesn't apply: its mentions are
+    /// matched as if there were no decision.
+    /// </summary>
+    Skipped = 5,
 }
