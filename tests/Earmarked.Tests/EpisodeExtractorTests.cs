@@ -321,6 +321,86 @@ public sealed class EpisodeExtractorTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Search_again_requeues_only_the_newest_extracted_episodes_without_books()
+    {
+        await _extractor.ProcessNextAsync(Ct);
+        Guid podcastId, newer, older, failed, otherPodcast;
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            podcastId = (await db.Episodes.SingleAsync(Ct)).PodcastFeedId;
+            var other = new PodcastFeed { FeedUrl = "https://feeds.test/other.xml", Title = "Another Show", AddedAt = DateTime.UtcNow };
+            newer = AddExtracted(db, podcastId, "ep-2", DateTime.UtcNow.AddDays(-1), EpisodeState.Extracted, TranscriptSource.Feed);
+            older = AddExtracted(db, podcastId, "ep-3", DateTime.UtcNow.AddDays(-5), EpisodeState.Extracted, TranscriptSource.Transcribed);
+            failed = AddExtracted(db, podcastId, "ep-4", DateTime.UtcNow, EpisodeState.ExtractionFailed, TranscriptSource.Transcribed);
+            db.PodcastFeeds.Add(other);
+            await db.SaveChangesAsync(Ct);
+            otherPodcast = AddExtracted(db, other.Id, "ep-5", DateTime.UtcNow, EpisodeState.Extracted, TranscriptSource.Transcribed);
+            await db.SaveChangesAsync(Ct);
+
+            Assert.Equal(2, await CommandProcessor.WithoutBooks(db.Episodes, podcastId).CountAsync(Ct));
+            db.WorkerCommands.Add(new WorkerCommand
+            {
+                Type = WorkerCommandType.ReextractEpisodesWithoutBooks, PodcastFeedId = podcastId, Count = 1, CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await _commands.ProcessPendingAsync(Ct);
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        var states = await check.Episodes.ToDictionaryAsync(e => e.Id, e => e.State, Ct);
+        Assert.Equal(EpisodeState.TranscriptFetched, states[newer]);
+        Assert.Equal(EpisodeState.Extracted, states[older]);
+        Assert.Equal(EpisodeState.ExtractionFailed, states[failed]);
+        Assert.Equal(EpisodeState.Extracted, states[otherPodcast]);
+        Assert.Equal(EpisodeState.Extracted, states[_episodeId]);
+        Assert.Equal(2, await check.BookMentions.CountAsync(m => m.EpisodeId == _episodeId, Ct));
+        Assert.Null((await check.WorkerCommands.SingleAsync(Ct)).Error);
+    }
+
+    [Fact]
+    public async Task Search_again_is_refused_when_every_episode_has_books()
+    {
+        await _extractor.ProcessNextAsync(Ct);
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            var podcastId = (await db.Episodes.SingleAsync(Ct)).PodcastFeedId;
+            db.WorkerCommands.Add(new WorkerCommand
+            {
+                Type = WorkerCommandType.ReextractEpisodesWithoutBooks, PodcastFeedId = podcastId, Count = 5, CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await _commands.ProcessPendingAsync(Ct);
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Contains("no extracted episodes without books", (await check.WorkerCommands.SingleAsync(Ct)).Error, StringComparison.Ordinal);
+        Assert.Equal(EpisodeState.Extracted, (await LoadAsync()).State);
+    }
+
+    /// <summary>Adds an episode that has finished extraction with no mentions, with a one-line transcript.</summary>
+    private static Guid AddExtracted(AppDbContext db, Guid podcastId, string key, DateTime publishedAt, EpisodeState state, TranscriptSource source)
+    {
+        var episode = new Episode
+        {
+            PodcastFeedId = podcastId,
+            IdentityKey = key,
+            Title = $"Episode {key}",
+            PublishedAt = publishedAt,
+            State = state,
+            Transcript = new Transcript
+            {
+                Source = source,
+                Format = TranscriptFormat.SpeechToText,
+                Segments = [new(TimeSpan.Zero, null, null, "Welcome back to the show.")],
+            },
+        };
+        db.Episodes.Add(episode);
+        return episode.Id;
+    }
+
+    [Fact]
     public async Task Resetting_an_episode_deletes_its_mentions_with_its_transcript()
     {
         await _extractor.ProcessNextAsync(Ct);
