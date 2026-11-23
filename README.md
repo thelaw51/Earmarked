@@ -207,12 +207,13 @@ The Worker talks to OpenAI's `POST /v1/audio/transcriptions` and needs `verbose_
 With `Extraction:Provider` set, the Worker looks for books in every episode that has a transcript:
 
 1. The transcript is cut into windows of `Extraction:WindowWords` words, each repeating the last `Extraction:OverlapWords` of the one before, so a mention at a boundary isn't cut in half.
-2. Each window goes to the language model with the podcast and episode titles (the episode title usually names the guest) and the instructions in [`book-mentions-v1.txt`](src/Earmarked.Core/Extraction/Prompts/book-mentions-v1.txt). The model answers in JSON, held to a schema: title, author, a short quote, the kind of mention, and a confidence.
-3. Small models invent books, so a mention is kept only if its quote is really in the transcript. Matching ignores case and punctuation and allows small slips. The stored quote and timestamp come from the transcript, not the model.
-4. Repeats of the same title within an episode are merged, keeping the earliest mention.
-5. The mentions are stored with the provider, model and prompt version that produced them. *Re-run book extraction* on the episode page deletes them and extracts again from the stored transcript, without transcribing again.
+2. Each window goes to the language model with the instructions in [`book-mentions-v2.txt`](src/Earmarked.Core/Extraction/Prompts/book-mentions-v2.txt) and the episode's context: the podcast's name, the episode title and the first 1,200 characters of the show notes. These usually name the guest and their book, so "my new book" can be resolved, and they tell the model the show's own name, which it must never list. The model answers in JSON, held to a schema: a short quote, the words that show it is a book (the evidence), title, author, the kind of mention, and a confidence. With `Extraction:DisableThinking` on (the default), each request ends with Qwen3's `/no_think`, so the model doesn't spend its answer budget reasoning.
+3. Small models invent books, so a mention is kept only if its quote is really in the transcript. Matching ignores case and punctuation and allows small slips, and a quote the model shortened with "..." is matched piece by piece. The stored quote and timestamp come from the transcript, not the model.
+4. Mentions that can't be books are dropped: no evidence, the show's own name, a podcast or film, a reference such as "her book" or "the Quill books", the author's name as the title, and a few newspapers, devices and websites (`MentionScreen`). The Worker's log counts them per episode, and lists each at Debug level.
+5. Repeats of the same title within an episode are merged, keeping the earliest mention.
+6. The mentions are stored with the provider, model and prompt version that produced them. *Re-run book extraction* on the episode page deletes them and extracts again from the stored transcript, without transcribing again.
 
-Some mentions aren't books: a newspaper, a court case, a vague "my second book". Matching in Open Library, next, keeps those off the book list.
+Some mentions still aren't books: a court case, a vague reference the screen doesn't recognise. Matching in Open Library, next, keeps most of those off the book list.
 
 Pausing works as for transcription: an unreachable backend, or a model it doesn't have, pauses extraction without counting it against the episode; a failed or timed-out request uses up one of `Polling:MaxAttempts`, after which the episode shows *Book extraction failed* and keeps its transcript.
 
@@ -224,7 +225,7 @@ The default setup runs [LM Studio](https://lmstudio.ai) on the same Mac as the t
 2. Start the server on your network: `lms server start --bind 0.0.0.0 --port 1234`, or in LM Studio's Developer tab turn on *Serve on Local Network*.
 3. Make it start by itself: in the Developer tab's server settings, turn on starting the server when the app launches, and add LM Studio to your login items.
 4. Leave *Just-in-Time model loading* on. The first request loads the model (allowed for by `Extraction:RequestTimeoutMinutes`), and LM Studio unloads it after an idle hour.
-5. Keep the default context length at 8,192 tokens or more. A 1,800-word window needs about 4,500 with the instructions and the answer. If you lower it, lower `Extraction:WindowWords` too.
+5. Keep the default context length at 8,192 tokens or more. A 1,800-word window needs about 5,300 with the instructions, the show notes and the answer. If you lower it, lower `Extraction:WindowWords` too.
 
 On a Mac with 16 GB, whisper and the model together can run the GPU out of memory, and whisper then rejects every file until it restarts. Two settings keep them apart. Turn on `Extraction:WaitForTranscription`: the Worker then extracts only when transcription has nothing due, so a backlog is transcribed first and its books follow. It stops waiting whenever the Status page's *transcription* row is unhealthy (whisper down or broken leaves the GPU free), and episodes you mark *Do this next* never wait. A pause that doesn't come from whisper, such as `Transcription:MinFreeDiskGb` running short, leaves the row healthy, so extraction waits until that is fixed too. New transcription work that arrives during an extraction still starts at once, so the two can overlap for a few minutes. Then lower LM Studio's idle time-to-live (Developer → Server Settings → *Max idle TTL*) to about 5 minutes, so the model leaves memory soon after extraction stops. During a large backfill, no books appear until transcription catches up.
 
@@ -365,6 +366,7 @@ Settings come from `/config/config.json`, then environment variables prefixed `E
 | `Extraction:OverlapWords` | `200` | Words each window repeats from the one before |
 | `Extraction:RequestTimeoutMinutes` | `10` | How long one request may take, including loading the model, before it counts as a failure |
 | `Extraction:WaitForTranscription` | `false` | Extract only while transcription has nothing waiting, for one GPU running both models |
+| `Extraction:DisableThinking` | `true` | End each request with `/no_think`, which turns off Qwen3's reasoning; other models see a stray line |
 | `Notifications:Provider` | | `Ntfy`, or empty to turn notifications off |
 | `Notifications:BaseUrl` | | The ntfy server, e.g. `https://ntfy.example.com` |
 | `Notifications:Topic` | | The topic to publish to: letters, digits, `-` and `_`, up to 64 |
