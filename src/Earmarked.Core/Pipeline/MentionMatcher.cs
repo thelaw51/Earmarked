@@ -171,7 +171,9 @@ public sealed partial class MentionMatcher(
     /// stop the others or the mentions behind this one. If nothing matched and some fallback couldn't be reached, the
     /// title fails and is tried again after <see cref="RetryFailedAfter"/>, since that catalogue might have had it. A
     /// fallback that answered with an error (a rejected token, a bad answer) counts as not having the book: retrying
-    /// every such title daily would only spend requests on an error the Status page already shows.
+    /// every such title daily would only spend requests on an error the Status page already shows. Only when no
+    /// catalogue found the book, and none was unreachable, does <see cref="CatalogMatcher.PickDespiteAuthor"/> look at
+    /// everything they returned, so a book by the named author, in any catalogue, wins over one that only shares the title.
     /// </summary>
     private async Task<Found?> FindAsync(string title, string? author, CancellationToken cancellationToken)
     {
@@ -182,11 +184,12 @@ public sealed partial class MentionMatcher(
         }
 
         CatalogLookupFailedException? fallbackUnreachable = null;
+        var seen = new List<Found>();
         foreach (var catalog in CatalogMatcher.HasSurname(author) ? catalogs.All : [catalogs.Primary])
         {
             try
             {
-                var book = await SearchAsync(catalog, title, author, cancellationToken);
+                var book = await SearchAsync(catalog, title, author, seen, cancellationToken);
                 if (_failingFallbacks.TryRemove(catalog.Provider, out _))
                 {
                     LogFallbackRecovered(catalog.Provider);
@@ -216,30 +219,44 @@ public sealed partial class MentionMatcher(
             }
         }
 
-        return fallbackUnreachable is null ? null : throw fallbackUnreachable;
+        if (fallbackUnreachable is not null)
+        {
+            throw fallbackUnreachable;
+        }
+
+        return CatalogMatcher.PickDespiteAuthor(title, author, [.. seen.Select(f => f.Book)]) is { } sameTitle
+            ? seen.First(f => ReferenceEquals(f.Book, sameTitle))
+            : null;
     }
 
     /// <summary>
     /// Searches with the author when the model gave one, then by title alone, because catalogues file authors in ways
     /// the model doesn't repeat ("J. R. R." against "J.R.R."). <see cref="CatalogMatcher"/> still checks the surname.
+    /// Adds every candidate it is given to <paramref name="seen"/>, for <see cref="CatalogMatcher.PickDespiteAuthor"/>.
     /// </summary>
-    private static async Task<CatalogBook?> SearchAsync(IBookCatalog catalog, string title, string? author, CancellationToken cancellationToken)
+    private static async Task<CatalogBook?> SearchAsync(IBookCatalog catalog, string title, string? author, List<Found> seen, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(author)
-            && CatalogMatcher.Pick(title, author, await catalog.SearchAsync(title, author, cancellationToken)) is { } withAuthor)
+            && CatalogMatcher.Pick(title, author, Seen(await catalog.SearchAsync(title, author, cancellationToken))) is { } withAuthor)
         {
             return withAuthor;
         }
 
-        if (CatalogMatcher.Pick(title, author, await catalog.SearchAsync(title, null, cancellationToken)) is { } titleOnly)
+        if (CatalogMatcher.Pick(title, author, Seen(await catalog.SearchAsync(title, null, cancellationToken))) is { } titleOnly)
         {
             return titleOnly;
         }
 
         // Catalogues' title search finds nothing for "Title, Long Subtitle" when they list only "Title".
         return CatalogMatcher.MainTitle(title, author) is { } main
-            ? CatalogMatcher.Pick(title, author, await catalog.SearchAsync(main, string.IsNullOrWhiteSpace(author) ? null : author, cancellationToken))
+            ? CatalogMatcher.Pick(title, author, Seen(await catalog.SearchAsync(main, string.IsNullOrWhiteSpace(author) ? null : author, cancellationToken)))
             : null;
+
+        IReadOnlyList<CatalogBook> Seen(IReadOnlyList<CatalogBook> results)
+        {
+            seen.AddRange(results.Select(book => new Found(book, catalog)));
+            return results;
+        }
     }
 
     /// <summary>
