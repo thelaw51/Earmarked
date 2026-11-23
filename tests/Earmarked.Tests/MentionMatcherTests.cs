@@ -116,6 +116,34 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_book_with_the_title_but_another_author_goes_to_review_once_every_search_misses()
+    {
+        _catalog.Answer("Small Rivers", Almanac with { Title = "Small Rivers", Authors = ["Tomas Reyne"], EditionCount = 5 });
+        await AddMentionAsync(0, "Small Rivers", "Ines Calder");
+
+        await RunUntilIdleAsync();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var mention = await db.BookMentions.SingleAsync(Ct);
+        Assert.Equal((MatchState.Matched, MatchDoubts.FuzzySurname), (mention.MatchState, mention.Doubts));
+        Assert.Equal(2, _catalog.Calls);
+    }
+
+    [Fact]
+    public async Task A_book_by_the_named_author_beats_an_earlier_one_that_only_shares_the_title()
+    {
+        _catalog.AnswerWithAuthor("Small Rivers", Almanac with { CatalogId = "OL2001W", Title = "Small Rivers", Authors = ["Tomas Reyne"], EditionCount = 40 });
+        _catalog.Answer("Small Rivers", Almanac with { CatalogId = "OL2002W", Title = "Small Rivers", Authors = ["Ines Calder"], EditionCount = 3 });
+        await AddMentionAsync(0, "Small Rivers", "Ines Calder");
+
+        await RunUntilIdleAsync();
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal("OL2002W", (await db.Books.SingleAsync(Ct)).CatalogId);
+        Assert.Equal(MatchDoubts.None, (await db.BookMentions.SingleAsync(Ct)).Doubts);
+    }
+
+    [Fact]
     public async Task Searches_by_title_alone_when_the_author_search_finds_nothing()
     {
         _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac, onlyWithoutAuthor: true);
@@ -639,6 +667,36 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_fallbacks_book_by_the_named_author_beats_the_primarys_book_that_only_shares_the_title()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks);
+        var matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog, apple]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
+        _catalog.Answer("Harbour Lights", HarbourLights with { Authors = ["Tomas Reyne"], EditionCount = 5 });
+        apple.Answer("Harbour Lights", AppleBook("Harbour Lights", "Ines Calder"));
+        await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+
+        await RunUntilIdleAsync(matcher);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        var mention = await db.BookMentions.Include(m => m.Book).SingleAsync(Ct);
+        Assert.Equal((BookLookupProviders.AppleBooks, MatchDoubts.OtherCatalogue), (mention.Book!.Provider, mention.Doubts));
+    }
+
+    [Fact]
+    public async Task A_title_match_by_another_author_waits_while_a_fallback_cant_be_reached()
+    {
+        var apple = new FakeCatalog(BookLookupProviders.AppleBooks) { Throw = new BackendUnavailableException("down") };
+        var matcher = new MentionMatcher(_dbFactory, new BookCatalogChain([_catalog, apple]), TimeProvider.System, NullLogger<MentionMatcher>.Instance);
+        _catalog.Answer("Harbour Lights", HarbourLights with { Authors = ["Tomas Reyne"], EditionCount = 5 });
+        await AddMentionAsync(0, "Harbour Lights", "Ines Calder");
+
+        Assert.Equal(WorkOutcome.Worked, await matcher.ProcessNextAsync(Ct));
+
+        await using var db = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(MatchState.LookupFailed, (await db.BookMentions.SingleAsync(Ct)).MatchState);
+    }
+
+    [Fact]
     public async Task Without_an_author_no_fallback_is_asked()
     {
         var apple = new FakeCatalog(BookLookupProviders.AppleBooks);
@@ -930,6 +988,7 @@ public sealed class MentionMatcherTests : IAsyncLifetime
     private sealed class FakeCatalog(string provider = BookLookupProviders.OpenLibrary) : IBookCatalog
     {
         private readonly Dictionary<string, (CatalogBook Book, bool OnlyWithoutAuthor)> _answers = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, CatalogBook> _authorAnswers = new(StringComparer.OrdinalIgnoreCase);
 
         public string Provider => provider;
         public int Calls { get; private set; }
@@ -940,6 +999,9 @@ public sealed class MentionMatcherTests : IAsyncLifetime
 
         public void Answer(string title, CatalogBook book, bool onlyWithoutAuthor = false) => _answers[title] = (book, onlyWithoutAuthor);
 
+        /// <summary>Answers a search with an author with this book instead, as a catalogue filtering loosely by author might.</summary>
+        public void AnswerWithAuthor(string title, CatalogBook book) => _authorAnswers[title] = book;
+
         public Task<BookDetails?> GetDetailsAsync(string catalogId, CancellationToken cancellationToken) => Task.FromResult<BookDetails?>(null);
 
         public Task<IReadOnlyList<CatalogBook>> SearchAsync(string title, string? author, CancellationToken cancellationToken)
@@ -949,6 +1011,11 @@ public sealed class MentionMatcherTests : IAsyncLifetime
             if (Throw is not null)
             {
                 throw Throw;
+            }
+
+            if (author is not null && _authorAnswers.TryGetValue(title, out var withAuthor))
+            {
+                return Task.FromResult<IReadOnlyList<CatalogBook>>([withAuthor]);
             }
 
             IReadOnlyList<CatalogBook> found = _answers.TryGetValue(title, out var a) && (author is null || !a.OnlyWithoutAuthor) ? [a.Book] : [];

@@ -86,7 +86,10 @@ public enum MatchDoubts
     /// <summary>The model named no author, so only the title and edition count backed the match.</summary>
     NoAuthor = 1,
 
-    /// <summary>The author matched only with one letter out ("Elliot" for "Eliot").</summary>
+    /// <summary>
+    /// The author matched only nearly ("Elliot" for "Eliot", or another word of the name), or not at all: a book with
+    /// the very title and enough editions, taken when nothing by the named author was found.
+    /// </summary>
     FuzzySurname = 2,
 
     /// <summary>The book has few editions, so it may be an obscure title that happens to share the words.</summary>
