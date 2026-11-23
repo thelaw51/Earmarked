@@ -1,4 +1,5 @@
 @page "/podcasts/{Id:guid}"
+@using Earmarked.Core.Backends
 @using Earmarked.Core.Pipeline
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject CommandFeedback Commands
@@ -86,6 +87,17 @@ else
         </MudStack>
     }
 
+    @if (_extractionOn && _withoutBooks > 0)
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-4" Wrap="Wrap.Wrap">
+            <MudText Typo="Typo.body2" Class="muted">Find books again in the newest</MudText>
+            <MudNumericField T="int" @bind-Value="_reextractCount" Min="1" Max="ReextractMax" Variant="Variant.Outlined" Margin="Margin.Dense"
+                             Style="width: 7rem;" aria-label="Number of episodes without books to search again" />
+            <MudText Typo="Typo.body2" Class="muted">of @_withoutBooks episode(s) with none</MudText>
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.ManageSearch" OnClick="ReextractWithoutBooksAsync">Search again</MudButton>
+        </MudStack>
+    }
+
     @if (VisibleEpisodes.Count == 0)
     {
         <EmptyState Title="No episodes to show" Icon="@Icons.Material.Rounded.Headphones">
@@ -137,11 +149,16 @@ else
     private bool _loading = true;
     private bool _showSkipped;
     private int _includeCount = 10;
+    private int _reextractCount = 1;
+    private int _withoutBooks;
+    private bool _extractionOn;
     private string? _error;
 
     private int SkippedCount => _episodes.Count(e => e.State == EpisodeState.Skipped);
 
     private int IncludeMax => Math.Min(SkippedCount, CommandProcessor.MaxIncludeCount);
+
+    private int ReextractMax => Math.Min(_withoutBooks, CommandProcessor.MaxIncludeCount);
 
     private List<EpisodeRow> VisibleEpisodes => _showSkipped ? _episodes : _episodes.Where(e => e.State != EpisodeState.Skipped).ToList();
 
@@ -158,6 +175,8 @@ else
                 .OrderByDescending(e => e.PublishedAt)
                 .Select(e => new EpisodeRow(e.Id, e.Title, e.PublishedAt, e.Duration, e.State, e.LastError))
                 .ToListAsync();
+            _withoutBooks = await CommandProcessor.WithoutBooks(db.Episodes, Id).CountAsync();
+            _extractionOn = await db.WorkerStatuses.AnyAsync(s => s.Name == BackendHealth.Extraction);
             _breadcrumbs = [new("Podcasts", ""), new(_podcast?.Title ?? "Podcast", null, disabled: true)];
             _error = null;
         }
@@ -177,6 +196,14 @@ else
         return Commands.QueueAsync(
             new WorkerCommand { Type = WorkerCommandType.IncludeSkippedEpisodes, PodcastFeedId = Id, Count = count },
             $"Including the {count} newest skipped episode(s). They join the queue in their normal place.");
+    }
+
+    private Task ReextractWithoutBooksAsync()
+    {
+        var count = Math.Clamp(_reextractCount, 1, ReextractMax);
+        return Commands.QueueAsync(
+            new WorkerCommand { Type = WorkerCommandType.ReextractEpisodesWithoutBooks, PodcastFeedId = Id, Count = count },
+            $"Searching the {count} newest episode(s) without books again. They join the extraction queue in their normal place.");
     }
 
     private Task PollAsync() => Commands.QueueAsync(new WorkerCommand { Type = WorkerCommandType.PollFeed, PodcastFeedId = Id }, "Poll queued.");
