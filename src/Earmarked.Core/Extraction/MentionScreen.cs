@@ -62,14 +62,19 @@ public static partial class MentionScreen
     /// </summary>
     private static readonly HashSet<string> CollectionWords = new(StringComparer.Ordinal) { "books", "series" };
 
-    /// <summary>The first rule <paramref name="mention"/> breaks, or null when it may be a book.</summary>
+    /// <summary>
+    /// The first rule <paramref name="mention"/> breaks, or null when it may be a book. The show-name, other-medium and
+    /// site rules apply only to mentions without an author: a screened mention is never stored, so review can't bring
+    /// it back, and a named author is the best sign of a real book with a name like that ("Hidden Brain" by its host,
+    /// "How to Read a Film", "The Wikipedia Revolution").
+    /// </summary>
     public static ScreenReason? Check(ExtractedMention mention, string podcastTitle) =>
         LacksEvidence(mention) ? ScreenReason.NoEvidence
-        : IsShowName(mention.Title, podcastTitle) ? ScreenReason.ShowName
-        : NamesOtherMedium(mention.Title) ? ScreenReason.OtherMedium
+        : mention.Author is null && IsShowName(mention.Title, podcastTitle) ? ScreenReason.ShowName
+        : mention.Author is null && NamesOtherMedium(mention.Title) ? ScreenReason.OtherMedium
         : IsReference(mention.Title, mention.Author) ? ScreenReason.Reference
         : IsAuthorName(mention.Title, mention.Author) ? ScreenReason.AuthorName
-        : IsKnownNonBook(mention.Title) ? ScreenReason.NotABook
+        : IsKnownNonBook(mention.Title, mention.Author) ? ScreenReason.NotABook
         : null;
 
     /// <summary>The prompt asks for the words that show it is a book; a model that gives none is guessing.</summary>
@@ -135,11 +140,13 @@ public static partial class MentionScreen
     }
 
     /// <summary>
-    /// A newspaper or device from <see cref="NonBookTitles"/>, any title naming a site from <see cref="SiteWords"/>,
-    /// or a title that is a web address ("harbourlights.com").
+    /// A newspaper or device from <see cref="NonBookTitles"/>, a title that is a web address ("harbourlights.com"), or,
+    /// without an author, any title naming a site from <see cref="SiteWords"/>.
     /// </summary>
-    internal static bool IsKnownNonBook(string title) =>
-        NonBookTitles.Contains(MentionMerger.TitleKey(title)) || Words(title).Any(SiteWords.Contains) || WebAddress().IsMatch(title);
+    internal static bool IsKnownNonBook(string title, string? author) =>
+        NonBookTitles.Contains(MentionMerger.TitleKey(title))
+        || WebAddress().IsMatch(title)
+        || (author is null && Words(title).Any(SiteWords.Contains));
 
     /// <summary>Lower-case words, letters and digits only, as <see cref="QuoteLocator"/> compares them.</summary>
     private static List<string> Words(string text) =>

@@ -92,7 +92,16 @@ public class MentionScreenTests
     [InlineData("The Times of My Life", false)]
     [InlineData("Kindling", false)]
     public void Known_non_books_are_dropped(string title, bool dropped) =>
-        Assert.Equal(dropped, MentionScreen.IsKnownNonBook(title));
+        Assert.Equal(dropped, MentionScreen.IsKnownNonBook(title, null));
+
+    [Fact]
+    public void A_named_author_keeps_a_title_that_names_the_show_a_medium_or_a_site()
+    {
+        Assert.Null(MentionScreen.Check(Mention("A Show", "Mara Quill"), "A Show"));
+        Assert.Null(MentionScreen.Check(Mention("How to Watch a Film", "Mara Quill"), "A Show"));
+        Assert.Null(MentionScreen.Check(Mention("The Wikipedia Years", "Mara Quill"), "A Show"));
+        Assert.Equal(ScreenReason.NotABook, MentionScreen.Check(Mention("The Wall Street Journal", "Mara Quill"), "A Show"));
+    }
 
     [Fact]
     public void A_real_book_passes_every_rule()
