@@ -107,6 +107,14 @@ public class ExtractionHelpersTests
     }
 
     [Fact]
+    public void Ellipsis_quotes_made_only_of_short_pieces_are_not_found()
+    {
+        var words = Words((0, "you know, the weather was bad, and I think it's fair to say the harbour was closed"));
+
+        Assert.Null(QuoteLocator.Find(words, "you know ... I think it's", 0, words.Count));
+    }
+
+    [Fact]
     public void Only_searches_the_given_range()
     {
         var words = Words((0, "alpha beta gamma delta"), (10, "alpha beta gamma delta"));

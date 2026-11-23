@@ -36,19 +36,24 @@ public static partial class QuoteLocator
     /// <summary>
     /// Matches each piece of a quote split on "..." or "…" in turn, each starting within
     /// <see cref="MaxEllipsisGapWords"/> of the previous piece's end. Pieces of one word are skipped, since a single
-    /// word proves nothing, and the pieces matched must add up to <see cref="MinFuzzyWords"/> words.
+    /// word proves nothing, and at least one piece must have <see cref="MinFuzzyWords"/> words or more: short pieces
+    /// match exactly, and filler such as "you know ... I think it's" is in almost any window, so short pieces alone
+    /// would let an invented mention through.
     /// </summary>
     private static QuoteMatch? FindAroundEllipses(TranscriptWords words, string quote, int from, int to)
     {
-        var pieces = EllipsisPattern().Split(quote).Where(p => Tokens(MarkerPattern().Replace(p, " ")).Skip(1).Any()).ToList();
-        if (pieces.Count < 2 || pieces.Sum(p => Tokens(MarkerPattern().Replace(p, " ")).Count()) < MinFuzzyWords)
+        var pieces = EllipsisPattern().Split(quote)
+            .Select(p => (Text: p, Count: Tokens(MarkerPattern().Replace(p, " ")).Count()))
+            .Where(p => p.Count >= 2)
+            .ToList();
+        if (pieces.Count < 2 || !pieces.Any(p => p.Count >= MinFuzzyWords))
         {
             return null;
         }
 
         QuoteMatch? first = null;
         var end = from;
-        foreach (var piece in pieces)
+        foreach (var (piece, _) in pieces)
         {
             var limit = first is null ? to : Math.Min(to, end + MaxEllipsisGapWords + MaxQuoteWords);
             if (FindPassage(words, piece, end, limit) is not { } match || (first is not null && match.StartWord - end > MaxEllipsisGapWords))
