@@ -274,6 +274,7 @@ public class BookLookupTests
     [InlineData("Lohr", "Lorr")]
     [InlineData("Elton", "Eliot")]
     [InlineData("Calder", "Reyne")]
+    [InlineData("King", "Kingsolver")]
     public void Clearly_different_surnames_still_dont_match(string mentioned, string actual) =>
         Assert.Null(CatalogMatcher.Pick("Small Rivers", $"Ines {mentioned}", [Book("Small Rivers", $"Ines {actual}", editions: 10)]));
 
@@ -284,6 +285,24 @@ public class BookLookupTests
 
         Assert.Same(book, CatalogMatcher.Pick("Small Rivers", "Ines Calder", [book]));
         Assert.Equal(MatchDoubts.FuzzySurname, CatalogMatcher.Doubts("Small Rivers", "Ines Calder", book));
+    }
+
+    [Fact]
+    public void One_part_of_a_double_barrelled_surname_counts_only_as_a_near_match()
+    {
+        var book = Book("Small Rivers", "D. H. Lawrence", editions: 10);
+
+        Assert.Same(book, CatalogMatcher.Pick("Small Rivers", "Ines Lawrence-Mathers", [book]));
+        Assert.Equal(MatchDoubts.FuzzySurname, CatalogMatcher.Doubts("Small Rivers", "Ines Lawrence-Mathers", book));
+    }
+
+    [Fact]
+    public void A_title_that_only_starts_the_candidates_needs_the_same_surname()
+    {
+        var book = Book("Small Rivers Run Deep", "Ines Calder", editions: 10);
+
+        Assert.Null(CatalogMatcher.Pick("Small Rivers Run", "Ines Caldor", [book]));
+        Assert.Same(book, CatalogMatcher.Pick("Small Rivers Run", "Ines Calder", [book]));
     }
 
     [Fact]

@@ -150,7 +150,7 @@ public static partial class CatalogMatcher
             .Where(m => m.Title != TitleMatch.None && !IsDerivative(m.Book, title))
             .Where(m => mention.Surnames.Count == 0
                 ? m.Title != TitleMatch.Prefix && m.Book.EditionCount >= MinEditionsWithoutAuthor
-                : m.Author != AuthorMatch.None)
+                : m.Title == TitleMatch.Prefix ? m.Author == AuthorMatch.Same : m.Author != AuthorMatch.None)
             .OrderBy(m => m.Title == TitleMatch.Whole ? 0 : m.Title == TitleMatch.Prefix ? 2 : 1)
             .ThenBy(m => m.Author)
             .ThenByDescending(m => m.Book.EditionCount)
@@ -228,6 +228,9 @@ public static partial class CatalogMatcher
         /// <summary>Each named author's surname, and the parts of a double-barrelled one.</summary>
         public List<string> Surnames { get; } = [.. SplitAuthors(author).SelectMany(NameForms).Distinct(StringComparer.Ordinal)];
 
+        /// <summary>Each named author's whole surname, the only forms that make <see cref="AuthorMatch.Same"/>.</summary>
+        private HashSet<string> WholeSurnames { get; } = [.. SplitAuthors(author).SelectMany(WholeSurnameSpellings)];
+
         /// <summary>How well a candidate's title matches: see <see cref="TitleMatch"/>.</summary>
         public TitleMatch TitleMatchOf(CatalogBook candidate)
         {
@@ -265,8 +268,9 @@ public static partial class CatalogMatcher
                 return AuthorMatch.None;
             }
 
+            // One part of a double-barrelled surname is only near: "Lawrence-Mathers" isn't "D. H. Lawrence".
             var names = candidate.Authors.SelectMany(SplitAuthors).ToList();
-            if (names.SelectMany(NameForms).Any(form => Surnames.Contains(form, StringComparer.Ordinal)))
+            if (names.SelectMany(WholeSurnameSpellings).Any(WholeSurnames.Contains))
             {
                 return AuthorMatch.Same;
             }
@@ -429,20 +433,47 @@ public static partial class CatalogMatcher
 
     /// <summary>
     /// A name's surname without accents, plus each part of a double-barrelled one: "Lawrence-Mathers" is also
-    /// "lawrence" and "mathers", and "Márquez" is "marquez".
+    /// "lawrence" and "mathers", and "Márquez" is "marquez". A part only ever makes a near match.
     /// </summary>
     private static IEnumerable<string> NameForms(string name)
     {
-        var surname = Surname(name);
-        if (surname.Length == 0)
+        var whole = WholeSurname(name);
+        if (whole.Length == 0)
         {
             yield break;
         }
 
-        yield return WithoutAccents(surname);
+        yield return whole;
         foreach (var part in NameWords(SurnameWord(name) ?? ""))
         {
             yield return part;
+        }
+    }
+
+    /// <summary>A name's surname without accents, or empty when it has none.</summary>
+    private static string WholeSurname(string name) => Surname(name) is { Length: > 0 } surname ? WithoutAccents(surname) : "";
+
+    /// <summary>
+    /// The ways a name's whole surname may be written: <see cref="WholeSurname"/>, and for a name of three words or
+    /// more also its last two run together, because speech-to-text drops the hyphen ("Anne Lawrence Mathers" for
+    /// "Anne Lawrence-Mathers"). One part alone is never a whole surname.
+    /// </summary>
+    private static IEnumerable<string> WholeSurnameSpellings(string name)
+    {
+        var whole = WholeSurname(name);
+        if (whole.Length == 0)
+        {
+            yield break;
+        }
+
+        yield return whole;
+        var words = SurnamePart(name).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Select(w => WithoutAccents(QuoteLocator.Normalise(w)))
+            .Where(w => w.Length > 0 && !NameSuffixes.Contains(w))
+            .ToList();
+        if (words.Count >= 3)
+        {
+            yield return words[^2] + words[^1];
         }
     }
 
@@ -479,7 +510,8 @@ public static partial class CatalogMatcher
 
     /// <summary>
     /// True when a word of a candidate's name is close enough to a mention's surname to be the same name misheard:
-    /// equal; one the start of the other, four letters or more ("Roos" for "Roose", "Burke" for "Burkeman"); or, after
+    /// equal; one the start of the other, four letters or more and at most <see cref="MaxSurnamePrefixGap"/> letters
+    /// short ("Roos" for "Roose", "Burke" for "Burkeman", not "King" for "Kingsolver"); or, after
     /// folding letters that sound alike (c, k and q; v and f; z and s; ph and f; doubled letters), one letter added or
     /// dropped for names of four letters or more ("Rose" for "Roose", but not "Rene" for "Rena"), one letter out for
     /// five letters or more ("Elliot" for "Eliot"), or two out for seven letters or more when the first letter agrees
@@ -494,7 +526,7 @@ public static partial class CatalogMatcher
         }
 
         var (shorter, longer) = surname.Length <= word.Length ? (surname, word) : (word, surname);
-        if (shorter.Length >= 4 && longer.StartsWith(shorter, StringComparison.Ordinal))
+        if (shorter.Length >= 4 && longer.Length - shorter.Length <= MaxSurnamePrefixGap && longer.StartsWith(shorter, StringComparison.Ordinal))
         {
             return true;
         }
@@ -515,6 +547,12 @@ public static partial class CatalogMatcher
         var distance = EditDistance(a, b, 2);
         return distance <= 1 || (distance == 2 && shorter.Length >= 7 && a[0] == b[0]);
     }
+
+    /// <summary>
+    /// The most letters a surname may run past a misheard start of it ("Burke" for "Burkeman"), so "King" isn't
+    /// "Kingsolver".
+    /// </summary>
+    private const int MaxSurnamePrefixGap = 3;
 
     /// <summary>Spells alike what speech-to-text hears alike, for <see cref="IsNearSurname"/> only.</summary>
     private static string Fold(string name)
@@ -597,15 +635,15 @@ public static partial class CatalogMatcher
             return null;
         }
 
-        // "Surname, Given" puts the surname first; "Given Surname, Jr." only looks like it.
-        var parts = name.Split(',', 2);
-        if (parts.Length == 2 && !NameSuffixes.Contains(QuoteLocator.Normalise(parts[1])))
-        {
-            name = parts[0];
-        }
-
-        return name.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+        return SurnamePart(name).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
             .LastOrDefault(w => QuoteLocator.Normalise(w) is { Length: > 0 } normalised && !NameSuffixes.Contains(normalised));
+    }
+
+    /// <summary>The part of a name that ends in its surname: "Surname, Given" puts the surname first; "Given Surname, Jr." only looks like it.</summary>
+    private static string SurnamePart(string name)
+    {
+        var parts = name.Split(',', 2);
+        return parts.Length == 2 && !NameSuffixes.Contains(QuoteLocator.Normalise(parts[1])) ? parts[0] : name;
     }
 
     private static readonly char[] TitleSeparators = [' ', '\t', '\r', '\n', '-', '‐', '‑', '‒', '–', '—'];
