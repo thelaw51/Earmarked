@@ -253,11 +253,14 @@ A person's ruling on a title and author (the match is right, it isn't a book, it
 *Review* (under Library, with a count of open titles) lists one entry per title and author surname that has no decision yet and where the catalogue found nothing, the lookup failed, a match has one of the doubts above, or even the most confident mention scored below 0.6 on the model's own "is this a real book" scale. Each entry shows the matched book if any, why it's listed, how many mentions, episodes and podcasts it covers, and up to three quotes linking to their episodes. You can:
 
 - **Confirm** a match. It leaves the list for good.
+- **Skip** it when you'd rather not decide. The title leaves the list, but nothing is ruled: whatever the catalogue found stands, and later mentions are matched as usual. The title doesn't come back to the list, even when a later mention is doubtful, until you undo the skip. Use it instead of *Not a book* when you're unsure, because a ruling covers every future mention of the title.
 - Mark it **Not a book** (a newspaper, "my last book") or the **Wrong book**, with an optional note. Its mentions leave the book list.
 - **Find the book**: search the catalogue with the title and author, both editable, and pick the right result. With fallback catalogues turned on, the search asks all of them at once, and every result says which catalogue it's from. If one can't be reached, or hasn't answered after 25 seconds, the results that did come back show with a note that the list may be short.
 - **Keep as is**, for a real book the catalogue doesn't have, often because it's too new or self-published. Fix the title and author if the model got them slightly wrong, then *Save as a book*. The book ranks and exports like any other, with no catalogue link and no cover, and its page says it isn't in any catalogue. Keeping the same title again with different text changes that book; undoing it and keeping it again makes a new one. Like any decision, it's applied by the matcher, so with book lookup turned off it waits until lookup is back on.
 
-Decided titles are listed underneath, each with an *Undo*.
+The first title also answers to the keyboard: <kbd>C</kbd> confirm, <kbd>F</kbd> find the book, <kbd>S</kbd> skip, <kbd>N</kbd> not a book. Keys typed in a field are left alone.
+
+Decided titles are listed underneath, each with an *Undo*, and can be filtered by verdict. Filtering on *Not a book* is the quick way to find real books ruled out in a hurry.
 
 The Worker runs these searches, not the web app, so the one-request-a-second pace holds across both: the page saves the search, the Worker answers within a few seconds, and the page waits up to 30 seconds. Five searches can wait at once. Each has 25 seconds from when you asked, counting any time spent queued behind another, so the page gets an answer before it gives up; the Worker deletes them all after a day. A pick is copied from the Worker's stored results, never from the page.
 

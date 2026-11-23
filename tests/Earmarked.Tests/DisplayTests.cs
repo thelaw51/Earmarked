@@ -30,6 +30,27 @@ public class DisplayTests
     }
 
     [Theory]
+    [InlineData(ReviewVerdict.Confirmed, "Confirmed")]
+    [InlineData(ReviewVerdict.Corrected, "Corrected")]
+    [InlineData(ReviewVerdict.NotABook, "Not a book")]
+    [InlineData(ReviewVerdict.WrongBook, "Wrong book")]
+    [InlineData(ReviewVerdict.KeptAsIs, "Kept as is")]
+    [InlineData(ReviewVerdict.Skipped, "Skipped")]
+    public void Every_verdict_has_its_own_label(ReviewVerdict verdict, string label)
+    {
+        Assert.Equal(label, Display.VerdictLabel(verdict));
+    }
+
+    [Fact]
+    public void A_skip_is_neutral_and_rulings_are_coloured()
+    {
+        Assert.Equal(
+            (MudBlazor.Color.Default, MudBlazor.Color.Warning, MudBlazor.Color.Warning, MudBlazor.Color.Success),
+            (Display.VerdictColor(ReviewVerdict.Skipped), Display.VerdictColor(ReviewVerdict.NotABook),
+             Display.VerdictColor(ReviewVerdict.WrongBook), Display.VerdictColor(ReviewVerdict.KeptAsIs)));
+    }
+
+    [Theory]
     [InlineData(EpisodeState.New, 0, false)]
     [InlineData(EpisodeState.AwaitingTranscription, 0, false)]
     [InlineData(EpisodeState.Transcribing, 0, false)]
