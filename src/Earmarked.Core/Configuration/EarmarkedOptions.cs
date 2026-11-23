@@ -155,6 +155,13 @@ public sealed class ExtractionOptions : IValidatableObject
     /// </summary>
     public bool WaitForTranscription { get; set; }
 
+    /// <summary>
+    /// Asks the model to answer without a reasoning phase, by ending each request with Qwen3's <c>/no_think</c>
+    /// switch. Reasoning spends the answer's token budget before any JSON is written. The switch is plain text, so a
+    /// model that doesn't know it just sees a stray line; turn this off for a model that should reason.
+    /// </summary>
+    public bool DisableThinking { get; set; } = true;
+
     public bool Enabled => !string.IsNullOrWhiteSpace(Provider);
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)

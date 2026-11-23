@@ -85,6 +85,29 @@ public class OpenAiCompatibleBookExtractorTests
     }
 
     [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Ends_the_user_message_with_the_no_think_switch_only_when_thinking_is_disabled(bool disable)
+    {
+        var handler = new RecordingHandler(HttpStatusCode.OK, Fixtures.Read("chat-completion-mentions.json"));
+
+        await Extractor(handler, disableThinking: disable).ExtractAsync(Input, Ct);
+
+        using var request = JsonDocument.Parse(handler.LastBody);
+        var user = request.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
+        Assert.Equal(disable, user.EndsWith("</transcript>\n\n/no_think", StringComparison.Ordinal));
+        Assert.False(request.RootElement.TryGetProperty("chat_template_kwargs", out _));
+    }
+
+    [Fact]
+    public void Ignores_a_reasoning_block_in_front_of_the_answer()
+    {
+        var body = Completion("<think>\nThe guest wrote a book.\n</think>\n\n{\"mentions\":[]}");
+
+        Assert.Empty(OpenAiCompatibleBookExtractor.Parse(body));
+    }
+
+    [Theory]
     [InlineData(HttpStatusCode.NotFound)]
     [InlineData(HttpStatusCode.ServiceUnavailable)]
     public async Task A_missing_model_or_gateway_error_means_the_backend_is_unavailable(HttpStatusCode status) =>
@@ -131,12 +154,16 @@ public class OpenAiCompatibleBookExtractorTests
     private static string Completion(string content, string finishReason = "stop") =>
         JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content }, finish_reason = finishReason } } });
 
-    private static IOptions<ExtractionOptions> Options() =>
-        Microsoft.Extensions.Options.Options.Create(new ExtractionOptions { Provider = "OpenAiCompatible", BaseUrl = "http://llm.test:1234", Model = "test-model" });
+    private static IOptions<ExtractionOptions> Options(bool disableThinking = true) =>
+        Microsoft.Extensions.Options.Options.Create(new ExtractionOptions
+        {
+            Provider = "OpenAiCompatible", BaseUrl = "http://llm.test:1234", Model = "test-model", DisableThinking = disableThinking,
+        });
 
     private static HttpClient Client(HttpMessageHandler handler) => new(handler) { BaseAddress = new Uri("http://llm.test:1234/") };
 
-    private static OpenAiCompatibleBookExtractor Extractor(HttpMessageHandler handler) => new(new SingleClientFactory(Client(handler)), Options());
+    private static OpenAiCompatibleBookExtractor Extractor(HttpMessageHandler handler, bool disableThinking = true) =>
+        new(new SingleClientFactory(Client(handler)), Options(disableThinking));
 
     private static ServiceProvider RealServices(string baseUrl)
     {
