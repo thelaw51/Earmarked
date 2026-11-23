@@ -3,11 +3,12 @@
 @using Earmarked.Core.BookLookup
 @using Earmarked.Core.Books
 @using Earmarked.Core.Configuration
-@implements IDisposable
+@implements IAsyncDisposable
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject TimeProvider Time
 @inject ISnackbar Snackbar
 @inject CommandFeedback Commands
+@inject IJSRuntime JS
 @inject ILogger<Review> Logger
 
 <PageTitle>Review</PageTitle>
@@ -47,6 +48,13 @@ else
         <MudText Typo="Typo.h6">To review</MudText>
         <span class="count-badge">@_items.Count</span>
     </div>
+    @if (_items.Count > 0)
+    {
+        <MudText Typo="Typo.caption" Class="muted d-block mb-3">
+            Keys for the first title: <kbd>C</kbd> confirm, <kbd>F</kbd> find the book, <kbd>S</kbd> skip, <kbd>N</kbd> not a book.
+            Skip when you'd rather not decide: the catalogue's answer stands and every later mention is still matched.
+        </MudText>
+    }
     @if (_items.Count == 0)
     {
         <EmptyState Title="Nothing to review" Icon="@Icons.Material.Rounded.TaskAlt">
@@ -59,6 +67,8 @@ else
             @foreach (var item in _items)
             {
                 var busy = _busyKey == item.LookupKey;
+                // Only the first card answers to the keyboard, so only its buttons announce their keys.
+                var first = item == _items[0];
                 <div class="surface-card pa-4" @key="item.LookupKey">
                     <div class="d-flex gap-4 align-start">
                         @if (Display.HttpsOrNull(item.Book?.CoverUrl) is { } cover)
@@ -111,18 +121,24 @@ else
                         </blockquote>
                     }
 
+                    @* Ordered to lead to a real answer: confirm or find the book first, skip when unsure, and rule a title out last. *@
                     <div class="d-flex flex-wrap gap-2 align-center mt-4">
                         @if (item.Book is not null)
                         {
                             <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" StartIcon="@Icons.Material.Rounded.Check"
-                                       Disabled="busy" OnClick="@(() => ConfirmAsync(item))">Confirm</MudButton>
-                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.SwapHoriz"
+                                       Disabled="busy" OnClick="@(() => ConfirmAsync(item))" aria-keyshortcuts="@(first ? "C" : null)">Confirm</MudButton>
+                        }
+                        <MudButton Variant="@(item.Book is null ? Variant.Filled : Variant.Outlined)" Color="Color.Primary" DropShadow="false" StartIcon="@Icons.Material.Rounded.ManageSearch"
+                                   Disabled="@(busy || !_lookupOn)" OnClick="@(() => OpenSearch(item))" aria-keyshortcuts="@(first ? "F" : null)">Find the book</MudButton>
+                        <MudButton Variant="Variant.Text" Color="Color.Default" StartIcon="@Icons.Material.Rounded.SkipNext"
+                                   Disabled="busy" OnClick="@(() => SkipAsync(item))" aria-keyshortcuts="@(first ? "S" : null)">Skip</MudButton>
+                        <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Block"
+                                   Disabled="busy" OnClick="@(() => RejectAsync(item, ReviewVerdict.NotABook))" aria-keyshortcuts="@(first ? "N" : null)">Not a book</MudButton>
+                        @if (item.Book is not null)
+                        {
+                            <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.SwapHoriz"
                                        Disabled="busy" OnClick="@(() => RejectAsync(item, ReviewVerdict.WrongBook))">Wrong book</MudButton>
                         }
-                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.Block"
-                                   Disabled="busy" OnClick="@(() => RejectAsync(item, ReviewVerdict.NotABook))">Not a book</MudButton>
-                        <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.ManageSearch"
-                                   Disabled="@(busy || !_lookupOn)" OnClick="@(() => OpenSearch(item))">Find the book</MudButton>
                         @* Opens the same panel as "Find the book", where the text can be fixed before "Save as a book". *@
                         <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Rounded.BookmarkAdd"
                                    Disabled="busy" OnClick="@(() => OpenSearch(item))">Keep as is</MudButton>
@@ -207,40 +223,57 @@ else
     }
     else
     {
-        <div class="surface-card">
-            @foreach (var decision in _decided)
+        @* Filtering by "Not a book" makes hasty rejections easy to find again: undo one and the title is matched normally. *@
+        <MudSelect T="string" @bind-Value="_verdictFilter" Label="Show" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true"
+                   Class="mb-3" Style="max-width: 16rem;">
+            <MudSelectItem T="string" Value="@AllVerdicts">All decisions (@_decided.Count)</MudSelectItem>
+            @foreach (var verdict in FilterOrder)
             {
-                <div class="mention" @key="decision.Id">
-                    <MudChip T="string" Size="Size.Small" Color="Display.VerdictColor(decision.Verdict)" Variant="Variant.Text" Class="state-chip ma-0">
-                        @Display.VerdictLabel(decision.Verdict)
-                    </MudChip>
-                    <div style="min-width: 0;">
-                        <MudText Typo="Typo.subtitle2">@decision.Title</MudText>
-                        <MudText Typo="Typo.caption" Class="muted d-block">
-                            @(decision.Author ?? "No author given") · decided @Display.LocalTime(decision.DecidedAt)
-                        </MudText>
-                        @if (decision.Book is not null)
-                        {
-                            <MudText Typo="Typo.caption" Class="d-block">
-                                Book: <a href="@($"books/{decision.Book.Id}")" class="card-title-link">@decision.Book.Title</a>
-                            </MudText>
-                        }
-                        else if (decision.Pick is not null)
-                        {
-                            <MudText Typo="Typo.caption" Class="d-block">Book: @decision.Pick.Title (being added)</MudText>
-                        }
-                        @if (decision.Note is not null)
-                        {
-                            <MudText Typo="Typo.caption" Class="muted d-block" Style="font-style: italic;">@decision.Note</MudText>
-                        }
-                    </div>
-                    <div class="mention-meta">
-                        <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Rounded.Undo" Disabled="@(_busyKey == decision.LookupKey)"
-                                   OnClick="@(() => UndoAsync(decision))">Undo</MudButton>
-                    </div>
-                </div>
+                <MudSelectItem T="string" Value="@verdict.ToString()">@Display.VerdictLabel(verdict) (@_decided.Count(d => d.Verdict == verdict))</MudSelectItem>
             }
-        </div>
+        </MudSelect>
+        var shown = ShownDecisions;
+        if (shown.Count == 0)
+        {
+            <EmptyState Title="None with this verdict" Icon="@Icons.Material.Rounded.FilterAltOff">Pick another verdict above to see those decisions.</EmptyState>
+        }
+        else
+        {
+            <div class="surface-card">
+                @foreach (var decision in shown)
+                {
+                    <div class="mention" @key="decision.Id">
+                        <MudChip T="string" Size="Size.Small" Color="Display.VerdictColor(decision.Verdict)" Variant="Variant.Text" Class="state-chip ma-0">
+                            @Display.VerdictLabel(decision.Verdict)
+                        </MudChip>
+                        <div style="min-width: 0;">
+                            <MudText Typo="Typo.subtitle2">@decision.Title</MudText>
+                            <MudText Typo="Typo.caption" Class="muted d-block">
+                                @(decision.Author ?? "No author given") · decided @Display.LocalTime(decision.DecidedAt)
+                            </MudText>
+                            @if (decision.Book is not null)
+                            {
+                                <MudText Typo="Typo.caption" Class="d-block">
+                                    Book: <a href="@($"books/{decision.Book.Id}")" class="card-title-link">@decision.Book.Title</a>
+                                </MudText>
+                            }
+                            else if (decision.Pick is not null)
+                            {
+                                <MudText Typo="Typo.caption" Class="d-block">Book: @decision.Pick.Title (being added)</MudText>
+                            }
+                            @if (decision.Note is not null)
+                            {
+                                <MudText Typo="Typo.caption" Class="muted d-block" Style="font-style: italic;">@decision.Note</MudText>
+                            }
+                        </div>
+                        <div class="mention-meta">
+                            <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Rounded.Undo" Disabled="@(_busyKey == decision.LookupKey)"
+                                       OnClick="@(() => UndoAsync(decision))">Undo</MudButton>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
     }
 }
 
@@ -252,7 +285,17 @@ else
     /// <summary>The page stops waiting for the Worker's answer after this. The Worker drops a search after two minutes.</summary>
     private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(30);
 
+    private const string AllVerdicts = "all";
+
+    /// <summary>The decisions filter, with the verdict most worth checking again first.</summary>
+    private static readonly ReviewVerdict[] FilterOrder =
+        [ReviewVerdict.NotABook, ReviewVerdict.WrongBook, ReviewVerdict.Skipped, ReviewVerdict.Confirmed, ReviewVerdict.Corrected, ReviewVerdict.KeptAsIs];
+
     private readonly CancellationTokenSource _closing = new();
+    private DotNetObjectReference<Review>? _self;
+    private IJSObjectReference? _module;
+    private IJSObjectReference? _shortcuts;
+    private string _verdictFilter = AllVerdicts;
     private readonly Dictionary<string, string?> _notes = [];
     private IReadOnlyList<ReviewItem>? _items;
     private IReadOnlyList<ReviewDecision>? _decided;
@@ -262,6 +305,71 @@ else
     private string? _error;
 
     protected override Task OnInitializedAsync() => LoadAsync();
+
+    private IReadOnlyList<ReviewDecision> ShownDecisions =>
+        _decided is null || !Enum.TryParse<ReviewVerdict>(_verdictFilter, out var verdict)
+            ? _decided ?? []
+            : _decided.Where(d => d.Verdict == verdict).ToList();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            _self = DotNetObjectReference.Create(this);
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", _closing.Token, $"./{Assets["Components/Pages/Review.razor.js"]}");
+            _shortcuts = await _module.InvokeAsync<IJSObjectReference>("listen", _closing.Token, _self);
+        }
+        catch (Exception ex) when (ex is JSDisconnectedException or OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// A shortcut key pressed outside any field, acting on the first title as its button would. Keys are ignored while a
+    /// decision is being saved, and "c" and "f" only work when their button is enabled.
+    /// </summary>
+    [JSInvokable]
+    public Task OnShortcutAsync(string key) => InvokeAsync(async () =>
+    {
+        if (_busyKey is not null || _items is not { Count: > 0 } items)
+        {
+            return;
+        }
+
+        var item = items[0];
+        if (key == "f")
+        {
+            if (_lookupOn)
+            {
+                OpenSearch(item);
+                StateHasChanged();
+            }
+
+            return;
+        }
+
+        var action = key switch
+        {
+            "c" when item.Book is not null => ConfirmAsync(item),
+            "s" => SkipAsync(item),
+            "n" => RejectAsync(item, ReviewVerdict.NotABook),
+            _ => null,
+        };
+        if (action is null)
+        {
+            return;
+        }
+
+        // A call from script doesn't render by itself: render once to disable the buttons, and again with the result.
+        StateHasChanged();
+        await action;
+        StateHasChanged();
+    });
 
     private async Task LoadAsync()
     {
@@ -293,6 +401,10 @@ else
     private Task RejectAsync(ReviewItem item, ReviewVerdict verdict) =>
         DecideAsync(item.LookupKey, verdict == ReviewVerdict.NotABook ? "Marked as not a book." : "Marked as the wrong book.",
             (db, now) => ReviewActions.RejectAsync(db, item.LookupKey, verdict, _notes.GetValueOrDefault(item.LookupKey), now, _closing.Token));
+
+    private Task SkipAsync(ReviewItem item) =>
+        DecideAsync(item.LookupKey, "Skipped. The catalogue's answer stands.",
+            (db, now) => ReviewActions.SkipAsync(db, item.LookupKey, _notes.GetValueOrDefault(item.LookupKey), now, _closing.Token));
 
     private Task PickAsync(ReviewItem item, SearchState search, string catalogId) =>
         DecideAsync(item.LookupKey, "Book picked. It's added within a few seconds.",
@@ -414,9 +526,27 @@ else
         }
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _closing.Cancel();
+        await _closing.CancelAsync();
+        try
+        {
+            if (_shortcuts is not null)
+            {
+                await _shortcuts.InvokeVoidAsync("dispose");
+                await _shortcuts.DisposeAsync();
+            }
+
+            if (_module is not null)
+            {
+                await _module.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+
+        _self?.Dispose();
         _closing.Dispose();
     }
 
