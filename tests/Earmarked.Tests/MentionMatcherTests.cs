@@ -838,6 +838,8 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         Assert.All(await db.BookMentions.ToListAsync(Ct), m => Assert.Equal(
             (MatchState.Matched, (Guid?)bookId, MatchDoubts.NoAuthor, CatalogMatcher.Version), (m.MatchState, m.BookId, m.Doubts, m.MatcherVersion)));
         Assert.Single(await db.Books.ToListAsync(Ct));
+        // ReviewDecided clears every mention's MatcherVersion, so nothing is left to reuse and the skip searches once more.
+        Assert.Equal(2, _catalog.Calls);
     }
 
     [Fact]
