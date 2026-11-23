@@ -8,7 +8,7 @@
       "index": 0,
       "message": {
         "role": "assistant",
-        "content": "{\"mentions\": [{\"title\": \"The Lighthouse Keeper's Almanac\", \"author\": \"Ines Calder\", \"quote\": \"I wrote The Lighthouse Keeper's Almanac after a winter on the coast.\", \"kind\": \"own_book\", \"confidence\": 0.95}, {\"title\": \"Small Rivers\", \"author\": null, \"quote\": \"everyone should read Small Rivers, honestly\", \"kind\": \"recommended\", \"confidence\": 0.8}, {\"title\": \"A Film Nobody Saw\", \"author\": null, \"quote\": \"that film was dreadful\", \"kind\": \"invented_kind\", \"confidence\": 0.4}]}"
+        "content": "{\"mentions\": [{\"quote\": \"I wrote The Lighthouse Keeper's Almanac after a winter on the coast.\", \"evidence\": \"I wrote\", \"title\": \"The Lighthouse Keeper's Almanac\", \"author\": \"Ines Calder\", \"kind\": \"own_book\", \"confidence\": 0.95}, {\"quote\": \"everyone should read Small Rivers, honestly\", \"evidence\": \"\", \"title\": \"Small Rivers\", \"author\": null, \"kind\": \"recommended\", \"confidence\": 0.8}, {\"quote\": \"that film was dreadful\", \"evidence\": \"that film\", \"title\": \"A Film Nobody Saw\", \"author\": null, \"kind\": \"invented_kind\", \"confidence\": 0.4}]}"
       },
       "finish_reason": "stop"
     }

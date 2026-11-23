@@ -41,6 +41,7 @@ public sealed class EpisodeExtractorTests : IAsyncLifetime
                 PodcastFeed = feed,
                 IdentityKey = "ep-1",
                 Title = "Ines Calder on lighthouses",
+                Description = "Ines Calder talks about The Lighthouse Keeper's Almanac.",
                 PublishedAt = DateTime.UtcNow.AddDays(-2),
                 State = EpisodeState.Transcribed,
                 Transcript = new Transcript
@@ -128,17 +129,48 @@ public sealed class EpisodeExtractorTests : IAsyncLifetime
         var rivers = episode.Mentions.Single(m => m.Title == "Small Rivers");
         Assert.Equal(TimeSpan.FromSeconds(95), rivers.StartTime);
         Assert.True(_backend.Calls.Count > 2);
-        Assert.All(_backend.Calls, c => Assert.Equal(("A Show", "Ines Calder on lighthouses"), (c.PodcastTitle, c.EpisodeTitle)));
+        Assert.All(_backend.Calls, c => Assert.Equal(
+            new ExtractionContext("A Show", "Ines Calder on lighthouses", "Ines Calder talks about The Lighthouse Keeper's Almanac."), c.Context));
     }
 
     [Fact]
     public async Task Drops_mentions_whose_quote_is_not_in_the_transcript()
     {
-        _backend.Extra = new ExtractedMention("The Silent Orchard", null, "I adored The Silent Orchard by the fire", MentionKind.Recommended, 1);
+        _backend.Extra = new ExtractedMention("The Silent Orchard", null, "I adored The Silent Orchard by the fire", MentionKind.Recommended, 1, "I adored");
 
         await _extractor.ProcessNextAsync(Ct);
 
         Assert.DoesNotContain((await LoadAsync()).Mentions, m => m.Title == "The Silent Orchard");
+    }
+
+    [Theory]
+    [InlineData("Welcome Back", null, null)]
+    [InlineData("Welcome Back", null, " ")]
+    [InlineData("A Show", null, "the show")]
+    [InlineData("her book", null, "her book")]
+    [InlineData("Ines Calder", "Ines Calder", "wrote")]
+    public async Task Drops_mentions_that_are_not_books_before_storing(string title, string? author, string? evidence)
+    {
+        _backend.Extra = new ExtractedMention(title, author, "Welcome back to the show.", MentionKind.Passing, 0.9, evidence);
+
+        await _extractor.ProcessNextAsync(Ct);
+
+        var episode = await LoadAsync();
+        Assert.Equal(EpisodeState.Extracted, episode.State);
+        Assert.Equal(["Small Rivers", "The Lighthouse Keeper's Almanac"], episode.Mentions.Select(m => m.Title).Order());
+    }
+
+    [Fact]
+    public async Task A_screened_mention_cannot_lend_its_author_to_a_real_book_with_the_same_title()
+    {
+        // Same title key as the real book, but no evidence: merging it first would give Small Rivers this author.
+        _backend.Extra = new ExtractedMention("Small Rivers", "Someone Else", "Welcome back to the show.", MentionKind.OwnBook, 1, null);
+
+        await _extractor.ProcessNextAsync(Ct);
+
+        var rivers = (await LoadAsync()).Mentions.Single(m => m.Title == "Small Rivers");
+        Assert.Null(rivers.Author);
+        Assert.Equal(MentionKind.Recommended, rivers.Kind);
     }
 
     [Fact]
@@ -462,7 +494,7 @@ public sealed class EpisodeExtractorTests : IAsyncLifetime
 
             var found = Books
                 .Where(b => input.Text.Contains(b.Title.Split(' ')[^1], StringComparison.Ordinal))
-                .Select(b => new ExtractedMention(b.Title, null, b.Quote, b.Kind, 0.9))
+                .Select(b => new ExtractedMention(b.Title, null, b.Quote, b.Kind, 0.9, "should read"))
                 .ToList();
             if (Extra is not null)
             {

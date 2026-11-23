@@ -14,7 +14,7 @@ namespace Earmarked.Tests;
 
 public class OpenAiCompatibleBookExtractorTests
 {
-    private static readonly ExtractionInput Input = new("A Show", "Episode 1", "[00:00] some words");
+    private static readonly ExtractionInput Input = new(new ExtractionContext("A Show", "Episode 1", "Ines Calder on her new book."), "[00:00] some words");
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -25,9 +25,10 @@ public class OpenAiCompatibleBookExtractorTests
 
         Assert.Equal(2, mentions.Count);
         Assert.Equal(new ExtractedMention("The Lighthouse Keeper's Almanac", "Ines Calder",
-            "I wrote The Lighthouse Keeper's Almanac after a winter on the coast.", MentionKind.OwnBook, 0.95), mentions[0]);
+            "I wrote The Lighthouse Keeper's Almanac after a winter on the coast.", MentionKind.OwnBook, 0.95, "I wrote"), mentions[0]);
         Assert.Null(mentions[1].Author);
         Assert.Equal(MentionKind.Recommended, mentions[1].Kind);
+        Assert.Null(mentions[1].Evidence);
     }
 
     [Fact]
@@ -75,13 +76,40 @@ public class OpenAiCompatibleBookExtractorTests
         Assert.Equal("test-model", root.GetProperty("model").GetString());
         Assert.Equal(0, root.GetProperty("temperature").GetInt32());
         Assert.Equal(ExtractionPrompt.Text, root.GetProperty("messages")[0].GetProperty("content").GetString());
-        Assert.Contains("<transcript>\n[00:00] some words\n</transcript>", root.GetProperty("messages")[1].GetProperty("content").GetString(), StringComparison.Ordinal);
+        var user = root.GetProperty("messages")[1].GetProperty("content").GetString();
+        Assert.Contains("<transcript>\n[00:00] some words\n</transcript>", user, StringComparison.Ordinal);
+        Assert.Contains("Show notes: Ines Calder on her new book.\n</context>", user, StringComparison.Ordinal);
         var format = root.GetProperty("response_format");
         Assert.Equal("json_schema", format.GetProperty("type").GetString());
         Assert.True(format.GetProperty("json_schema").GetProperty("strict").GetBoolean());
-        var kinds = format.GetProperty("json_schema").GetProperty("schema").GetProperty("properties").GetProperty("mentions")
-            .GetProperty("items").GetProperty("properties").GetProperty("kind").GetProperty("enum").EnumerateArray().Select(k => k.GetString());
+        var item = format.GetProperty("json_schema").GetProperty("schema").GetProperty("properties").GetProperty("mentions").GetProperty("items");
+        var kinds = item.GetProperty("properties").GetProperty("kind").GetProperty("enum").EnumerateArray().Select(k => k.GetString());
         Assert.Equal(ExtractionPrompt.Kinds.Keys.Order(), kinds.Order());
+        Assert.Equal(["quote", "evidence", "title", "author", "kind", "confidence"], item.GetProperty("properties").EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["quote", "evidence", "title", "author", "kind", "confidence"], item.GetProperty("required").EnumerateArray().Select(p => p.GetString()));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Ends_the_user_message_with_the_no_think_switch_only_when_thinking_is_disabled(bool disable)
+    {
+        var handler = new RecordingHandler(HttpStatusCode.OK, Fixtures.Read("chat-completion-mentions.json"));
+
+        await Extractor(handler, disableThinking: disable).ExtractAsync(Input, Ct);
+
+        using var request = JsonDocument.Parse(handler.LastBody);
+        var user = request.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
+        Assert.Equal(disable, user.EndsWith("</transcript>\n\n/no_think", StringComparison.Ordinal));
+        Assert.False(request.RootElement.TryGetProperty("chat_template_kwargs", out _));
+    }
+
+    [Fact]
+    public void Ignores_a_reasoning_block_in_front_of_the_answer()
+    {
+        var body = Completion("<think>\nThe guest wrote a book.\n</think>\n\n{\"mentions\":[]}");
+
+        Assert.Empty(OpenAiCompatibleBookExtractor.Parse(body));
     }
 
     [Theory]
@@ -131,12 +159,16 @@ public class OpenAiCompatibleBookExtractorTests
     private static string Completion(string content, string finishReason = "stop") =>
         JsonSerializer.Serialize(new { choices = new[] { new { message = new { role = "assistant", content }, finish_reason = finishReason } } });
 
-    private static IOptions<ExtractionOptions> Options() =>
-        Microsoft.Extensions.Options.Options.Create(new ExtractionOptions { Provider = "OpenAiCompatible", BaseUrl = "http://llm.test:1234", Model = "test-model" });
+    private static IOptions<ExtractionOptions> Options(bool disableThinking = true) =>
+        Microsoft.Extensions.Options.Options.Create(new ExtractionOptions
+        {
+            Provider = "OpenAiCompatible", BaseUrl = "http://llm.test:1234", Model = "test-model", DisableThinking = disableThinking,
+        });
 
     private static HttpClient Client(HttpMessageHandler handler) => new(handler) { BaseAddress = new Uri("http://llm.test:1234/") };
 
-    private static OpenAiCompatibleBookExtractor Extractor(HttpMessageHandler handler) => new(new SingleClientFactory(Client(handler)), Options());
+    private static OpenAiCompatibleBookExtractor Extractor(HttpMessageHandler handler, bool disableThinking = true) =>
+        new(new SingleClientFactory(Client(handler)), Options(disableThinking));
 
     private static ServiceProvider RealServices(string baseUrl)
     {

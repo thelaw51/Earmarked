@@ -135,8 +135,9 @@ public sealed class ExtractionOptions : IValidatableObject
     public string Model { get; set; } = "qwen/qwen3-8b";
 
     /// <summary>
-    /// Words of transcript sent per request. 1,800 words is about 4,300 tokens with the prompt, which fits an 8,192
-    /// token context with room for the answer. Smaller windows find more books but take more requests.
+    /// Words of transcript sent per request. 1,800 words is about 5,100 tokens with the prompt and the episode's
+    /// context (show notes capped at <see cref="Extraction.ExtractionPrompt.MaxShowNotesLength"/> characters), which
+    /// fits an 8,192 token context with the 2,048 tokens kept for the answer. Smaller windows find more books but take more requests.
     /// </summary>
     [Range(200, 20000)]
     public int WindowWords { get; set; } = 1800;
@@ -154,6 +155,13 @@ public sealed class ExtractionOptions : IValidatableObject
     /// Only while transcription is configured and its Status row is healthy; "Do this next" episodes don't wait.
     /// </summary>
     public bool WaitForTranscription { get; set; }
+
+    /// <summary>
+    /// Asks the model to answer without a reasoning phase, by ending each request with Qwen3's <c>/no_think</c>
+    /// switch. Reasoning spends the answer's token budget before any JSON is written. The switch is plain text, so a
+    /// model that doesn't know it just sees a stray line; turn this off for a model that should reason.
+    /// </summary>
+    public bool DisableThinking { get; set; } = true;
 
     public bool Enabled => !string.IsNullOrWhiteSpace(Provider);
 
