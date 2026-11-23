@@ -135,8 +135,9 @@ public sealed class ExtractionOptions : IValidatableObject
     public string Model { get; set; } = "qwen/qwen3-8b";
 
     /// <summary>
-    /// Words of transcript sent per request. 1,800 words is about 4,300 tokens with the prompt, which fits an 8,192
-    /// token context with room for the answer. Smaller windows find more books but take more requests.
+    /// Words of transcript sent per request. 1,800 words is about 5,100 tokens with the prompt and the episode's
+    /// context (show notes capped at <see cref="Extraction.ExtractionPrompt.MaxShowNotesLength"/> characters), which
+    /// fits an 8,192 token context with the 2,048 tokens kept for the answer. Smaller windows find more books but take more requests.
     /// </summary>
     [Range(200, 20000)]
     public int WindowWords { get; set; } = 1800;

@@ -41,6 +41,7 @@ public sealed class EpisodeExtractorTests : IAsyncLifetime
                 PodcastFeed = feed,
                 IdentityKey = "ep-1",
                 Title = "Ines Calder on lighthouses",
+                Description = "Ines Calder talks about The Lighthouse Keeper's Almanac.",
                 PublishedAt = DateTime.UtcNow.AddDays(-2),
                 State = EpisodeState.Transcribed,
                 Transcript = new Transcript
@@ -128,17 +129,32 @@ public sealed class EpisodeExtractorTests : IAsyncLifetime
         var rivers = episode.Mentions.Single(m => m.Title == "Small Rivers");
         Assert.Equal(TimeSpan.FromSeconds(95), rivers.StartTime);
         Assert.True(_backend.Calls.Count > 2);
-        Assert.All(_backend.Calls, c => Assert.Equal(("A Show", "Ines Calder on lighthouses"), (c.PodcastTitle, c.EpisodeTitle)));
+        Assert.All(_backend.Calls, c => Assert.Equal(
+            new ExtractionContext("A Show", "Ines Calder on lighthouses", "Ines Calder talks about The Lighthouse Keeper's Almanac."), c.Context));
     }
 
     [Fact]
     public async Task Drops_mentions_whose_quote_is_not_in_the_transcript()
     {
-        _backend.Extra = new ExtractedMention("The Silent Orchard", null, "I adored The Silent Orchard by the fire", MentionKind.Recommended, 1);
+        _backend.Extra = new ExtractedMention("The Silent Orchard", null, "I adored The Silent Orchard by the fire", MentionKind.Recommended, 1, "I adored");
 
         await _extractor.ProcessNextAsync(Ct);
 
         Assert.DoesNotContain((await LoadAsync()).Mentions, m => m.Title == "The Silent Orchard");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(" ")]
+    public async Task Drops_mentions_without_evidence_that_they_are_books(string? evidence)
+    {
+        _backend.Extra = new ExtractedMention("Welcome Back", null, "Welcome back to the show.", MentionKind.Passing, 0.9, evidence);
+
+        await _extractor.ProcessNextAsync(Ct);
+
+        var titles = (await LoadAsync()).Mentions.Select(m => m.Title).ToList();
+        Assert.DoesNotContain("Welcome Back", titles);
+        Assert.Equal(2, titles.Count);
     }
 
     [Fact]
@@ -462,7 +478,7 @@ public sealed class EpisodeExtractorTests : IAsyncLifetime
 
             var found = Books
                 .Where(b => input.Text.Contains(b.Title.Split(' ')[^1], StringComparison.Ordinal))
-                .Select(b => new ExtractedMention(b.Title, null, b.Quote, b.Kind, 0.9))
+                .Select(b => new ExtractedMention(b.Title, null, b.Quote, b.Kind, 0.9, "should read"))
                 .ToList();
             if (Extra is not null)
             {

@@ -137,15 +137,22 @@ public sealed partial class EpisodeExtractor(
         var transcript = episode.Transcript!;
         var words = new TranscriptWords(transcript.Segments);
         var podcast = episode.PodcastFeed.Title ?? "Unknown podcast";
+        var context = new ExtractionContext(podcast, episode.Title, episode.Description);
 
         var located = new List<LocatedMention>();
         var rejected = 0;
+        var unsupported = 0;
         foreach (var window in TranscriptWindows.Split(words, o.WindowWords, o.OverlapWords))
         {
-            var found = await extractor.ExtractAsync(new ExtractionInput(podcast, episode.Title, window.Text), cancellationToken);
+            var found = await extractor.ExtractAsync(new ExtractionInput(context, window.Text), cancellationToken);
             foreach (var mention in found)
             {
-                if (QuoteLocator.Find(words, mention.Quote, window.StartWord, window.EndWord) is { } match)
+                if (string.IsNullOrWhiteSpace(mention.Evidence))
+                {
+                    // The prompt asks for the words that show it is a book; a model that can't give any is guessing.
+                    unsupported++;
+                }
+                else if (QuoteLocator.Find(words, mention.Quote, window.StartWord, window.EndWord) is { } match)
                 {
                     located.Add(new LocatedMention(mention, match));
                 }
@@ -197,7 +204,7 @@ public sealed partial class EpisodeExtractor(
             await transaction.CommitAsync(cancellationToken);
         }
 
-        LogExtracted(episode.Title, merged.Count, rejected);
+        LogExtracted(episode.Title, merged.Count, rejected, unsupported);
     }
 
     /// <summary>Counts a failed attempt: back off, or give up after the last attempt. The transcript is kept either way.</summary>
@@ -246,8 +253,8 @@ public sealed partial class EpisodeExtractor(
 
     private static string Cap(string value, int max) => value.Length <= max ? value : value[..max];
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Extracted {Episode}: {Mentions} book mention(s), {Rejected} rejected because their quote isn't in the transcript")]
-    private partial void LogExtracted(string episode, int mentions, int rejected);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Extracted {Episode}: {Mentions} book mention(s), {Rejected} rejected because their quote isn't in the transcript, {Unsupported} without evidence that they are books")]
+    private partial void LogExtracted(string episode, int mentions, int rejected, int unsupported);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Extraction failed for {Episode} (attempt {Attempt}): {Error}")]
     private partial void LogFailed(string episode, int attempt, string error);
