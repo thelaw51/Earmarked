@@ -896,8 +896,31 @@ public sealed class MentionMatcherTests : IAsyncLifetime
         Assert.All(await db.BookMentions.ToListAsync(Ct), m => Assert.Equal(
             (MatchState.Matched, (Guid?)bookId, MatchDoubts.NoAuthor, CatalogMatcher.Version), (m.MatchState, m.BookId, m.Doubts, m.MatcherVersion)));
         Assert.Single(await db.Books.ToListAsync(Ct));
-        // ReviewDecided clears every mention's MatcherVersion, so nothing is left to reuse and the skip searches once more.
-        Assert.Equal(2, _catalog.Calls);
+        // A skip leaves the matched mention's version alone, so the new mention reuses its answer without a search.
+        Assert.Equal(1, _catalog.Calls);
+    }
+
+    [Fact]
+    public async Task Changing_not_a_book_to_a_skip_matches_the_rejected_mentions_again()
+    {
+        _catalog.Answer("The Lighthouse Keeper's Almanac", Almanac);
+        await AddMentionAsync(0, "The Lighthouse Keeper's Almanac", null);
+        await DecideAsync("The Lighthouse Keeper's Almanac", null, ReviewVerdict.NotABook);
+
+        await using (var db = await _dbFactory.CreateDbContextAsync(Ct))
+        {
+            Assert.Equal(MatchState.Rejected, (await db.BookMentions.SingleAsync(Ct)).MatchState);
+            await db.ReviewDecisions.ExecuteUpdateAsync(s => s
+                .SetProperty(d => d.Verdict, ReviewVerdict.Skipped)
+                .SetProperty(d => d.DecidedAt, DateTime.UtcNow.AddSeconds(1)), Ct);
+        }
+
+        await QueueReviewDecidedAsync(CatalogMatcher.LookupKey("The Lighthouse Keeper's Almanac", null));
+        await _commands.ProcessPendingAsync(Ct);
+        await RunUntilIdleAsync();
+
+        await using var check = await _dbFactory.CreateDbContextAsync(Ct);
+        Assert.Equal(MatchState.Matched, (await check.BookMentions.SingleAsync(Ct)).MatchState);
     }
 
     [Fact]

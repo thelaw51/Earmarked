@@ -218,12 +218,18 @@ public sealed partial class CommandProcessor(
     /// <summary>
     /// Makes every mention with this lookup key due for matching again, so the matcher applies whatever review decision
     /// is now stored for it, or matches normally if it was undone. Only invalidates: the matcher alone changes match
-    /// state, and mentions keep their current answer until it does.
+    /// state, and mentions keep their current answer until it does. A skip is no ruling, so the matcher's answer already
+    /// stands: only <see cref="MatchState.Rejected"/> mentions, which only a ruling produces, are made due. Re-matching
+    /// the rest would search every catalogue again for each skip, and a fallback that is down or has an expired token
+    /// could turn a match into a miss that review never sees again.
     /// </summary>
     private async Task RematchKeyAsync(string key, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        await db.BookMentions.Where(m => m.LookupKey == key).ExecuteUpdateAsync(s => s.SetProperty(m => m.MatcherVersion, (string?)null), cancellationToken);
+        var skipped = await db.ReviewDecisions.AnyAsync(d => d.LookupKey == key && d.Verdict == ReviewVerdict.Skipped, cancellationToken);
+        await db.BookMentions
+            .Where(m => m.LookupKey == key && (!skipped || m.MatchState == MatchState.Rejected))
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.MatcherVersion, (string?)null), cancellationToken);
     }
 
     /// <summary>States an episode waits in for its next step, where priority changes what runs next.</summary>
